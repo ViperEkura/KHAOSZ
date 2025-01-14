@@ -1,0 +1,10 @@
+{
+    "vocab_size": 40000,
+    "n_dim": 1024,
+    "n_head": 8,
+    "d_ffn": 4096,
+    "m_len": 1024,
+    "n_layer": 12,
+    "eps": 5e-5,
+    "flash_attn": true
+}
