@@ -1,7 +1,8 @@
 import os
 import torch
-import torch.nn as nn
+import pickle
 import logging
+import torch.nn as nn
 
 from matplotlib import pyplot as plt
 from module.transfomer import Config
@@ -30,7 +31,8 @@ class CheckPoint:
     def save_ckpt(self, save_dir):
         model_path = os.path.join(save_dir, "model.pt")
         config_path = os.path.join(save_dir, "config.json")
-        loss_path = os.path.join(save_dir, "loss.png")
+        lossfig_path = os.path.join(save_dir, "loss.png")
+        loss_path = os.path.join(save_dir, "loss.pkl")
         tokenizer_path = os.path.join(save_dir, "tokenizer.json")
         
         plt.figure()
@@ -44,7 +46,8 @@ class CheckPoint:
             torch.save(self.model.state_dict(), model_path)
             self.config.save(config_path)
             self.tokenizer.save(tokenizer_path)
-            plt.savefig(loss_path)
+            plt.savefig(lossfig_path)
+            pickle.dump(self.losses, open(loss_path, "wb"))
             print(f"Checkpoint saved at {save_dir}")
             
         except Exception as e:

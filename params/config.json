@@ -5,6 +5,7 @@
     "d_ffn": 4096,
     "m_len": 1024,
     "n_layer": 12,
+    "drop_rate": 0.1,
     "eps": 5e-5,
     "flash_attn": true
 }

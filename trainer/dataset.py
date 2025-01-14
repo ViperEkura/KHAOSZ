@@ -14,7 +14,6 @@ class SeqDataset(Dataset):
         self.m_len = m_len
         self.device = device
 
-
     def save(self, save_path):
         self.seg_size = len(self.data) // self.m_len
         with open(save_path, "wb") as f:
@@ -45,4 +44,4 @@ class SeqDataset(Dataset):
 
     def __len__(self): 
         return self.seg_size
-
+    

@@ -63,6 +63,7 @@ class Config:
             self.m_len = None
             self.n_layer = None
             self.eps = None
+            self.drop_rate = None
             self.flash_attn = None
 
             if cfg_path is not None:
@@ -84,6 +85,7 @@ class Config:
             "m_len": self.m_len,
             "n_layer": self.n_layer,
             "eps": self.eps,
+            "drop_rate": self.drop_rate,
             "flash_attn": self.flash_attn
         }
         with open(config_path, 'w') as f:
@@ -194,6 +196,7 @@ class Transfomer(nn.Module):
         super().__init__(*args, **kwargs)
         self.m_len = config.m_len
         self.embedding = nn.Embedding(config.vocab_size, config.n_dim)
+        self.dropout = nn.Dropout(config.drop_rate)
         
         cos_emb, sin_emb = get_rotate_emb(config.n_dim, config.m_len)
         self.cos_emb = nn.Parameter(cos_emb)
@@ -222,6 +225,7 @@ class Transfomer(nn.Module):
         assert L <= self.m_len, f"Make sure input sequence length <= {self.m_len}"
         
         x = self.embedding(x)
+        x = F.dropout(x, p=0.1, training=self.training)
         for layer in self.layers:
             x = layer(x, self.cos_emb, self.sin_emb)
         x = self.norm(x)

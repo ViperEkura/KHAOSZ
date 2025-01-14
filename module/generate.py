@@ -46,6 +46,7 @@ class Khaosz:
         ids = self.tokenizer.encode(tokens)
         response = str()
         
+        self.model.eval()
         while len(ids) < self.config.m_len:
             input_tensor = torch.tensor(ids).unsqueeze(0)
             prob = self.model(input_tensor)[-1, -1, :]
