@@ -7,13 +7,13 @@ from torch.utils.data import Dataset
 
 
 class SeqDataset(Dataset):
-    def __init__(self, m_len, use_uint16=True, device=device('cuda')):
+    def __init__(self, m_len, device=device('cuda')):
         super().__init__()
         self.data = list()
         self.seg_size = 0
         self.m_len = m_len
         self.device = device
-        self.dtype = torch.uint16 if use_uint16 else torch.uint32
+
 
     def save(self, save_path):
         self.seg_size = len(self.data) // self.m_len
@@ -38,8 +38,8 @@ class SeqDataset(Dataset):
         begin_idx = index * self.m_len
         end_idx = min(begin_idx + self.m_len, len(self.data))
         
-        x = torch.tensor(self.data[begin_idx:end_idx], device=self.device, dtype=self.dtype)
-        y = torch.tensor(self.data[begin_idx + 1:end_idx + 1], device=self.device, dtype=self.dtype)
+        x = torch.tensor(self.data[begin_idx:end_idx], device=self.device)
+        y = torch.tensor(self.data[begin_idx + 1:end_idx + 1], device=self.device)
         
         return x, y
 
