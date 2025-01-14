@@ -4,10 +4,13 @@ import torch
 from .transfomer import Config, Transfomer
 from .tokenizer import BpeTokenizer
 
-class Message:
-    def __init__(self):
-        self.history = []
-        
+def build_prompt(query, history) -> str:
+    ret_prompt = str()
+    if len(history) > 0:
+        for query, response in history:
+            ret_prompt += f"<|user|>: {query}\n\n <|system|>: {response}\n\n"
+    ret_prompt += f"<|user|>: {query}\n\n <|system|>: <sog>"
+    return ret_prompt
 
 class Khaosz:
     def __init__(self, path=None):
@@ -28,5 +31,45 @@ class Khaosz:
         self.model = Transfomer(self.config)
         self.model.load_state_dict(torch.load(weight_path))
     
-    def generate():
+    def stream_generate(
+            self, 
+            query: str, 
+            history: list[tuple[str, str]]=None,
+            temperature: float=0.8,
+            top_k: int=10,
+            top_p: float=0.8,
+        ):
+        if history is None:
+            history = list()
+        
+        tokens = build_prompt(query, history)
+        ids = self.tokenizer.encode(tokens)
+        response = str()
+        
+        while len(ids) < self.config.m_len:
+            input_tensor = torch.tensor(ids).unsqueeze(0)
+            prob = self.model(input_tensor)[-1, -1, :]
+            prob = torch.softmax(prob / temperature, dim=-1)
+            next_token_id = torch.multinomial(prob, num_samples=1).item()
+            next_token = self.tokenizer.id_to_token(next_token_id)
+            
+            if next_token == "<eog>":
+                break
+            response += next_token
+            
+            ids.append(next_token_id)
+            yield query, response ,history
+
+    def generate(
+            self, 
+            query: str, 
+            history: list[tuple[str, str]]=None,
+            temperature: float=0.8,
+            top_k: int=10,
+            top_p: float=0.8,
+        ):
+            pass
+    
+    
+    def to():
         pass
