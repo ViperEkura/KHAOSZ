@@ -21,7 +21,7 @@ def get_rotate_emb(dim, max_len, base=10000) -> tuple[Tensor, Tensor]:
     cos_emb = torch.cos(angle_rads)
     return cos_emb, sin_emb
 
-def rotate_emb(x: Tensor, sin: Tensor, cos: Tensor) -> Tensor:
+def rotate_emb(x: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
     _, L, _ = x.size()
     x1, x2 = x[..., ::2], x[..., 1::2]
     x_half_rotated = torch.stack((-x2, x1), dim=-1).reshape_as(x)
@@ -149,14 +149,14 @@ class Attention(nn.Module):
         init.kaiming_uniform_(self.Wqkv, a=2.236)
         init.kaiming_uniform_(self.Wo, a=2.236)
 
-    def forward(self, x: Tensor, sin, cos, mask=None) -> Tensor:
+    def forward(self, x: Tensor, cos, sin, mask=None) -> Tensor:
         B, L, _ = x.size()
         # x(B, L, D)
         qkv = F.linear(x, self.Wqkv) 
         q, k, v = qkv.chunk(3, dim=-1)
         
-        q = rotate_emb(q, sin, cos)
-        k = rotate_emb(q, sin, cos)
+        q = rotate_emb(q, cos, sin)
+        k = rotate_emb(q, cos, sin)
         
         if not self.flash_attn:
             if self.mask is None:
@@ -185,8 +185,8 @@ class DecoderBlock(nn.Module):
         self.ffn = FeedForward(n_dim, d_ffn)
         self.norm_ffn = RMSNorm(n_dim, eps)
 
-    def forward(self, x, sin, cos, mask=None) -> torch.Tensor:
-        x = self.attention(self.norm_attn(x), sin, cos, mask) + x
+    def forward(self, x, cos, sin, mask=None) -> torch.Tensor:
+        x = self.attention(self.norm_attn(x), cos, sin, mask) + x
         x = self.ffn(self.norm_ffn(x)) + x
         return x
     
@@ -225,10 +225,13 @@ class Transfomer(nn.Module):
         assert L <= self.m_len, f"Make sure input sequence length <= {self.m_len}"
         
         x = self.embedding(x)
-        x = F.dropout(x, p=0.1, training=self.training)
+        x = self.dropout(x)
+        
         for layer in self.layers:
             x = layer(x, self.cos_emb, self.sin_emb)
+            
         x = self.norm(x)
         x = self.out(x)
+        
         return x
 
