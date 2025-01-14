@@ -7,9 +7,8 @@ from torch import Tensor
 from torch.nn import init
 
 
-def create_mask(L: int, req_gard, device) -> Tensor:
+def create_mask(L: int, device) -> Tensor:
     mask = torch.ones(L, L, dtype=torch.bool).tril(diagonal=-1)
-    mask.requires_grad_(req_gard)
     mask = mask.to(device)
     return mask
 
@@ -156,11 +155,11 @@ class Attention(nn.Module):
         q, k, v = qkv.chunk(3, dim=-1)
         
         q = rotate_emb(q, cos, sin)
-        k = rotate_emb(q, cos, sin)
+        k = rotate_emb(k, cos, sin)
         
         if not self.flash_attn:
             if self.mask is None:
-                self.mask = create_mask(L, False, x.device)
+                self.mask = create_mask(L, x.device)
             if mask is None:
                 mask = self.mask
             attn_out = self_attention(q, k, v, self.n_heads, self.n_dim, self.scale, mask)
@@ -210,7 +209,7 @@ class Transfomer(nn.Module):
         self.norm = RMSNorm(config.n_dim, config.eps)
         self.out = nn.Linear(config.n_dim, config.vocab_size, bias=False)
         
-        init.kaiming_uniform_(self.out.weight, a=2.236)
+        init.normal_(self.out.weight, mean=0.0, std=0.2)
         init.normal_(self.embedding.weight, mean=0.0, std=0.2)
     
     def parameter_size(self):
@@ -234,4 +233,3 @@ class Transfomer(nn.Module):
         x = self.out(x)
         
         return x
-

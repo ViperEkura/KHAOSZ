@@ -20,13 +20,13 @@ class CheckPoint:
         tokenizer: BpeTokenizer,  
         config: Config,
         losses: list,
-        epoch: int 
+        n_iter: int 
     ):
         self.model = model
         self.tokenizer = tokenizer
         self.config = config
         self.losses = losses
-        self.epoch = epoch
+        self.n_iter = n_iter
 
     def save_ckpt(self, save_dir):
         model_path = os.path.join(save_dir, "model.pt")
@@ -37,7 +37,7 @@ class CheckPoint:
         
         plt.figure()
         plt.plot(self.losses)
-        plt.title(f"Training Loss - Epoch {self.epoch}")
+        plt.title(f"Training Loss - iter {self.n_iter }")
         plt.xlabel("Batch")
         plt.ylabel("Loss")
         
@@ -84,7 +84,7 @@ class Trainer:
         criterion: _Loss,
         ckpt_dir: str,
         n_epoch: int=1,
-        n_epoch_checkpoint: int=1,
+        n_iter_checkpoint: int=10000,
         max_grad_norm: float=1.0
     ):
         vocab_size = self.config.vocab_size
@@ -107,11 +107,10 @@ class Trainer:
                 n_iter += 1
                 tqdm_laoder.set_postfix(loss=loss.item())
             
-            avg_loss = sum(losses[start_iter:]) / (n_iter - start_iter)
-            start_iter = n_iter
-            
-            self.logger.info(f"Epoch {epoch+1}/{n_epoch} Loss: {avg_loss}")
-            ckpt_epoch_dir = os.path.join(ckpt_dir, f"epoch_{epoch+1:02d}")
-            if (epoch + 1) % n_epoch_checkpoint == 0:
+            if n_iter % n_iter_checkpoint == 0:
+                avg_loss = sum(losses[start_iter:]) / (n_iter - start_iter)
+                start_iter = n_iter
+                self.logger.info(f"Epoch {epoch + 1}/{n_epoch} Loss: {avg_loss}")
+                ckpt_epoch_dir = os.path.join(ckpt_dir, f"epoch_{epoch+1:02d}_iter_{n_iter}")
                 checkpoint = CheckPoint(self.model, self.tokenizer, self.config, losses, epoch + 1)
                 checkpoint.save_ckpt(ckpt_epoch_dir)
