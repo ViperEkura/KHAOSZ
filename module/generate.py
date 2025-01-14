@@ -35,7 +35,7 @@ class Khaosz:
             self, 
             query: str, 
             history: list[tuple[str, str]]=None,
-            temperature: float=0.8,
+            temperature: float=1.0,
             top_k: int=10,
             top_p: float=0.8,
         ):
@@ -51,7 +51,7 @@ class Khaosz:
             input_tensor = torch.tensor(ids).unsqueeze(0)
             prob = self.model(input_tensor)[-1, -1, :]
             prob = torch.softmax(prob / temperature, dim=-1)
-            next_token_id = torch.multinomial(prob, num_samples=1).item()
+            next_token_id = torch.multinomial(prob, num_samples=1, replacement=True).item()
             next_token = self.tokenizer.id_to_token(next_token_id)
             
             if next_token == "<eog>":
