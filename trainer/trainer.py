@@ -100,11 +100,19 @@ class Trainer:
         ckpt_dir: str,
         n_epoch: int=1,
         n_iter_ckpt: int=5000,
-        max_grad_norm: float=1.0
+        max_grad_norm: float=1.0,
+        warnup_stage_ratio: float=0.02,
     ):
         vocab_size = self.config.vocab_size
         n_iter, start_iter  = 0, 0
         losses = list()
+        
+        total_iters = len(dataloader) * n_epoch
+        warmup_iters = warnup_stage_ratio * total_iters
+        schdulder = LambdaLR(
+            optimizer, 
+            get_lambda(warmup_iters=warmup_iters, lr_decay_iters=total_iters)
+        )
         
         self.logger.info("start training ...")  
         for epoch in range(n_epoch):
@@ -118,9 +126,13 @@ class Trainer:
                 loss.backward()
                 clip_grad_norm_(self.model.parameters(), max_grad_norm)
                 optimizer.step()
+                schdulder.step()
                 
                 n_iter += 1
-                tqdm_laoder.set_postfix(loss=loss.item())
+                tqdm_laoder.set_postfix(
+                    loss=loss.item(),
+                    lr=optimizer.param_groups[-1]["lr"]
+                )
             
                 if n_iter % n_iter_ckpt == 0:
                     avg_loss = sum(losses[start_iter:]) / (n_iter - start_iter)
