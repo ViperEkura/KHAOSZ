@@ -13,7 +13,7 @@ def create_mask(L: int, device) -> Tensor:
     mask = mask.to(device)
     return mask
 
-def get_rotate_emb(dim, max_len, base=10000) -> tuple[Tensor, Tensor]:
+def get_rotary_emb(dim, max_len, base=10000) -> tuple[Tensor, Tensor]:
     inv_freq = torch.exp(- torch.log(torch.tensor(base)) * ((torch.arange(0, dim, 1) // 2) / dim))
     pos_indices = torch.arange(1, max_len + 1)
     angle_rads = torch.outer(pos_indices, inv_freq)
@@ -21,7 +21,7 @@ def get_rotate_emb(dim, max_len, base=10000) -> tuple[Tensor, Tensor]:
     cos_emb = torch.cos(angle_rads)
     return cos_emb, sin_emb
 
-def rotate_emb(x: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
+def rotary_emb(x: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
     _, L, _ = x.size()
     x1, x2 = x[..., ::2], x[..., 1::2]
     x_half_rotated = torch.stack((-x2, x1), dim=-1).reshape_as(x)
@@ -103,8 +103,8 @@ class RMSNorm(torch.nn.Module):
         dtype = x.dtype
         x = x.float()
 
-        rms = torch.mean(torch.pow(x, 2), dim=-1, keepdim=True)
-        norm = x * torch.rsqrt(rms + self.eps)
+        mean_square = torch.mean(torch.pow(x, 2), dim=-1, keepdim=True)
+        norm = x * torch.rsqrt(mean_square + self.eps)
         norm = norm.to(dtype)
         out = norm * self.weight + self.bias
 
@@ -154,8 +154,8 @@ class Attention(nn.Module):
         qkv = F.linear(x, self.Wqkv) 
         q, k, v = qkv.chunk(3, dim=-1)
         
-        q = rotate_emb(q, cos, sin)
-        k = rotate_emb(k, cos, sin)
+        q = rotary_emb(q, cos, sin)
+        k = rotary_emb(k, cos, sin)
         
         if not self.flash_attn:
             if self.mask is None:
@@ -197,7 +197,7 @@ class Transfomer(nn.Module):
         self.embedding = nn.Embedding(config.vocab_size, config.n_dim)
         self.dropout = nn.Dropout(config.drop_rate)
         
-        cos_emb, sin_emb = get_rotate_emb(config.n_dim, config.m_len)
+        cos_emb, sin_emb = get_rotary_emb(config.n_dim, config.m_len)
         self.cos_emb = nn.Parameter(cos_emb)
         self.sin_emb = nn.Parameter(sin_emb)
         
