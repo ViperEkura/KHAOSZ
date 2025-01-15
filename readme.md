@@ -32,7 +32,7 @@ python train.py \
 --data_root_path=/path/to/dataset \
 --n_epoch=5 \
 --batch_size=8 \
---n_epoch_ckpt=1 \
+--n_iter_ckpt=10000 \
 --ckpt_dir checkpoints 
 ```
 

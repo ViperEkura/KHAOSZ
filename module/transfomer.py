@@ -211,8 +211,8 @@ class Transfomer(nn.Module):
         
         
         for pname,p in self.named_parameters():
-            if pname.endswith('down.weight'):
-                torch.nn.init.normal_(p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layer))
+            if pname.endswith('down'):
+                init.normal_(p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layer))
                 
         init.normal_(self.embedding.weight, mean=0.0, std=0.02)
         init.normal_(self.out.weight, mean=0.0, std=0.02)
