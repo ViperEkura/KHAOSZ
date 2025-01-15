@@ -59,7 +59,7 @@ class Khaosz:
             response += next_token
             
             ids.append(next_token_id)
-            yield query, response ,history
+            yield response ,history
 
     def generate(
             self, 
