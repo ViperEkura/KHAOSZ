@@ -6,7 +6,7 @@
 - **性能优化**：代码中设置了`dtype=torch.bfloat16`来启用混合精度训练，这有助于提高训练速度和降低显存消耗，但需确保硬件支持此特性。
 - **多语言支持**：该模型支持中文和英文双语，通过先前训练好的tokenzier 完成分词
 
-1. 如何训练
+### 1. 如何训练
 
 要训练这个支持中文和英文双语言的Transformer模型，您可以按照以下步骤进行操作：
 
@@ -42,7 +42,7 @@ python train.py \
 
 --batch_size：指定每个批次的样本数量。
 
---n_epoch_ckpt：指定每多少轮保存一次检查点。
+--n_iter_ckpt：指定每多少迭代次数保存一次检查点。
 
 --ckpt_dir：指定保存检查点的目录。
 
@@ -54,5 +54,44 @@ python train.py \
 检查点文件会保存在指定的检查点目录中，您可以使用这些检查点文件来恢复训练或进行评估。
 
 
-2. 如何使用
-如果您想使用这个模型进行对话聊天, 可以按照以下方法进行操作
+### 2. 如何使用
+如果您想使用这个模型进行对话聊天, 请打开 chat.py 文件，并运行它。
+或者， 您可以使用流式输出接口/对话生成接口完成对话
+
+```python
+from module import *
+
+model = Khaosz("path/to/model_dir")
+response_size, histroy = 0, []
+
+while True:
+    query = input(">> ")
+    if query == "!exit":
+        break
+    
+    for response, histroy in model.stream_generate(
+        query=query, 
+        history=histroy,
+        temperature=0.9,    
+    ):
+        print(response[response_size:], end="")
+        response_size = len(response)
+    print("")
+
+```
+
+或者您可以使用非流式输出的方式完成对话
+
+```python
+from module import *
+model = Khaosz("path/to/model_dir")
+history = []
+
+while True:
+    query = input(">> ")
+    if query == "!exit":
+        break
+    
+    response = model.generate(query=query, history=history, temperature=0.9)
+    print(response)
+```
