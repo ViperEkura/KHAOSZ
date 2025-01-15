@@ -48,11 +48,10 @@ class CheckPoint:
             self.tokenizer.save(tokenizer_path)
             plt.savefig(lossfig_path)
             pickle.dump(self.losses, open(loss_path, "wb"))
-            print(f"Checkpoint saved at {save_dir}")
             
         except Exception as e:
-            print(f"Error saving checkpoint: {e}")
-            
+            raise e
+        
         finally:
             plt.close()
 
@@ -84,7 +83,7 @@ class Trainer:
         criterion: _Loss,
         ckpt_dir: str,
         n_epoch: int=1,
-        n_iter_checkpoint: int=10000,
+        n_iter_ckpt: int=5000,
         max_grad_norm: float=1.0
     ):
         vocab_size = self.config.vocab_size
@@ -107,10 +106,12 @@ class Trainer:
                 n_iter += 1
                 tqdm_laoder.set_postfix(loss=loss.item())
             
-            if n_iter % n_iter_checkpoint == 0:
+            if n_iter % n_iter_ckpt == 0:
                 avg_loss = sum(losses[start_iter:]) / (n_iter - start_iter)
                 start_iter = n_iter
                 self.logger.info(f"Epoch {epoch + 1}/{n_epoch} Loss: {avg_loss}")
                 ckpt_epoch_dir = os.path.join(ckpt_dir, f"epoch_{epoch+1:02d}_iter_{n_iter}")
                 checkpoint = CheckPoint(self.model, self.tokenizer, self.config, losses, epoch + 1)
                 checkpoint.save_ckpt(ckpt_epoch_dir)
+                self.logger.info(f"Saved checkpoint to {ckpt_epoch_dir}")
+                

@@ -71,7 +71,7 @@ def train(
         criterion=criterion,
         ckpt_dir=ckpt_dir,
         n_epoch=n_epoch, 
-        n_iter_checkpoint=n_iter_ckpt,
+        n_iter_ckpt=n_iter_ckpt,
         max_grad_norm=1.0
     )
 
@@ -80,7 +80,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_root_path", type=str, required=True, help="Path to the root directory of the dataset.")
     parser.add_argument("--n_epoch", type=int, default=5, help="Number of epochs to train.")
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size for training.")
-    parser.add_argument("--n_iter_ckpt", type=int, default=1, help="Number of iters between checkpoints.")
+    parser.add_argument("--n_iter_ckpt", type=int, default=5000, help="Number of iters between checkpoints.")
     parser.add_argument("--ckpt_dir", type=str, default="checkpoint", help="Directory to save checkpoints.")
     parser.add_argument("--resume_train", type=bool, default=False, help="Resume training from a checkpoint.")
     parser.add_argument("--resume_dir", type=str, default=None, help="Path to the checkpoint file to resume training.")
