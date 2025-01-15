@@ -1,6 +1,6 @@
 from module import *
 
-if __name__ == "__main__":
+def chat():
     model = Khaosz("params")
     response_size = 0
     histroy = []
@@ -10,7 +10,7 @@ if __name__ == "__main__":
         if query == "!exit":
             break
         
-        for querry, response, histroy in model.stream_generate(
+        for response, histroy in model.stream_generate(
             query=query, 
             history=histroy,
             temperature=0.9,    
@@ -19,3 +19,12 @@ if __name__ == "__main__":
             response_size = len(response)
             
         print("")
+
+def test():
+    cfg = Config("params/config.json")
+    model = Transfomer(cfg)
+    print(model)
+    print(f"parameter size: {model.parameter_size():,}")
+
+if __name__ == "__main__":
+    test()
