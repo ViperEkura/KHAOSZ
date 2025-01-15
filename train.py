@@ -6,10 +6,8 @@ import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 
-from module.transfomer import Transfomer, Config
-from module.tokenizer import BpeTokenizer
-from trainer.dataset import SeqDataset
-from trainer.trainer import Trainer
+from module import Transfomer, Config, BpeTokenizer
+from trainer import Trainer, SeqDataset
 
 dirname = os.path.dirname(__file__)
 
