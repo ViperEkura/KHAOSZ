@@ -55,11 +55,11 @@ def train(
     )
     
     device = torch.device("cuda")
-    model.to(device=device, dtype=torch.bfloat16)
+    model=model.to(device=device, dtype=torch.bfloat16)
 
     optim = AdamW(
         model.parameters(),
-        eps=config.eps,
+        eps=5e-5,
         lr=5e-4
     )
     criterion = F.cross_entropy
@@ -72,13 +72,13 @@ def train(
         ckpt_dir=ckpt_dir,
         n_epoch=n_epoch, 
         n_iter_ckpt=n_iter_ckpt,
-        max_grad_norm=1.0
+        max_grad_norm=0.1
     )
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the Transformer model.")
     parser.add_argument("--data_root_path", type=str, required=True, help="Path to the root directory of the dataset.")
-    parser.add_argument("--n_epoch", type=int, default=5, help="Number of epochs to train.")
+    parser.add_argument("--n_epoch", type=int, default=1, help="Number of epochs to train.")
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size for training.")
     parser.add_argument("--n_iter_ckpt", type=int, default=5000, help="Number of iters between checkpoints.")
     parser.add_argument("--ckpt_dir", type=str, default="checkpoint", help="Directory to save checkpoints.")
