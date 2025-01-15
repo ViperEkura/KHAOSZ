@@ -44,26 +44,28 @@ def train(
         model.load_state_dict(torch.load(weight_path))
         tokenizer = BpeTokenizer(tokenizer_path)
     
-    dataset = SeqDataset(config.m_len)
+    device = torch.device("cuda")
+    model = model.to(device=device, dtype=torch.bfloat16)
+    dataset = SeqDataset(config.m_len, device=device)
     
     cache_files = get_files(data_root_path)
     dataset.load(cache_files)
     dataloader = DataLoader(
         dataset, 
         batch_size=batch_size, 
-        shuffle=True
+        shuffle=True,
+        drop_last=True
     )
     
-    device = torch.device("cuda")
-    model=model.to(device=device, dtype=torch.bfloat16)
-
     optim = AdamW(
         model.parameters(),
         eps=5e-5,
-        lr=5e-4
+        lr=5e-4,
+        betas=(0.9, 0.95),
+        weight_decay=0.1
     )
-    criterion = F.cross_entropy
     
+    criterion = F.cross_entropy
     trainer = Trainer(model, tokenizer, config)
     trainer.train(
         dataloader=dataloader,
