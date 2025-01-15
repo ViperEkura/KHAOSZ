@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 
-from module import Transfomer, Config, BpeTokenizer
+from module import Transformer, Config, BpeTokenizer
 from trainer import Trainer, SeqDataset
 
 dirname = os.path.dirname(__file__)
@@ -32,7 +32,7 @@ def train(
         tokenizer_path = os.path.join(dirname, "params", "tokenizer.json")
 
         config = Config(config_path)
-        model = Transfomer(config)
+        model = Transformer(config)
         tokenizer = BpeTokenizer(tokenizer_path)
     else:
         config_path = os.path.join(resume_dir, "config.json")
@@ -40,7 +40,7 @@ def train(
         weight_path = os.path.join(resume_dir, "model.pt")
         
         config = Config(config_path)
-        model = Transfomer(config)
+        model = Transformer(config)
         model.load_state_dict(torch.load(weight_path))
         tokenizer = BpeTokenizer(tokenizer_path)
     
