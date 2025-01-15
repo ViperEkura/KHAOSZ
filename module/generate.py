@@ -8,7 +8,7 @@ def build_prompt(query, history) -> str:
     ret_prompt = str()
     if len(history) > 0:
         for query, response in history:
-            ret_prompt += f"<|user|>: {query}\n\n <|system|>: {response}\n\n"
+            ret_prompt += f"<|user|>: {query}\n\n <|system|>: <sog> {response} <eog>\n\n"
     ret_prompt += f"<|user|>: {query}\n\n <|system|>: <sog>"
     return ret_prompt
 

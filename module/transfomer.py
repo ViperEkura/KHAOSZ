@@ -92,7 +92,7 @@ class Config:
             json.dump(config_dict, f, indent=4)
                
 
-class RMSNorm(torch.nn.Module):
+class RMSNorm(nn.Module):
     def __init__(self, n_dim, eps, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.weight = nn.Parameter(torch.ones(n_dim))
@@ -197,8 +197,8 @@ class Transformer(nn.Module):
         self.dropout = nn.Dropout(config.drop_rate)
         
         cos_emb, sin_emb = get_rotary_emb(config.n_dim, config.m_len)
-        self.cos_emb = nn.Parameter(cos_emb)
-        self.sin_emb = nn.Parameter(sin_emb)
+        self.cos_emb = nn.Parameter(cos_emb, requires_grad=False)
+        self.sin_emb = nn.Parameter(sin_emb, requires_grad=False)
         
         self.layers = nn.ModuleList([
             DecoderBlock(config.n_dim, config.n_head, config.d_ffn, config.flash_attn, config.eps)
@@ -208,8 +208,6 @@ class Transformer(nn.Module):
         self.norm = RMSNorm(config.n_dim, config.eps)
         self.out = nn.Linear(config.n_dim, config.vocab_size, bias=False)
         
-        init.normal_(self.embedding.weight, mean=0.0, std=0.02)
-
     
     def parameter_size(self):
         parameter_size = 0
