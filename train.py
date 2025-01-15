@@ -5,7 +5,6 @@ import torch.nn.functional as F
 
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
-
 from module import Transformer, Config, BpeTokenizer
 from trainer import Trainer, SeqDataset
 

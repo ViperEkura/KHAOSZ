@@ -1,17 +1,33 @@
-import os
+
 import torch
+import torch.nn as nn
+
+import os
+import math
 import pickle
 import logging
-import torch.nn as nn
 
 from matplotlib import pyplot as plt
 from module.transfomer import Config
 from module.tokenizer import BpeTokenizer
 from torch.utils.data import DataLoader
 from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LambdaLR
 from torch.nn.modules.loss import _Loss
 from torch.nn.utils import clip_grad_norm_
 from tqdm import tqdm
+
+
+def get_lambda(warmup_iters, lr_decay_iters, min_rate=0.08):
+    def get_lr(now_iter):
+        if now_iter <= warmup_iters:
+            return max(min_rate, now_iter / warmup_iters)
+        else:
+            rate = (now_iter - warmup_iters) / (lr_decay_iters - warmup_iters)
+            return max(min_rate, 0.5 * (1.0 + math.cos(math.pi * rate)))
+    
+    return get_lr
+
 
 class CheckPoint:
     def __init__(
