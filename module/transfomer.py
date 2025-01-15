@@ -1,4 +1,5 @@
 import json
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -116,14 +117,13 @@ class FeedForward(nn.Module):
         self.up = nn.Parameter(torch.empty(2 * d_ffn, n_dim))
         self.down = nn.Parameter(torch.empty(n_dim, d_ffn))
 
-        init.kaiming_uniform_(self.up, a=2.236)
-        init.kaiming_uniform_(self.down, a=2.236)
+        init.kaiming_uniform_(self.up, a=math.sqrt(5))
+        init.kaiming_uniform_(self.down, a=math.sqrt(5))
 
     def forward(self, x: Tensor) -> Tensor:
         x = F.linear(x, self.up)
-        x = F.elu(x)
-        
         x, gate = x.chunk(2, dim=-1)
+        gate = F.elu(gate)
         gated = x * gate
         out = F.linear(gated, self.down)
         out = F.elu(out)
@@ -145,8 +145,8 @@ class Attention(nn.Module):
         self.n_dim = n_dim
         self.n_heads = n_heads
         
-        init.kaiming_uniform_(self.Wqkv, a=2.236)
-        init.kaiming_uniform_(self.Wo, a=2.236)
+        init.kaiming_uniform_(self.Wqkv, a=math.sqrt(5))
+        init.kaiming_uniform_(self.Wo, a=math.sqrt(5))
 
     def forward(self, x: Tensor, cos, sin, mask=None) -> Tensor:
         B, L, _ = x.size()
@@ -209,8 +209,14 @@ class Transfomer(nn.Module):
         self.norm = RMSNorm(config.n_dim, config.eps)
         self.out = nn.Linear(config.n_dim, config.vocab_size, bias=False)
         
-        init.normal_(self.out.weight, mean=0.0, std=0.2)
-        init.normal_(self.embedding.weight, mean=0.0, std=0.2)
+        
+        for pname,p in self.named_parameters():
+            if pname.endswith('down.weight'):
+                torch.nn.init.normal_(p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layer))
+                
+        init.normal_(self.embedding.weight, mean=0.0, std=0.02)
+        init.normal_(self.out.weight, mean=0.0, std=0.02)
+
     
     def parameter_size(self):
         parameter_size = 0
