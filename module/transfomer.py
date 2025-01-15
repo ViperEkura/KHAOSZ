@@ -123,10 +123,9 @@ class FeedForward(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         x = F.linear(x, self.up)
         x, gate = x.chunk(2, dim=-1)
-        gate = F.elu(gate)
+        gate = F.silu(gate)
         gated = x * gate
         out = F.linear(gated, self.down)
-        out = F.elu(out)
         
         return out
     
