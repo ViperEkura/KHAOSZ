@@ -62,7 +62,7 @@ def train(
     optim = AdamW(
         model.parameters(),
         eps=config.eps,
-        weight_decay=0.02
+        lr=5e-4
     )
     criterion = F.cross_entropy
     
