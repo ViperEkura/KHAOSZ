@@ -189,7 +189,7 @@ class DecoderBlock(nn.Module):
         return x
     
   
-class Transfomer(nn.Module):
+class Transformer(nn.Module):
     def __init__(self, config: Config, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.m_len = config.m_len
@@ -208,13 +208,7 @@ class Transfomer(nn.Module):
         self.norm = RMSNorm(config.n_dim, config.eps)
         self.out = nn.Linear(config.n_dim, config.vocab_size, bias=False)
         
-        
-        for pname,p in self.named_parameters():
-            if pname.endswith('down'):
-                init.normal_(p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layer))
-                
         init.normal_(self.embedding.weight, mean=0.0, std=0.02)
-        init.normal_(self.out.weight, mean=0.0, std=0.02)
 
     
     def parameter_size(self):

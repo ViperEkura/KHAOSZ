@@ -22,7 +22,7 @@ def chat():
 
 def test():
     cfg = Config("params/config.json")
-    model = Transfomer(cfg)
+    model = Transformer(cfg)
     print(model)
     print(f"parameter size: {model.parameter_size():,}")
 
