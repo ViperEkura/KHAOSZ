@@ -1,7 +1,7 @@
 import os
 import torch
 
-from .transfomer import Config, Transfomer
+from .transfomer import Config, Transformer
 from .tokenizer import BpeTokenizer
 
 def build_prompt(query, history) -> str:
@@ -16,7 +16,7 @@ class Khaosz:
     def __init__(self, path=None):
         self.tokenizer : BpeTokenizer = None
         self.config : Config = None
-        self.model : Transfomer = None
+        self.model : Transformer = None
         
         if path is not None:
             self.load(path)
@@ -28,8 +28,19 @@ class Khaosz:
         
         self.tokenizer = BpeTokenizer(tokenizer_path)
         self.config = Config(config_path)
-        self.model = Transfomer(self.config)
-        self.model.load_state_dict(torch.load(weight_path))
+        self.model = Transformer(self.config)
+        self.model.load_state_dict(torch.load(weight_path, weights_only=True))
+        
+        
+    def loop_impl(self, ids, temperature):
+        device = next(self.model.parameters()).device
+        input_tensor = torch.tensor(ids, device=device).unsqueeze(0)
+        prob = self.model(input_tensor)[-1, -1, :]
+        prob = torch.softmax(prob / temperature, dim=-1)
+        
+        next_token_id = torch.multinomial(prob, num_samples=1, replacement=True).item()
+        next_token = self.tokenizer.id_to_token(next_token_id)
+        return next_token, next_token_id
     
     def stream_generate(
             self, 
@@ -48,18 +59,14 @@ class Khaosz:
         
         self.model.eval()
         while len(ids) < self.config.m_len:
-            input_tensor = torch.tensor(ids).unsqueeze(0)
-            prob = self.model(input_tensor)[-1, -1, :]
-            prob = torch.softmax(prob / temperature, dim=-1)
-            next_token_id = torch.multinomial(prob, num_samples=1, replacement=True).item()
-            next_token = self.tokenizer.id_to_token(next_token_id)
-            
+            next_token, next_token_id = self.loop_impl(ids, temperature)
             if next_token == "<eog>":
-                break
+                break    
             response += next_token
-            
             ids.append(next_token_id)
             yield response ,history
+        
+        history.append((query, response))
 
     def generate(
             self, 
@@ -69,8 +76,22 @@ class Khaosz:
             top_k: int=10,
             top_p: float=0.8,
         ):
-            pass
+            tokens = build_prompt(query, history)
+            ids = self.tokenizer.encode(tokens)
+            response = str()
+            
+            self.model.eval()
+            while len(ids) < self.config.m_len:
+                next_token, next_token_id = self.loop_impl(ids, temperature)
+                if next_token == "<eog>":
+                    break
+                
+                response += next_token
+                ids.append(next_token_id)
+            
+            history.append((query, response))
+            return response
     
-    
-    def to():
-        pass
+    def to(self, *args, **kargs):
+        self.model.to(*args, **kargs)
+        return self
