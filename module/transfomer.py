@@ -193,9 +193,7 @@ class Transformer(nn.Module):
     def __init__(self, config: Config, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.m_len = config.m_len
-        self.embedding = nn.Embedding(config.vocab_size, config.n_dim)
-        self.dropout = nn.Dropout(config.drop_rate)
-        
+        self.embedding = nn.Embedding(config.vocab_size, config.n_dim)        
         cos_emb, sin_emb = get_rotary_emb(config.n_dim, config.m_len)
         self.cos_emb = nn.Parameter(cos_emb, requires_grad=False)
         self.sin_emb = nn.Parameter(sin_emb, requires_grad=False)
@@ -221,7 +219,6 @@ class Transformer(nn.Module):
         assert L <= self.m_len, f"Make sure input sequence length <= {self.m_len}"
         
         x = self.embedding(x)
-        x = self.dropout(x)
         
         for layer in self.layers:
             x = layer(x, self.cos_emb, self.sin_emb)
