@@ -15,7 +15,7 @@ def chat():
         for response, histroy in model.stream_generate(
             query=query, 
             history=histroy,
-            temperature=1.0,    
+            temperature=0.9,    
         ):
             print(response[response_size:], end="")
             response_size = len(response)
@@ -29,4 +29,4 @@ def test():
     print(f"parameter size: {model.parameter_size():,}")
 
 if __name__ == "__main__":
-    chat()
+    test()
