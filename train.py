@@ -59,7 +59,7 @@ def train(
     optim = AdamW(
         model.parameters(),
         eps=5e-5,
-        lr=5e-4,
+        lr=3e-4,
         betas=(0.9, 0.95),
         weight_decay=0.1
     )
