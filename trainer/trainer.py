@@ -101,14 +101,13 @@ class Trainer:
         n_epoch: int=1,
         n_iter_ckpt: int=5000,
         max_grad_norm: float=1.0,
-        warnup_stage_ratio: float=0.02,
+        warmup_iters: int=5000,
     ):
         vocab_size = self.config.vocab_size
         n_iter, start_iter  = 0, 0
         losses = list()
         
         total_iters = len(dataloader) * n_epoch
-        warmup_iters = warnup_stage_ratio * total_iters
         schdulder = LambdaLR(
             optimizer, 
             get_lambda_lr(warmup_iters=warmup_iters, lr_decay_iters=total_iters)

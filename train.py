@@ -62,7 +62,7 @@ def train(
         eps=5e-5,
         lr=max_lr,
         betas=(0.9, 0.95),
-        weight_decay=0.1
+        weight_decay=0.005
     )
     
     criterion = F.cross_entropy

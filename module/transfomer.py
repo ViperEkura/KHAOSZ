@@ -26,8 +26,9 @@ def get_rotary_emb(dim, max_len, base=10000, device='cuda', dtype=torch.bfloat16
 
     return cos_emb, sin_emb
 
-def rotary_emb(x: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
+def rotary_emb(x: Tensor, freqs_cis: tuple[Tensor, Tensor]) -> Tensor:
     _, L, _ = x.size()
+    cos, sin = freqs_cis
     x1, x2 = x[..., ::2], x[..., 1::2]
     x_half_rotated = torch.stack((-x2, x1), dim=-1).reshape_as(x)
     rot = x * cos[:L] + x_half_rotated * sin[:L]
@@ -67,8 +68,7 @@ class Config:
             self.d_ffn = None
             self.m_len = None
             self.n_layer = None
-            self.eps = None
-            self.drop_rate = None
+            self.norm_eps = None
             self.flash_attn = None
 
             if cfg_path is not None:
@@ -89,8 +89,7 @@ class Config:
             "d_ffn": self.d_ffn,
             "m_len": self.m_len,
             "n_layer": self.n_layer,
-            "eps": self.eps,
-            "drop_rate": self.drop_rate,
+            "norm_eps": self.norm_eps,
             "flash_attn": self.flash_attn
         }
         with open(config_path, 'w') as f:
@@ -98,21 +97,19 @@ class Config:
                
 
 class RMSNorm(nn.Module):
-    def __init__(self, n_dim, eps, *args, **kwargs):
+    def __init__(self, n_dim, norm_eps, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.weight = nn.Parameter(torch.ones(n_dim))
-        self.bias = nn.Parameter(torch.zeros(n_dim))
-        self.eps = eps
+        self.norm_eps = norm_eps
 
     def forward(self, x: Tensor) -> Tensor:
         dtype = x.dtype
+        
         x = x.float()
-
         mean_square = torch.mean(torch.pow(x, 2), dim=-1, keepdim=True)
-        norm = x * torch.rsqrt(mean_square + self.eps)
+        norm = x * torch.rsqrt(mean_square + self.norm_eps)
         norm = norm.to(dtype)
-        out = norm * self.weight + self.bias
-
+        out = norm * self.weight
         return out
     
     
@@ -152,14 +149,14 @@ class Attention(nn.Module):
         init.kaiming_uniform_(self.Wqkv, a=math.sqrt(5))
         init.kaiming_uniform_(self.Wo, a=math.sqrt(5))
 
-    def forward(self, x: Tensor, cos, sin, mask=None) -> Tensor:
+    def forward(self, x: Tensor, freqs_cis, mask=None) -> Tensor:
         B, L, _ = x.size()
         # x(B, L, D)
         qkv = F.linear(x, self.Wqkv) 
         q, k, v = qkv.chunk(3, dim=-1)
         
-        q = rotary_emb(q, cos, sin)
-        k = rotary_emb(k, cos, sin)
+        q = rotary_emb(q, freqs_cis)
+        k = rotary_emb(k, freqs_cis)
         
         if not self.flash_attn:
             if self.mask is None:
@@ -181,15 +178,15 @@ class Attention(nn.Module):
 
 
 class DecoderBlock(nn.Module):
-    def __init__(self, n_dim, n_head, d_ffn, flash_attn, eps, *args, **kwargs):
+    def __init__(self, n_dim, n_head, d_ffn, flash_attn, norm_eps, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.attention = Attention(n_dim, n_head, flash_attn)
-        self.norm_attn = RMSNorm(n_dim, eps)
+        self.norm_attn = RMSNorm(n_dim, norm_eps)
         self.ffn = FeedForward(n_dim, d_ffn)
-        self.norm_ffn = RMSNorm(n_dim, eps)
+        self.norm_ffn = RMSNorm(n_dim, norm_eps)
 
-    def forward(self, x, cos, sin, mask=None) -> torch.Tensor:
-        x = self.attention(self.norm_attn(x), cos, sin, mask) + x
+    def forward(self, x, freqs_cis, mask=None) -> torch.Tensor:
+        x = self.attention(self.norm_attn(x), freqs_cis, mask) + x
         x = self.ffn(self.norm_ffn(x)) + x
         return x
     
@@ -200,11 +197,11 @@ class Transformer(nn.Module):
         self.n_dim = config.n_dim
         self.embedding = nn.Embedding(config.vocab_size, config.n_dim)        
         self.layers = nn.ModuleList([
-            DecoderBlock(config.n_dim, config.n_head, config.d_ffn, config.flash_attn, config.eps)
+            DecoderBlock(config.n_dim, config.n_head, config.d_ffn, config.flash_attn, config.norm_eps)
             for _ in range(config.n_layer)
         ])
         
-        self.norm = RMSNorm(config.n_dim, config.eps)
+        self.norm = RMSNorm(config.n_dim, config.norm_eps)
         self.out = nn.Linear(config.n_dim, config.vocab_size, bias=False)
         
     
@@ -218,11 +215,11 @@ class Transformer(nn.Module):
         L = x.size(-1)
         assert x.ndim == 2, "Input must be a 2D tensor"
         
-        cos_emb, sin_emb = get_rotary_emb(self.n_dim, L, device=x.device, dtype=x.dtype)
+        freqs_cis = get_rotary_emb(self.n_dim, L, device=x.device, dtype=x.dtype)
         x = self.embedding(x)
         
         for layer in self.layers:
-            x = layer(x, cos_emb, sin_emb)
+            x = layer(x, freqs_cis)
             
         x = self.norm(x)
         x = self.out(x)
