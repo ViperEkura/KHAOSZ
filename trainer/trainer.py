@@ -18,7 +18,7 @@ from torch.nn.utils import clip_grad_norm_
 from tqdm import tqdm
 
 
-def get_lambda(warmup_iters, lr_decay_iters, min_rate=0.08):
+def get_lambda_lr(warmup_iters, lr_decay_iters, min_rate=0.08):
     def get_lr(now_iter):
         if now_iter <= warmup_iters:
             return max(min_rate, now_iter / warmup_iters)
@@ -111,7 +111,7 @@ class Trainer:
         warmup_iters = warnup_stage_ratio * total_iters
         schdulder = LambdaLR(
             optimizer, 
-            get_lambda(warmup_iters=warmup_iters, lr_decay_iters=total_iters)
+            get_lambda_lr(warmup_iters=warmup_iters, lr_decay_iters=total_iters)
         )
         
         self.logger.info("start training ...")  
