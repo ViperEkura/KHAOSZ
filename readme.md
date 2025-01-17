@@ -32,6 +32,7 @@ python train.py \
 --data_root_path=/path/to/dataset \
 --n_epoch=5 \
 --batch_size=8 \
+--max_lr=2e-4 \
 --n_iter_ckpt=10000 \
 --ckpt_dir checkpoints 
 ```
@@ -42,13 +43,15 @@ python train.py \
 
 --batch_size：指定每个批次的样本数量。
 
+--max_lr: 指定过程中最大的学习率（学习率采用的是预热 + 余弦衰减）
+
 --n_iter_ckpt：指定每多少迭代次数保存一次检查点。
 
 --ckpt_dir：指定保存检查点的目录。
 
 --resume_train: 是否从检查点恢复训练
 
---resume_ckpt_path: 恢复训练的checkpoint路径
+--resume_dir: 恢复训练的checkpoint路径
 
 训练过程中，您可以在终端中查看训练日志，了解训练进度、损失值等信息。
 检查点文件会保存在指定的检查点目录中，您可以使用这些检查点文件来恢复训练或进行评估。
