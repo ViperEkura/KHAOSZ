@@ -22,11 +22,12 @@ def chat():
             
         print("")
 
-def test():
+def show_parameter_size():
     cfg = Config("params/config.json")
     model = Transformer(cfg)
     print(model)
     print(f"parameter size: {model.parameter_size():,}")
+    
 
 if __name__ == "__main__":
-    test()
+    chat()
