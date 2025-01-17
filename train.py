@@ -22,6 +22,7 @@ def train(
     data_root_path: str,
     n_epoch: int,
     batch_size: int,
+    max_lr: int,
     n_iter_ckpt: int,
     ckpt_dir: str,
     resume_dir: str = None
@@ -59,7 +60,7 @@ def train(
     optim = AdamW(
         model.parameters(),
         eps=5e-5,
-        lr=3e-4,
+        lr=max_lr,
         betas=(0.9, 0.95),
         weight_decay=0.1
     )
@@ -81,6 +82,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_root_path", type=str, required=True, help="Path to the root directory of the dataset.")
     parser.add_argument("--n_epoch", type=int, default=1, help="Number of epochs to train.")
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size for training.")
+    parser.add_argument("--max_lr", type=float, default=3e-4, help="Max learning rate for training.")
     parser.add_argument("--n_iter_ckpt", type=int, default=5000, help="Number of iters between checkpoints.")
     parser.add_argument("--ckpt_dir", type=str, default="checkpoint", help="Directory to save checkpoints.")
     parser.add_argument("--resume_train", type=bool, default=False, help="Resume training from a checkpoint.")
@@ -91,12 +93,12 @@ if __name__ == "__main__":
     resume_dir = None
     if args.resume_train and args.resume_dir is not None:
         resume_dir = args.resume_dir
-        
 
     train(
         data_root_path=args.data_root_path,
         n_epoch=args.n_epoch,
         batch_size=args.batch_size,
+        max_lr=args.max_lr,
         n_iter_ckpt=args.n_iter_ckpt,
         ckpt_dir=args.ckpt_dir,
         resume_dir=resume_dir
