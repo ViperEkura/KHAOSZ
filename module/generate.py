@@ -4,13 +4,15 @@ import torch
 from .transfomer import Config, Transformer
 from .tokenizer import BpeTokenizer
 
+
 def build_prompt(query, history) -> str:
     ret_prompt = str()
     if len(history) > 0:
         for query, response in history:
-            ret_prompt += f"<|user|>: {query}\n\n <|system|>: <sog> {response} <eog>\n\n"
-    ret_prompt += f"<|user|>: {query}\n\n <|system|>: <sog>"
+            ret_prompt += f"<|user|>: {query}\n\n<|system|>: <sog> {response} <eog>\n\n"
+    ret_prompt += f"<|user|>: {query}\n\n<|system|>: <sog>"
     return ret_prompt
+
 
 class Khaosz:
     def __init__(self, path=None):
@@ -31,10 +33,10 @@ class Khaosz:
         self.model = Transformer(self.config)
         self.model.load_state_dict(torch.load(weight_path, weights_only=True))
         
-    def sample_next_token(self, ids, temperature=1.0, top_k=0, top_p=0.0, filter_value=-float('Inf')):
+    def sample_next_token(self, ids, temperature=1.0, top_k=0, top_p=0.0, filter_value=-float('Inf')) -> tuple[int, str]:
         device = next(self.model.parameters()).device
         input_tensor = torch.tensor(ids, device=device).unsqueeze(0)
-        logits = self.model(input_tensor)[-1, -1, :] / temperature
+        logits: torch.Tensor = self.model(input_tensor)[-1, -1, :] / temperature
         
         top_k = min(top_k, logits.size(-1))
         if top_k > 0:
@@ -53,7 +55,7 @@ class Khaosz:
             logits[indices_to_remove] = filter_value
             
         probabilities = torch.softmax(logits, dim=-1)
-        next_token_id = torch.multinomial(probabilities, num_samples=1,replacement=True).item()
+        next_token_id = torch.multinomial(probabilities, num_samples=1).item()
         next_token = self.tokenizer.id_to_token(next_token_id)
         
         return next_token, next_token_id

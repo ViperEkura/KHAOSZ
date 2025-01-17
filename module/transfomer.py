@@ -13,12 +13,17 @@ def create_mask(L: int, device) -> Tensor:
     mask = mask.to(device)
     return mask
 
-def get_rotary_emb(dim, max_len, base=10000) -> tuple[Tensor, Tensor]:
+def get_rotary_emb(dim, max_len, base=10000, device='cuda', dtype=torch.bfloat16) -> tuple[Tensor, Tensor]:
     inv_freq = torch.exp(- torch.log(torch.tensor(base)) * ((torch.arange(0, dim, 1) // 2) / dim))
     pos_indices = torch.arange(1, max_len + 1)
     angle_rads = torch.outer(pos_indices, inv_freq)
-    sin_emb = torch.sin(angle_rads)
+    
     cos_emb = torch.cos(angle_rads)
+    sin_emb = torch.sin(angle_rads)
+    cos_emb.requires_grad, sin_emb.requires_grad = False, False 
+    cos_emb = cos_emb.to(device=device, dtype=dtype)
+    sin_emb = sin_emb.to(device=device, dtype=dtype)
+
     return cos_emb, sin_emb
 
 def rotary_emb(x: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
@@ -192,12 +197,8 @@ class DecoderBlock(nn.Module):
 class Transformer(nn.Module):
     def __init__(self, config: Config, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.m_len = config.m_len
+        self.n_dim = config.n_dim
         self.embedding = nn.Embedding(config.vocab_size, config.n_dim)        
-        cos_emb, sin_emb = get_rotary_emb(config.n_dim, config.m_len)
-        self.cos_emb = nn.Parameter(cos_emb, requires_grad=False)
-        self.sin_emb = nn.Parameter(sin_emb, requires_grad=False)
-        
         self.layers = nn.ModuleList([
             DecoderBlock(config.n_dim, config.n_head, config.d_ffn, config.flash_attn, config.eps)
             for _ in range(config.n_layer)
@@ -216,12 +217,12 @@ class Transformer(nn.Module):
     def forward(self, x: Tensor):
         L = x.size(-1)
         assert x.ndim == 2, "Input must be a 2D tensor"
-        assert L <= self.m_len, f"Make sure input sequence length <= {self.m_len}"
         
+        cos_emb, sin_emb = get_rotary_emb(self.n_dim, L, device=x.device, dtype=x.dtype)
         x = self.embedding(x)
         
         for layer in self.layers:
-            x = layer(x, self.cos_emb, self.sin_emb)
+            x = layer(x, cos_emb, sin_emb)
             
         x = self.norm(x)
         x = self.out(x)
