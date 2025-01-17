@@ -1,5 +1,13 @@
 import torch
+import warnings
 from module import Khaosz, Transformer, Config
+
+warnings.filterwarnings(
+    "ignore",
+    message=".*Torch was not compiled with flash attention.*",
+    category=UserWarning,
+    module='torch.*'
+)
 
 def chat():
     model = Khaosz("params")
