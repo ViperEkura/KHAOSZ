@@ -81,7 +81,7 @@ class Khaosz:
                 ids, temperature, 
                 top_k=top_k, top_p=top_p
             )
-            if next_token == "<eog>":
+            if next_token == "</s>":
                 break    
             response += next_token
             ids.append(next_token_id)
@@ -107,7 +107,7 @@ class Khaosz:
                     ids, temperature, 
                     top_k=top_k, top_p=top_p
                 )
-                if next_token == "<eog>":
+                if next_token == "</s>":
                     break
                 
                 response += next_token
