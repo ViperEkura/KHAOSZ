@@ -9,7 +9,7 @@ from torch.nn import init
 
 
 def create_mask(L: int, device) -> Tensor:
-    mask = torch.ones(L, L, dtype=torch.bool).tril(diagonal=-1)
+    mask = torch.ones(L, L, dtype=torch.bool).triu(diagonal=1)
     mask = mask.to(device)
     return mask
 
