@@ -4,7 +4,7 @@
     "n_head": 16,
     "d_ffn": 4096,
     "m_len": 1024,
-    "n_layer": 20,
+    "n_layer": 12,
     "norm_eps": 1e-5,
     "flash_attn": true
 }
