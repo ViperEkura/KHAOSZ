@@ -43,4 +43,5 @@ python KHAOSZ/train.py \
 ```
 
 其他：
-使用wiki_zh 作为训练数据进行预训练
+使用wiki_zh 作为训练数据进行预训练， 但是发现loss 停滞在5左右
+最终发现是位置编码精度问题， 在代码中使用成torch.long 的精度
