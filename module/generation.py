@@ -56,9 +56,8 @@ class Khaosz:
             
         probabilities = torch.softmax(logits, dim=-1)
         next_token_id = torch.multinomial(probabilities, num_samples=1).item()
-        next_token = self.tokenizer.id_to_token(next_token_id)
         
-        return next_token, next_token_id
+        return next_token_id
     
     def stream_generate(
             self, 
@@ -73,17 +72,18 @@ class Khaosz:
         
         tokens = build_prompt(query, history)
         ids = self.tokenizer.encode(tokens)
+        start_id_pos = len(ids)
         response = str()
         
         self.model.eval()
         while len(ids) < self.config.m_len:
-            next_token, next_token_id = self.sample_next_token(
+            next_token_id = self.sample_next_token(
                 ids, temperature, 
                 top_k=top_k, top_p=top_p
             )
-            if next_token == "</s>":
+            if next_token_id == "</s>":
                 break    
-            response += next_token
+            response = self.tokenizer.decode(ids[start_id_pos:] + [next_token_id])
             ids.append(next_token_id)
             yield response ,history
         
@@ -99,19 +99,20 @@ class Khaosz:
         ):
             tokens = build_prompt(query, history)
             ids = self.tokenizer.encode(tokens)
+            start_id_pos = len(ids)
             response = str()
             
             self.model.eval()
             while len(ids) < self.config.m_len:
-                next_token, next_token_id = self.sample_next_token(
+                next_token_id = self.sample_next_token(
                     ids, temperature, 
                     top_k=top_k, top_p=top_p
                 )
-                if next_token == "</s>":
-                    break
-                
-                response += next_token
+                if next_token_id == "</s>":
+                    break    
+                response = self.tokenizer.decode(ids[start_id_pos:] + [next_token_id])
                 ids.append(next_token_id)
+                yield response ,history
             
             history.append((query, response))
             return response
