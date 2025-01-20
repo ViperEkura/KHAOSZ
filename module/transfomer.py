@@ -134,7 +134,7 @@ class FeedForward(nn.Module):
 class Attention(nn.Module):
     def __init__(self, n_dim, n_heads, flash_attn=True, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        assert n_dim % n_heads == 0, "n_dim must be divisible by n_heads"
+        assert n_dim % n_heads == 0
         self.Wqkv = nn.Parameter(torch.empty(3 * n_dim, n_dim))
         self.Wo = nn.Parameter(torch.empty(n_dim, n_dim))
         self.mask = None
@@ -158,9 +158,9 @@ class Attention(nn.Module):
         k = rotary_emb(k, freqs_cis)
         
         if not self.flash_attn:
-            if self.mask is None:
-                self.mask = create_mask(L, x.device)
             if mask is None:
+                if self.mask is None:
+                    self.mask = create_mask(L, x.device)
                 mask = self.mask
             attn_out = self_attention(q, k, v, self.n_heads, self.n_dim, self.scale, mask)
         else:
@@ -212,8 +212,8 @@ class Transformer(nn.Module):
         L = x.size(-1)
         assert x.ndim == 2
         
-        freqs_cis = get_rotary_emb(self.n_dim, L, device=x.device, dtype=x.dtype)
         x = F.embedding(x, self.embedding)
+        freqs_cis = get_rotary_emb(self.n_dim, L, device=x.device, dtype=x.dtype)
         
         for layer in self.layers:
             x = layer(x, freqs_cis)
