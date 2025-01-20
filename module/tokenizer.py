@@ -12,7 +12,7 @@ class BpeTokenizer:
         tokenizer = Tokenizer(model)
         tokenizer.normalizer = normalizers.Sequence([
             normalizers.Strip(),
-            normalizers.NFKC()
+            normalizers.NFC()
         ])
         tokenizer.pre_tokenizer = pre_tokenizers.Sequence([
             pre_tokenizers.Punctuation(behavior="isolated"),
@@ -64,12 +64,6 @@ class BpeTokenizer:
 
     def decode(self, tokens: list[int]) -> str:
         return self._tokenizer.decode(tokens)
-    
-    def id_to_token(self, id: int) -> str:
-        return self._tokenizer.id_to_token(id)
-    
-    def token_to_id(self, token: str) -> int:
-        return self._tokenizer.token_to_id(token)
     
     def __len__(self) -> int:
         return self._tokenizer.get_vocab_size()

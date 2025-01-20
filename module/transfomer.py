@@ -134,7 +134,7 @@ class FeedForward(nn.Module):
 class Attention(nn.Module):
     def __init__(self, n_dim, n_heads, flash_attn=True, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        assert n_dim % n_heads == 0, "n_dim must be divisible by n_heads"
+        assert n_dim % n_heads == 0
         self.Wqkv = nn.Parameter(torch.empty(3 * n_dim, n_dim))
         self.Wo = nn.Parameter(torch.empty(n_dim, n_dim))
         self.mask = None
@@ -158,9 +158,9 @@ class Attention(nn.Module):
         k = rotary_emb(k, freqs_cis)
         
         if not self.flash_attn:
-            if self.mask is None:
-                self.mask = create_mask(L, x.device)
             if mask is None:
+                if self.mask is None:
+                    self.mask = create_mask(L, x.device)
                 mask = self.mask
             attn_out = self_attention(q, k, v, self.n_heads, self.n_dim, self.scale, mask)
         else:
@@ -194,15 +194,13 @@ class Transformer(nn.Module):
     def __init__(self, config: Config, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.n_dim = config.n_dim
-        self.embedding = nn.Embedding(config.vocab_size, config.n_dim)        
+        self.embedding = nn.Parameter(torch.empty(config.vocab_size, config.n_dim))
         self.layers = nn.ModuleList([
             DecoderBlock(config.n_dim, config.n_head, config.d_ffn, config.flash_attn, config.norm_eps)
             for _ in range(config.n_layer)
         ])
-        
         self.norm = RMSNorm(config.n_dim, config.norm_eps)
-        self.out = nn.Linear(config.n_dim, config.vocab_size, bias=False)
-        
+        init.normal_(self.embedding, mean=0, std=0.02)
     
     def parameter_size(self):
         parameter_size = 0
@@ -212,15 +210,15 @@ class Transformer(nn.Module):
     
     def forward(self, x: Tensor):
         L = x.size(-1)
-        assert x.ndim == 2, "Input must be a 2D tensor"
+        assert x.ndim == 2
         
+        x = F.embedding(x, self.embedding)
         freqs_cis = get_rotary_emb(self.n_dim, L, device=x.device, dtype=x.dtype)
-        x = self.embedding(x)
         
         for layer in self.layers:
             x = layer(x, freqs_cis)
             
         x = self.norm(x)
-        x = self.out(x)
+        x = F.linear(x, self.embedding)
         
         return x

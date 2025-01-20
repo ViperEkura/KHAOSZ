@@ -24,8 +24,8 @@ def chat():
             query=query, 
             history=histroy,
             temperature=1.0,
-            top_k=20,
-            top_p=0.8
+            top_k=50,
+            top_p=0.6
         ):
             print(response[response_size:], end="")
             response_size = len(response)
@@ -35,7 +35,6 @@ def chat():
 def show_parameter_size():
     cfg = Config("params/config.json")
     model = Transformer(cfg)
-    print(model)
     print(f"parameter size: {model.parameter_size():,}")
     
 
