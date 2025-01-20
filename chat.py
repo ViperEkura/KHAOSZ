@@ -24,8 +24,8 @@ def chat():
             query=query, 
             history=histroy,
             temperature=1.0,
-            top_k=10,
-            top_p=0.8
+            top_k=50,
+            top_p=0.6
         ):
             print(response[response_size:], end="")
             response_size = len(response)
@@ -39,4 +39,4 @@ def show_parameter_size():
     
 
 if __name__ == "__main__":
-    show_parameter_size()
+    chat()

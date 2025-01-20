@@ -29,8 +29,6 @@ python KHAOSZ/train.py \
 --ckpt_dir checkpoints 
 ```
 
-存在问题， 在训练的时候，模型收敛似乎十分困难
-
 训练日志：
 ```
 2025-01-20 15:24:58,150 -- initializing trainer ...
@@ -43,3 +41,6 @@ python KHAOSZ/train.py \
 2025-01-20 18:12:22,207 -- Saved checkpoint to checkpoints/epoch_02_iter_30000
 
 ```
+
+其他：
+使用wiki_zh 作为训练数据进行预训练
