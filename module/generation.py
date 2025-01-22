@@ -73,7 +73,6 @@ class Khaosz:
         tokens = build_prompt(query, history)
         ids = self.tokenizer.encode(tokens)
         start_id_pos = len(ids)
-        stop_id = self.tokenizer.encode("</s>")[0]
         response = str()
         
         self.model.eval()
@@ -82,8 +81,8 @@ class Khaosz:
                 ids, temperature, 
                 top_k=top_k, top_p=top_p
             )
-            if next_token_id == stop_id:
-                break    
+            if next_token_id in self.tokenizer.stop_ids:
+                break
             ids.append(next_token_id)
             response = self.tokenizer.decode(ids[start_id_pos:])
             yield response ,history

@@ -67,3 +67,10 @@ class BpeTokenizer:
     
     def __len__(self) -> int:
         return self._tokenizer.get_vocab_size()
+    
+    @property
+    def stop_ids(self) -> list[int]:
+        stop_ids = []
+        for token in self._special_tokens:
+            stop_ids.append(self._tokenizer.token_to_id(token))
+        return stop_ids
