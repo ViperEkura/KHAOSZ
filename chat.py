@@ -2,12 +2,7 @@ import torch
 import warnings
 from module import Khaosz, Transformer, Config
 
-warnings.filterwarnings(
-    "ignore",
-    message=".*Torch was not compiled with flash attention.*",
-    category=UserWarning,
-    module='torch.*'
-)
+warnings.filterwarnings("ignore")
 
 def chat():
     model = Khaosz("params")
@@ -23,13 +18,12 @@ def chat():
         for response, histroy in model.stream_generate(
             query=query, 
             history=histroy,
-            temperature=1.0,
+            temperature=1.2,
             top_k=50,
-            top_p=0.6
+            top_p=0.9
         ):
             print(response[response_size:], end="")
             response_size = len(response)
-            
         print("")
 
 def show_parameter_size():
