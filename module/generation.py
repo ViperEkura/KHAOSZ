@@ -73,6 +73,7 @@ class Khaosz:
         tokens = build_prompt(query, history)
         ids = self.tokenizer.encode(tokens)
         start_id_pos = len(ids)
+        stop_id = self.tokenizer.encode("</s>")[0]
         response = str()
         
         self.model.eval()
@@ -81,10 +82,10 @@ class Khaosz:
                 ids, temperature, 
                 top_k=top_k, top_p=top_p
             )
-            if next_token_id == "</s>":
+            if next_token_id == stop_id:
                 break    
-            response = self.tokenizer.decode(ids[start_id_pos:] + [next_token_id])
             ids.append(next_token_id)
+            response = self.tokenizer.decode(ids[start_id_pos:])
             yield response ,history
         
         history.append((query, response))
@@ -97,25 +98,29 @@ class Khaosz:
             top_k: int=10,
             top_p: float=0.8,
         ):
-            tokens = build_prompt(query, history)
-            ids = self.tokenizer.encode(tokens)
-            start_id_pos = len(ids)
-            response = str()
+        if history is None:
+            history = list()
+        
+        tokens = build_prompt(query, history)
+        ids = self.tokenizer.encode(tokens)
+        start_id_pos = len(ids)
+        stop_id = self.tokenizer.encode("</s>")[0]
+        response = str()
+        
+        self.model.eval()
+        while len(ids) < self.config.m_len:
+            next_token_id = self.sample_next_token(
+                ids, temperature, 
+                top_k=top_k, top_p=top_p
+            )
+            if next_token_id == stop_id:
+                break    
+            ids.append(next_token_id)
             
-            self.model.eval()
-            while len(ids) < self.config.m_len:
-                next_token_id = self.sample_next_token(
-                    ids, temperature, 
-                    top_k=top_k, top_p=top_p
-                )
-                if next_token_id == "</s>":
-                    break    
-                response = self.tokenizer.decode(ids[start_id_pos:] + [next_token_id])
-                ids.append(next_token_id)
-                yield response ,history
-            
-            history.append((query, response))
-            return response
+        response = self.tokenizer.decode(ids[start_id_pos:])
+        history.append((query, response))
+        
+        return response
     
     def to(self, *args, **kargs):
         self.model.to(*args, **kargs)
