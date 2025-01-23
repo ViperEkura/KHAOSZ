@@ -1,4 +1,3 @@
-import os
 from tokenizers import Tokenizer, Encoding
 from tokenizers import decoders, processors, normalizers, pre_tokenizers
 from tokenizers.models import BPE
