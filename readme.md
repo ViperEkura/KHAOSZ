@@ -5,6 +5,8 @@
 模型的参数在：https://huggingface.co/ViperEk/KHAOSZ
 请下载后放置于 params 目录
 
+代码遵循 https://creativecommons.org/licenses/by-nc/4.0/ 协议
+
 - **设备选择**：当前代码默认使用CUDA进行训练
 - **性能优化**：代码中设置了`dtype=torch.bfloat16`来启用混合精度训练，这有助于提高训练速度和降低显存消耗，但需确保硬件支持此特性。
 - **语言支持**：该模型目前仅仅在中文数据集上训练， 因此通过英文对话可能出现问题， 但是训练tokenzier 的时候加入了英文文段， 也可以解码英文token
