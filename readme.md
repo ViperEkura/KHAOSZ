@@ -23,7 +23,7 @@
 确保您已经安装了所有必要的Python库。根据代码中的导入语句，您需要安装以下库：
 
 ```bash
-pip install -r requirements.txt1
+pip install -r requirements.txt
 ```
 
 (3).运行训练脚本：
