@@ -33,7 +33,7 @@ class Khaosz:
         self.model = Transformer(self.config)
         self.model.load_state_dict(torch.load(weight_path, weights_only=True))
         
-    def sample_next_token(self, ids, temperature=1.0, top_k=0, top_p=0.0, filter_value=-float('Inf')) -> tuple[int, str]:
+    def sample_next_token(self, ids, temperature=1.0, top_k=0, top_p=0.0, filter_value=-float('inf')) -> tuple[int, str]:
         device = next(self.model.parameters()).device
         input_tensor = torch.tensor(ids, device=device).unsqueeze(0)
         logits: torch.Tensor = self.model(input_tensor)[-1, -1, :] / temperature
