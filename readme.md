@@ -3,6 +3,7 @@
 这是一个支持中文和英文双语言的Transfomer模型，包含模型设置和训练流程， 通过加载`params/config.json` 中的设定的参数完成训练， 使用`train.py`解析命令行参数，包括数据集根目录、训练轮数、批处理大小、保存检查点的间隔轮数以及检查点保存目录。
 
 模型的参数在：https://huggingface.co/ViperEk/KHAOSZ
+训练数据集来源也见上图链接
 
 请下载后放置于 params 目录
 
