@@ -7,7 +7,7 @@
 
 请下载后放置于 params 目录
 
-代码遵循 http://www.apache.org/licenses/LICENSE-2.0 协议， 使用时请注明代码来源而且不得用于商业用途
+代码遵循 http://www.apache.org/licenses/LICENSE-2.0 协议， 使用时请注明代码来源
 
 - **设备选择**：当前代码默认使用CUDA进行训练
 - **性能优化**：代码中设置了`dtype=torch.bfloat16`来启用混合精度训练，这有助于提高训练速度和降低显存消耗，但需确保硬件支持此特性。
