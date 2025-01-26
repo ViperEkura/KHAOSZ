@@ -1,4 +1,0 @@
-matplotlib>=3.6.3
-tokenizers>=0.20.1
-torch>=2.1.2
-tqdm>=4.65.2
