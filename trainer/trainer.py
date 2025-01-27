@@ -18,7 +18,7 @@ from tqdm import tqdm
 import safetensors.torch as st
 
 
-def get_lambda_lr(warmup_iters, lr_decay_iters, min_rate=0.08):
+def get_lambda_lr(warmup_iters, lr_decay_iters, min_rate=0.1):
     def get_lr(now_iter):
         if now_iter <= warmup_iters:
             return max(min_rate, now_iter / warmup_iters)
