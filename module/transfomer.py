@@ -14,11 +14,14 @@ def create_mask(L: int, device) -> Tensor:
     return mask
 
 def get_rotary_emb(dim, max_len, base=10000, device='cuda', dtype=torch.bfloat16) -> tuple[Tensor, Tensor]:
-    freqs = torch.pow(torch.tensor(base), -(torch.arange(0, dim, 2) / dim))
-    freqs = freqs.repeat_interleave(2)
-
-    t = torch.arange(0, max_len).float()
+    freqs = torch.pow(
+        torch.tensor(base, device=device), 
+        -(torch.arange(0, dim, 2, device=device) / dim)
+    ).repeat_interleave(2)
+    
+    t = torch.arange(0, max_len, device=device).float()
     rads = torch.outer(t, freqs)
+    
     cos_emb = torch.cos(rads).to(device=device, dtype=dtype)
     sin_emb = torch.sin(rads).to(device=device, dtype=dtype)
 
