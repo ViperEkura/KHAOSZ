@@ -26,14 +26,8 @@
 
 确保您已经安装了所有必要的Python库。版本参考如下：
 
-```
-requires-python = ">=3.12"
-dependencies = [
-    "matplotlib>=3.10.0",
-    "tokenizers>=0.21.0",
-    "torch>=2.5.1",
-    "tqdm>=4.67.1",
-]
+```bash
+conda env create -f environment.yml --name env_name
 ```
 
 请使用uv 安装
