@@ -1,3 +1,9 @@
+# cache
 __pycache__
-params/model.pt
-train_log.md
+
+# model
+*.pt
+*.safetensors
+
+# training log
+train_log*

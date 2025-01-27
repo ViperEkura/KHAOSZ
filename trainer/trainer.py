@@ -1,21 +1,21 @@
-
-import torch
-import torch.nn as nn
-
 import os
 import math
 import pickle
 import logging
-
 from matplotlib import pyplot as plt
+
 from module.transfomer import Config
 from module.tokenizer import BpeTokenizer
+
+import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR
 from torch.nn.modules.loss import _Loss
 from torch.nn.utils import clip_grad_norm_
 from tqdm import tqdm
+import safetensors.torch as st
 
 
 def get_lambda_lr(warmup_iters, lr_decay_iters, min_rate=0.08):
@@ -45,7 +45,7 @@ class CheckPoint:
         self.n_iter = n_iter
 
     def save_ckpt(self, save_dir):
-        model_path = os.path.join(save_dir, "model.pt")
+        model_path = os.path.join(save_dir, "model.safetensors")
         config_path = os.path.join(save_dir, "config.json")
         lossfig_path = os.path.join(save_dir, "loss.png")
         loss_path = os.path.join(save_dir, "loss.pkl")
@@ -59,7 +59,7 @@ class CheckPoint:
         
         try:    
             os.makedirs(save_dir, exist_ok=True)
-            torch.save(self.model.state_dict(), model_path)
+            st.save_file(self.model.state_dict(), model_path)
             self.config.save(config_path)
             self.tokenizer.save(tokenizer_path)
             plt.savefig(lossfig_path)

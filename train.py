@@ -2,6 +2,7 @@ import os
 import argparse
 import torch
 import torch.nn.functional as F
+import safetensors.torch as st
 
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
@@ -37,11 +38,11 @@ def train(
     else:
         config_path = os.path.join(resume_dir, "config.json")
         tokenizer_path = os.path.join(resume_dir, "tokenizer.json")
-        weight_path = os.path.join(resume_dir, "model.pt")
+        weight_path = os.path.join(resume_dir, "model.safetensors")
         
         config = Config(config_path)
         model = Transformer(config)
-        model.load_state_dict(torch.load(weight_path))
+        model.load_state_dict(st.load_file(weight_path))
         tokenizer = BpeTokenizer(tokenizer_path)
     
     device = torch.device("cuda")

@@ -1,6 +1,6 @@
 import os
 import torch
-
+import safetensors.torch as st
 from .transfomer import Config, Transformer
 from .tokenizer import BpeTokenizer
 
@@ -26,12 +26,13 @@ class Khaosz:
     def load(self, model_dir):
         tokenizer_path = os.path.join(model_dir, "tokenizer.json")
         config_path = os.path.join(model_dir, "config.json")
-        weight_path = os.path.join(model_dir, "model.pt")
+        weight_path = os.path.join(model_dir, "model.safetensors")
         
         self.tokenizer = BpeTokenizer(tokenizer_path)
         self.config = Config(config_path)
         self.model = Transformer(self.config)
-        self.model.load_state_dict(torch.load(weight_path, weights_only=True))
+        state_dict = st.load_file(weight_path)
+        self.model.load_state_dict(state_dict)
         
     def sample_next_token(self, ids, temperature=1.0, top_k=0, top_p=0.0, filter_value=-float('inf')) -> tuple[int, str]:
         device = next(self.model.parameters()).device
