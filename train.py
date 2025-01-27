@@ -62,8 +62,8 @@ def train(
         model.parameters(),
         eps=5e-5,
         lr=max_lr,
-        betas=(0.9, 0.95),
-        weight_decay=0.005
+        betas=(0.9, 0.99),
+        weight_decay=0.05
     )
     
     criterion = F.cross_entropy
@@ -75,7 +75,7 @@ def train(
         ckpt_dir=ckpt_dir,
         n_epoch=n_epoch, 
         n_iter_ckpt=n_iter_ckpt,
-        max_grad_norm=0.1
+        max_grad_norm=1.0
     )
 
 if __name__ == "__main__":
