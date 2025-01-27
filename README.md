@@ -24,7 +24,7 @@
 
 (2).安装依赖：
 
-确保您已经安装了所有必要的Python库。版本参考如下：
+确保您已经安装了所有必要的Python库：
 
 ```bash
 conda env create -f environment.yml --name env_name
