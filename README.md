@@ -24,11 +24,19 @@
 
 (2).安装依赖：
 
-确保您已经安装了所有必要的Python库。根据代码中的导入语句，您需要安装以下库：
+确保您已经安装了所有必要的Python库。版本参考如下：
 
-```bash
-pip install -r requirements.txt
 ```
+requires-python = ">=3.12"
+dependencies = [
+    "matplotlib>=3.10.0",
+    "tokenizers>=0.21.0",
+    "torch>=2.5.1",
+    "tqdm>=4.67.1",
+]
+```
+
+请使用uv 安装
 
 (3).运行训练脚本：
 
