@@ -6,7 +6,6 @@ from torch.utils.data import Dataset
 from typing import List, Union
 
 
-
 class SeqDataset(Dataset):
     def __init__(self, m_len, device=device('cuda')):
         super().__init__()
