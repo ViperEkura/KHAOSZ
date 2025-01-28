@@ -23,6 +23,7 @@ def train(
     data_root_path: str,
     n_epoch: int,
     batch_size: int,
+    n_iter_step: int,
     max_lr: int,
     n_iter_ckpt: int,
     ckpt_dir: str,
@@ -73,8 +74,9 @@ def train(
         optimizer=optim,
         criterion=criterion,
         ckpt_dir=ckpt_dir,
-        n_epoch=n_epoch, 
+        n_epoch=n_epoch,
         n_iter_ckpt=n_iter_ckpt,
+        n_iter_step=n_iter_step,
         max_grad_norm=1.0
     )
 
@@ -83,6 +85,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_root_path", type=str, required=True, help="Path to the root directory of the dataset.")
     parser.add_argument("--n_epoch", type=int, default=1, help="Number of epochs to train.")
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size for training.")
+    parser.add_argument("--n_iter_step", type=int, default=1, help="Number of iterations between each optimizer step.")
     parser.add_argument("--max_lr", type=float, default=3e-4, help="Max learning rate for training.")
     parser.add_argument("--n_iter_ckpt", type=int, default=5000, help="Number of iters between checkpoints.")
     parser.add_argument("--ckpt_dir", type=str, default="checkpoint", help="Directory to save checkpoints.")
@@ -99,6 +102,7 @@ if __name__ == "__main__":
         data_root_path=args.data_root_path,
         n_epoch=args.n_epoch,
         batch_size=args.batch_size,
+        n_iter_step=args.n_iter_step,
         max_lr=args.max_lr,
         n_iter_ckpt=args.n_iter_ckpt,
         ckpt_dir=args.ckpt_dir,
