@@ -13,28 +13,30 @@ def create_mask(L: int, device) -> Tensor:
     mask = mask.to(device)
     return mask
 
-def get_rotary_emb(dim, max_len, base=10000, device='cuda', dtype=torch.bfloat16) -> tuple[Tensor, Tensor]:
-    freqs = torch.pow(
-        torch.tensor(base, device=device), 
-        -(torch.arange(0, dim, 2, device=device) / dim)
-    ).repeat_interleave(2)
+def get_rotary_emb(
+        dim: int, 
+        max_len: int, 
+        base: float = 10000, 
+        device: torch.device = torch.device('cuda'),
+    ) -> torch.Tensor:
     
+    theta = 1.0 / (base ** (torch.arange(0, dim, 2, device=device).float() / dim))
     t = torch.arange(0, max_len, device=device).float()
-    rads = torch.outer(t, freqs)
+    freqs = torch.outer(t, theta)
+    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
     
-    cos_emb = torch.cos(rads).to(device=device, dtype=dtype)
-    sin_emb = torch.sin(rads).to(device=device, dtype=dtype)
+    return freqs_cis
 
-    return (cos_emb, sin_emb)
+def rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
+    batch_size, seq_len, dim = x.size()
+    dtype = x.dtype
+    
+    x = x.float().reshape(batch_size, seq_len, dim // 2, 2)
+    x_complex = torch.view_as_complex(x) 
+    x_rotated = x_complex * freqs_cis[:seq_len]
+    x_out = torch.view_as_real(x_rotated).reshape(batch_size, seq_len, dim).to(dtype)
 
-
-def rotary_emb(x: Tensor, freqs_cis: tuple[Tensor, Tensor]) -> Tensor:
-    _, L, _ = x.size()
-    cos, sin = freqs_cis
-    x1, x2 = x[..., ::2], x[..., 1::2]
-    x_half_rotated = torch.stack((-x2, x1), dim=-1).reshape_as(x)
-    rot = x * cos[:L] + x_half_rotated * sin[:L]
-    return rot
+    return x_out
 
 def self_attention(
     q: Tensor, k: Tensor, v: Tensor, 
