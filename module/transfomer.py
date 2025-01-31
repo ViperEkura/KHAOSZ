@@ -218,7 +218,7 @@ class Transformer(nn.Module):
         assert x.ndim == 2
         
         x = F.embedding(x, self.embedding)
-        freqs_cis = get_rotary_emb(self.n_dim, L, device=x.device, dtype=x.dtype)
+        freqs_cis = get_rotary_emb(self.n_dim, L, device=x.device)
         
         for layer in self.layers:
             x = layer(x, freqs_cis)
