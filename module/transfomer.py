@@ -20,7 +20,7 @@ def get_rotary_emb(
         device: torch.device = torch.device('cuda'),
     ) -> torch.Tensor:
     
-    theta = 1.0 / (base ** (torch.arange(0, dim, 2, device=device).float() / dim))
+    theta = base ** (-torch.arange(0, dim, 2, device=device).float() / dim)
     t = torch.arange(0, max_len, device=device).float()
     freqs = torch.outer(t, theta)
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
