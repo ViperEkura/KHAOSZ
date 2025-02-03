@@ -67,12 +67,10 @@ def train(
         weight_decay=0.05
     )
     
-    criterion = F.cross_entropy
     trainer = Trainer(model, tokenizer, config)
     trainer.train(
         dataloader=dataloader,
         optimizer=optim,
-        criterion=criterion,
         ckpt_dir=ckpt_dir,
         n_epoch=n_epoch,
         n_iter_ckpt=n_iter_ckpt,

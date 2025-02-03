@@ -3,10 +3,10 @@ import math
 import pickle
 import logging
 
-import torch
 import torch.nn as nn
 import safetensors.torch as st
 import matplotlib.pyplot as plt
+import torch.nn.functional as F
 
 from module.transfomer import Config
 from module.tokenizer import BpeTokenizer
@@ -14,7 +14,7 @@ from module.tokenizer import BpeTokenizer
 from torch.utils.data import DataLoader
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR
-from torch.nn.modules.loss import _Loss
+
 from torch.nn.utils import clip_grad_norm_
 from tqdm import tqdm
 
@@ -29,6 +29,12 @@ def get_lambda_lr(warmup_iters, lr_decay_iters, min_rate=0.1):
             return max(min_rate, 0.5 * (1.0 + math.cos(math.pi * rate)))
     
     return get_lr
+
+def dpo_criterion(p, y1, y2):
+    loss_1 = F.cross_entropy(p, y1)
+    loss_2 = F.cross_entropy(p, y2)
+    dpo_loss = loss_1 - loss_2
+    return dpo_loss
 
 
 class CheckPoint:
@@ -98,7 +104,6 @@ class Trainer:
         self, 
         dataloader: DataLoader, 
         optimizer: Optimizer,
-        criterion: _Loss,
         ckpt_dir: str,
         n_epoch: int=1,
         n_iter_ckpt: int=5000,
@@ -123,7 +128,7 @@ class Trainer:
             for (x, y) in tqdm_laoder:
                 p = self.model(x)
                 optimizer.zero_grad()
-                loss: torch.Tensor = criterion(p.view(-1, vocab_size), y.view(-1))
+                loss = F.cross_entropy(p.view(-1, vocab_size), y.view(-1))
                 losses.append(loss.item())
                 loss.backward()
                 clip_grad_norm_(self.model.parameters(), max_grad_norm)
