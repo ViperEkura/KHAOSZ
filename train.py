@@ -32,20 +32,18 @@ def train(
     if resume_dir is None:
         config_path = os.path.join(dirname, "params", "config.json")
         tokenizer_path = os.path.join(dirname, "params", "tokenizer.json")
-
-        config = Config(config_path)
-        model = Transformer(config)
-        tokenizer = BpeTokenizer(tokenizer_path)
     else:
         config_path = os.path.join(resume_dir, "config.json")
         tokenizer_path = os.path.join(resume_dir, "tokenizer.json")
-        weight_path = os.path.join(resume_dir, "model.safetensors")
-        
-        config = Config(config_path)
-        model = Transformer(config)
-        model.load_state_dict(st.load_file(weight_path))
-        tokenizer = BpeTokenizer(tokenizer_path)
+
+    config = Config(config_path)
+    model = Transformer(config)
+    tokenizer = BpeTokenizer(tokenizer_path)
     
+    if resume_dir is not None:
+        weight_path = os.path.join(resume_dir, "model.safetensors")
+        model.load_state_dict(st.load_file(weight_path))
+        
     device = torch.device("cuda")
     model = model.to(device=device, dtype=torch.bfloat16)
     dataset = SeqDataset(config.m_len, device=device)

@@ -3,6 +3,7 @@ import math
 import pickle
 import logging
 
+import torch
 import torch.nn as nn
 import safetensors.torch as st
 import matplotlib.pyplot as plt
@@ -10,14 +11,16 @@ import torch.nn.functional as F
 
 from module.transfomer import Config
 from module.tokenizer import BpeTokenizer
+from .dataset import DpoDataset
 
+from torch import Tensor
 from torch.utils.data import DataLoader
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR
-
 from torch.nn.utils import clip_grad_norm_
-from tqdm import tqdm
 
+from tqdm import tqdm
+from typing import Tuple
 
 
 def get_lambda_lr(warmup_iters, lr_decay_iters, min_rate=0.1):
@@ -30,11 +33,36 @@ def get_lambda_lr(warmup_iters, lr_decay_iters, min_rate=0.1):
     
     return get_lr
 
-def dpo_criterion(p, y1, y2):
-    loss_1 = F.cross_entropy(p, y1)
-    loss_2 = F.cross_entropy(p, y2)
-    dpo_loss = loss_1 - loss_2
-    return dpo_loss
+def train_loss(in_args: Tuple[Tensor, Tensor], model: nn.Module):
+    x, y = in_args
+    _, _, D = x.size()
+    p = model(x)
+    return F.cross_entropy(p.view(-1, D), y.flatten())
+
+def dpo_train_loss(in_args: Tuple[Tensor, Tensor, Tensor], model: nn.Module, beta=0.1):
+    x, y1, y2 = in_args
+    _, _, D = x.size()
+
+    # 获取模型的 logits (batch_size, seq_len, vocab_size)
+    logits = model(x)
+
+    # 计算 chosen 和 rejected 的 log probabilities
+    log_probs = F.log_softmax(logits, dim=-1)  # (batch_size, seq_len, vocab_size)
+
+    # 获取 chosen 和 rejected 的 log probabilities
+    chosen_log_probs = log_probs.gather(-1, y1.unsqueeze(-1)).squeeze(-1)  # (batch_size, seq_len)
+    rejected_log_probs = log_probs.gather(-1, y2.unsqueeze(-1)).squeeze(-1)  # (batch_size, seq_len)
+
+    # 对序列长度取平均（假设每个 token 的权重相同）
+    chosen_log_probs = chosen_log_probs.mean(dim=-1)  # (batch_size,)
+    rejected_log_probs = rejected_log_probs.mean(dim=-1)  # (batch_size,)
+
+    # 计算 DPO 损失
+    log_ratios = chosen_log_probs - rejected_log_probs  # (batch_size,)
+    losses = -F.logsigmoid(beta * log_ratios).mean()  # 平均损失
+
+    return losses
+
 
 
 class CheckPoint:
@@ -120,23 +148,26 @@ class Trainer:
             optimizer, 
             get_lambda_lr(warmup_iters=warmup_iters, lr_decay_iters=total_iters)
         )
+        is_dpo_train = isinstance(dataloader.dataset, DpoDataset)
         
         self.logger.info("start training ...")  
         for epoch in range(n_epoch):
             self.model.train()
             tqdm_laoder = tqdm(dataloader, desc=f"Epoch {epoch+1}/{n_epoch}")
-            for (x, y) in tqdm_laoder:
-                p = self.model(x)
-                optimizer.zero_grad()
-                loss = F.cross_entropy(p.view(-1, vocab_size), y.view(-1))
-                losses.append(loss.item())
-                loss.backward()
-                clip_grad_norm_(self.model.parameters(), max_grad_norm)
+            for input_param in tqdm_laoder:
                 
+                if is_dpo_train:
+                    loss = dpo_train_loss(input_param, self.model)
+                else:
+                    loss = train_loss(input_param, self.model)
+            
+                loss.backward()
                 if n_iter % n_iter_step == 0:
                     optimizer.step()
-                    schdulder.step()
+                    optimizer.zero_grad()
+                    clip_grad_norm_(self.model.parameters(), max_grad_norm)
                     
+                schdulder.step()
                 n_iter += 1
                 tqdm_laoder.set_postfix(
                     loss=loss.item(),
