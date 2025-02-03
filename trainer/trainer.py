@@ -3,7 +3,6 @@ import math
 import pickle
 import logging
 
-import torch
 import torch.nn as nn
 import safetensors.torch as st
 import matplotlib.pyplot as plt
