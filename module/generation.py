@@ -1,7 +1,7 @@
 import os
 import torch
 import safetensors.torch as st
-from .transfomer import Config, Transformer
+from .transformer import Config, Transformer
 from .tokenizer import BpeTokenizer
 
 
