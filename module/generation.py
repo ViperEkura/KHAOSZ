@@ -1,7 +1,7 @@
 import os
 import torch
 import safetensors.torch as st
-from .transfomer import Config, Transformer
+from .transformer import Config, Transformer
 from .tokenizer import BpeTokenizer
 
 
@@ -33,6 +33,10 @@ class Khaosz:
         self.model = Transformer(self.config)
         state_dict = st.load_file(weight_path)
         self.model.load_state_dict(state_dict)
+    
+    def to(self, *args, **kargs):
+        self.model.to(*args, **kargs)
+        return self
         
     def sample_next_token(
         self, 
@@ -128,6 +132,8 @@ class Khaosz:
         
         return response
     
-    def to(self, *args, **kargs):
-        self.model.to(*args, **kargs)
-        return self
+    
+    def batch_generate(
+        
+    ):
+        pass

@@ -20,7 +20,11 @@ def get_rotary_emb(
         device: torch.device = torch.device('cuda'),
     ) -> torch.Tensor:
     
+<<<<<<< HEAD
     theta = 1.0 / (base ** (torch.arange(0, dim, 2, device=device).float() / dim))
+=======
+    theta = base ** (-torch.arange(0, dim, 2, device=device).float() / dim)
+>>>>>>> dpo_train
     t = torch.arange(0, max_len, device=device).float()
     freqs = torch.outer(t, theta)
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
@@ -47,18 +51,17 @@ def self_attention(
 ) -> Tensor:
     head_dim = n_dim // n_heads
     B, L, _ = q.size()
-    q = q.view(B, L, n_heads, head_dim).permute(0, 2, 1, 3).reshape(-1, L, head_dim)
-    kT = k.view(B, L, n_heads, head_dim).permute(0, 2, 3, 1).reshape(-1, head_dim, L)
-    v = v.view(B, L, n_heads, head_dim).permute(0, 2, 1, 3).reshape(-1, L, head_dim)
+    q = q.view(B, L, n_heads, head_dim)
+    k = k.view(B, L, n_heads, head_dim)
+    v = v.view(B, L, n_heads, head_dim)
     # q, v : (B, L, D) -> (B, L, H, D/H) -> (B, H, L, D/H) -> (B*H, L, D/H)
     # kT   : (B, L, D) -> (B, L, H, D/H) -> (B, H, D/H, L) -> (B*H, D/H, L)
-    attn_weight = torch.bmm(q, kT) * scale
+    attn_weight = torch.einsum("bqhd,bkhd->bhqk", q, k) * scale
     attn_weight = attn_weight.masked_fill(mask, -float('inf'))
     attn_weight = F.softmax(attn_weight, dim=-1)
     # attn_weight : (B*H, L, L)
-    attn_out = torch.bmm(attn_weight, v)
-    attn_out = attn_out.view(B, n_heads, L, head_dim)
-    attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(B, L, -1)
+    attn_out = torch.einsum("bhqk,bkhd->bqhd", attn_weight, v)
+    attn_out = attn_out.contiguous().view(B, L, -1)
     # attn_out : (B*H, L, D/H) -> (B, L, H, D/H) -> (B, L, D)
     return attn_out
 
