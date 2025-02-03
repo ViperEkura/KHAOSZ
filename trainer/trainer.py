@@ -8,7 +8,7 @@ import safetensors.torch as st
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 
-from module.transfomer import Config
+from module.transformer import Config
 from module.tokenizer import BpeTokenizer
 from .dataset import DpoDataset
 
