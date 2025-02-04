@@ -19,7 +19,7 @@ def chat():
                 query=query, 
                 history=histroy,
                 temperature=1.0,
-                top_p=0.3
+                top_p=0.35
             ):
                 print(response[response_size:], end="", flush=True)
                 response_size = len(response)       
