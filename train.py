@@ -1,13 +1,12 @@
 import os
 import argparse
 import torch
-import torch.nn.functional as F
 import safetensors.torch as st
 
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from module import Transformer, Config, BpeTokenizer
-from trainer import Trainer, SeqDataset
+from trainer import Trainer, SeqDataset, DpoDataset
 
 dirname = os.path.dirname(__file__)
 
@@ -27,7 +26,8 @@ def train(
     max_lr: int,
     n_iter_ckpt: int,
     ckpt_dir: str,
-    resume_dir: str = None
+    resume_dir: str = None,
+    dpo_train: bool = False
 ):
     if resume_dir is None:
         config_path = os.path.join(dirname, "params", "config.json")
@@ -46,7 +46,12 @@ def train(
         
     device = torch.device("cuda")
     model = model.to(device=device, dtype=torch.bfloat16)
-    dataset = SeqDataset(config.m_len, device=device)
+    
+    dataset = None
+    if not dpo_train:
+        dataset = SeqDataset(config.m_len, device=device)
+    else:
+        dataset = DpoDataset(config.m_len, device=device)
     
     cache_files = get_files(data_root_path)
     dataset.load(cache_files)
@@ -85,6 +90,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_lr", type=float, default=3e-4, help="Max learning rate for training.")
     parser.add_argument("--n_iter_ckpt", type=int, default=5000, help="Number of iters between checkpoints.")
     parser.add_argument("--ckpt_dir", type=str, default="checkpoint", help="Directory to save checkpoints.")
+    parser.add_argument("--dpo_train", type=bool, default=False, help="direct preference optimization train optinon.")
     parser.add_argument("--resume_train", type=bool, default=False, help="Resume training from a checkpoint.")
     parser.add_argument("--resume_dir", type=str, default=None, help="Path to the checkpoint file to resume training.")
 
@@ -102,5 +108,6 @@ if __name__ == "__main__":
         max_lr=args.max_lr,
         n_iter_ckpt=args.n_iter_ckpt,
         ckpt_dir=args.ckpt_dir,
-        resume_dir=resume_dir
+        resume_dir=resume_dir,
+        dpo_train=args.dpo_train
     )
