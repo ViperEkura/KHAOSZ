@@ -35,7 +35,7 @@ def get_lambda_lr(warmup_iters, lr_decay_iters, min_rate=0.1):
 def train_loss(in_args: Tuple[Tensor, Tensor], model: nn.Module):
     x, y = in_args
     _, _, D = x.size()
-    p = model(x)
+    p: Tensor = model(x)
     return F.cross_entropy(p.view(-1, D), y.flatten())
 
 def dpo_train_loss(in_args: Tuple[Tensor, Tensor, Tensor], model: nn.Module, beta=0.1):
@@ -43,7 +43,7 @@ def dpo_train_loss(in_args: Tuple[Tensor, Tensor, Tensor], model: nn.Module, bet
     _, _, D = x.size()
 
     # 获取模型的 logits (batch_size, seq_len, vocab_size)
-    logits = model(x)
+    logits: Tensor = model(x)
 
     # 计算 chosen 和 rejected 的 log probabilities
     log_probs = F.log_softmax(logits, dim=-1)  # (batch_size, seq_len, vocab_size)
@@ -138,7 +138,6 @@ class Trainer:
         max_grad_norm: float=1.0,
         warmup_iters: int=5000,
     ):
-        vocab_size = self.config.vocab_size
         n_iter, start_iter  = 0, 0
         losses = list()
         
