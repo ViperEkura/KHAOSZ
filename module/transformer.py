@@ -9,9 +9,10 @@ from torch.nn import init
 
 
 def create_mask(L: int, device) -> Tensor:
-    mask = torch.ones(L, L, dtype=torch.bool).triu(diagonal=1)
-    mask = mask.to(device)
-    return mask
+    return torch.ones(
+        L, L, dtype=torch.bool, device=device
+    ).triu(diagonal=1)
+
 
 def get_rotary_emb(
         dim: int, 
@@ -50,17 +51,16 @@ def self_attention(
     q = q.view(B, L, n_heads, head_dim)
     k = k.view(B, L, n_heads, head_dim)
     v = v.view(B, L, n_heads, head_dim)
-    # q, v : (B, L, D) -> (B, L, H, D/H) -> (B, H, L, D/H) -> (B*H, L, D/H)
-    # kT   : (B, L, D) -> (B, L, H, D/H) -> (B, H, D/H, L) -> (B*H, D/H, L)
+    # q, k, v: (B, L, D) -> (B, L, H, D/H) -> (B, H, L, D/H)
     attn_weight = torch.einsum("bqhd,bkhd->bhqk", q, k) * scale
-    attn_weight = attn_weight.masked_fill(mask, -float('inf'))
+    if mask is not None:
+        attn_weight = attn_weight.masked_fill(mask, -float("inf"))
     attn_weight = F.softmax(attn_weight, dim=-1)
     # attn_weight : (B*H, L, L)
     attn_out = torch.einsum("bhqk,bkhd->bqhd", attn_weight, v)
-    attn_out = attn_out.contiguous().view(B, L, -1)
+    attn_out = attn_out.contiguous().view(B, L, n_dim)
     # attn_out : (B*H, L, D/H) -> (B, L, H, D/H) -> (B, L, D)
     return attn_out
-
 
 
 class Config:
@@ -141,9 +141,8 @@ class Attention(nn.Module):
         assert n_dim % n_heads == 0
         self.Wqkv = nn.Parameter(torch.empty(3 * n_dim, n_dim))
         self.Wo = nn.Parameter(torch.empty(n_dim, n_dim))
-        self.mask = None
         
-        self.scale = 1 / n_dim ** 0.5
+        self.scale = n_dim ** -0.5
         self.head_dim = n_dim // n_heads
         self.flash_attn = flash_attn
         self.n_dim = n_dim
@@ -163,9 +162,7 @@ class Attention(nn.Module):
         
         if not self.flash_attn:
             if mask is None:
-                if self.mask is None:
-                    self.mask = create_mask(L, x.device)
-                mask = self.mask
+                mask = create_mask(L, device=x.device)
             attn_out = self_attention(q, k, v, self.n_heads, self.n_dim, self.scale, mask)
         else:
             q = q.view(B, L, self.n_heads, self.head_dim).permute(0, 2, 1, 3)
