@@ -33,4 +33,4 @@ def show_parameter_size():
     
 
 if __name__ == "__main__":
-    chat()
+    show_parameter_size()
