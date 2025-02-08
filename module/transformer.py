@@ -185,7 +185,6 @@ class Transformer(nn.Module):
             )for _ in range(config.n_layer)
         ])
         self.norm = RMSNorm(config.n_dim, config.norm_eps)
-        self.freqs_cis = get_rotary_emb(self.n_dim, config.m_len)
         init.normal_(self.embedding, mean=0, std=0.02)
     
     def parameter_size(self):
@@ -197,12 +196,10 @@ class Transformer(nn.Module):
     def forward(self, x: Tensor):
         assert x.ndim == 2
         x = F.embedding(x, self.embedding)
-        
-        if x.device != self.freqs_cis.device:
-            self.freqs_cis = self.freqs_cis.to(x.device)
+        freqs_cis = get_rotary_emb(self.n_dim, x.size(1), device=x.device)
         
         for layer in self.layers:
-            x = layer(x, self.freqs_cis)
+            x = layer(x, freqs_cis)
             
         x = self.norm(x)
         x = F.linear(x, self.embedding)
