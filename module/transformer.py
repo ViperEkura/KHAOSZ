@@ -18,7 +18,7 @@ def get_rotary_emb(
         max_len: int, 
         base: float = 10000, 
         device: torch.device = torch.device('cuda'),
-    ) -> torch.Tensor:
+    ) -> Tensor:
     
     theta = base ** (-torch.arange(0, dim, 2, device=device)[: (dim // 2)].float() / dim)
     t = torch.arange(0, max_len, device=device).float()
@@ -27,7 +27,11 @@ def get_rotary_emb(
     
     return freqs_cis
 
-def apply_rotary_emb(xq: Tensor, xk: Tensor, freqs_cis: Tensor) -> Tuple[Tensor, Tensor]:
+def apply_rotary_emb(
+    xq: Tensor, 
+    xk: Tensor, 
+    freqs_cis: Tensor
+) -> Tuple[Tensor, Tensor]:
     dtype = xq.dtype
     ndim = xq.ndim
 
@@ -169,7 +173,7 @@ class DecoderBlock(nn.Module):
         self.ffn = FeedForward(n_dim, d_ffn)
         self.norm_ffn = RMSNorm(n_dim, norm_eps)
 
-    def forward(self, x, freqs_cis, mask=None) -> torch.Tensor:
+    def forward(self, x, freqs_cis, mask=None) -> Tensor:
         x = self.attention(self.norm_attn(x), freqs_cis, mask) + x
         x = self.ffn(self.norm_ffn(x)) + x
         return x
