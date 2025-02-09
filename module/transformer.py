@@ -1,5 +1,4 @@
 import json
-import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -18,7 +17,7 @@ def get_rotary_emb(
         max_len: int, 
         base: float = 10000, 
         device: torch.device = torch.device('cuda'),
-    ) -> Tensor:
+    ) -> torch.Tensor:
     
     theta = base ** (-torch.arange(0, dim, 2, device=device)[: (dim // 2)].float() / dim)
     t = torch.arange(0, max_len, device=device).float()
@@ -27,11 +26,7 @@ def get_rotary_emb(
     
     return freqs_cis
 
-def apply_rotary_emb(
-    xq: Tensor, 
-    xk: Tensor, 
-    freqs_cis: Tensor
-) -> Tuple[Tensor, Tensor]:
+def apply_rotary_emb(xq: Tensor, xk: Tensor, freqs_cis: Tensor) -> Tuple[Tensor, Tensor]:
     dtype = xq.dtype
     ndim = xq.ndim
 
@@ -110,7 +105,7 @@ class RMSNorm(nn.Module):
         return out
     
     
-class FeedForward(nn.Module):
+class MLP(nn.Module):
     def __init__(self, n_dim, d_ffn, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.up = nn.Linear(n_dim, d_ffn, bias=False)
@@ -170,10 +165,10 @@ class DecoderBlock(nn.Module):
         super().__init__(*args, **kwargs)
         self.attention = Attention(n_dim, n_head, n_kvhead)
         self.norm_attn = RMSNorm(n_dim, norm_eps)
-        self.ffn = FeedForward(n_dim, d_ffn)
+        self.ffn = MLP(n_dim, d_ffn)
         self.norm_ffn = RMSNorm(n_dim, norm_eps)
 
-    def forward(self, x, freqs_cis, mask=None) -> Tensor:
+    def forward(self, x, freqs_cis, mask=None) -> torch.Tensor:
         x = self.attention(self.norm_attn(x), freqs_cis, mask) + x
         x = self.ffn(self.norm_ffn(x)) + x
         return x
@@ -203,9 +198,10 @@ class Transformer(nn.Module):
         assert x.ndim == 2
         x = F.embedding(x, self.embedding)
         self.freq_cis = self.freq_cis.to(x.device)
+        freq_cis = self.freq_cis[:x.shape[1]]
         
         for layer in self.layers:
-            x = layer(x, self.freq_cis)
+            x = layer(x, freq_cis)
             
         x = self.norm(x)
         x = F.linear(x, self.embedding)
