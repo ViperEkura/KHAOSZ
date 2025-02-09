@@ -34,9 +34,9 @@ def get_lambda_lr(warmup_iters, lr_decay_iters, min_rate=0.1):
 
 def train_loss(in_args: Tuple[Tensor, Tensor], model: nn.Module):
     x, y = in_args
-    _, _, D = x.size()
+    B, L = x.size()
     p: Tensor = model(x)
-    return F.cross_entropy(p.view(-1, D), y.flatten())
+    return F.cross_entropy(p.view(B * L, -1), y.flatten())
 
 def dpo_train_loss(in_args: Tuple[Tensor, Tensor, Tensor], model: nn.Module, beta=0.1):
     x, y1, y2 = in_args
@@ -141,7 +141,7 @@ class Trainer:
         n_iter, start_iter  = 0, 0
         losses = list()
         
-        total_iters = len(dataloader) * n_epoch
+        total_iters = len(dataloader) * n_epoch // n_iter_step
         schdulder = LambdaLR(
             optimizer, 
             get_lambda_lr(warmup_iters=warmup_iters, lr_decay_iters=total_iters)
