@@ -141,7 +141,7 @@ class Trainer:
         n_iter, start_iter  = 0, 0
         losses = list()
         
-        total_iters = len(dataloader) * n_epoch // n_iter_step
+        total_iters = len(dataloader) * n_epoch
         schdulder = LambdaLR(
             optimizer, 
             get_lambda_lr(warmup_iters=warmup_iters, lr_decay_iters=total_iters)
@@ -158,12 +158,13 @@ class Trainer:
                     loss = dpo_train_loss(input_param, self.model)
                 else:
                     loss = train_loss(input_param, self.model)
-            
+                    
+                losses.append(loss.item())
                 loss.backward()
                 if n_iter % n_iter_step == 0:
+                    clip_grad_norm_(self.model.parameters(), max_grad_norm)
                     optimizer.step()
                     optimizer.zero_grad()
-                    clip_grad_norm_(self.model.parameters(), max_grad_norm)
                     
                 schdulder.step()
                 n_iter += 1
