@@ -19,14 +19,18 @@ def get_rotary_emb(
         device: torch.device = torch.device('cuda'),
     ) -> torch.Tensor:
     
-    theta = base ** (-torch.arange(0, dim, 2, device=device)[: (dim // 2)].float() / dim)
+    theta = base ** (-torch.arange(0, dim, 2, device=device).float() / dim)
     t = torch.arange(0, max_len, device=device).float()
     freqs = torch.outer(t, theta)
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
     
     return freqs_cis
 
-def apply_rotary_emb(xq: Tensor, xk: Tensor, freqs_cis: Tensor) -> Tuple[Tensor, Tensor]:
+def apply_rotary_emb(
+    xq: Tensor, 
+    xk: Tensor, 
+    freqs_cis: Tensor
+) -> Tuple[Tensor, Tensor]:
     dtype = xq.dtype
     ndim = xq.ndim
 
@@ -145,7 +149,7 @@ class Attention(nn.Module):
         k = k.view(B, L, self.n_kvheads, self.head_dim)
         v = v.view(B, L, self.n_kvheads, self.head_dim)
         
-        q, k = apply_rotary_emb(q,k, freqs_cis)
+        q, k = apply_rotary_emb(q, k, freqs_cis)
         k, v = repeat_kv(k, self.n_rep), repeat_kv(v, self.n_rep)
         
         q = q.permute(0, 2, 1, 3)
@@ -198,7 +202,7 @@ class Transformer(nn.Module):
         assert x.ndim == 2
         x = F.embedding(x, self.embedding)
         self.freq_cis = self.freq_cis.to(x.device)
-        freq_cis = self.freq_cis[:x.shape[1]]
+        freq_cis = self.freq_cis[:x.size(1)]
         
         for layer in self.layers:
             x = layer(x, freq_cis)
