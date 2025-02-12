@@ -205,38 +205,86 @@ class Khaosz:
             histories = [list() for _ in queries]
         
         batch_size = len(queries)
-        responses = []
+        batch_data = []
+        start_positions = []
         
-        tokens_batch = [build_prompt(query, hist) for query, hist in zip(queries, histories)]
-        ids_batch = [self.tokenizer.encode(tokens) for tokens in tokens_batch]
-        start_id_pos_batch = [len(ids) for ids in ids_batch]
+        for query, history in zip(queries, histories):
+            # 构建prompt并编码
+            prompt = build_prompt(query, history)
+            encoded = self.tokenizer.encode(prompt)
+            batch_data.append(encoded)
+            start_positions.append(len(encoded))  # 记录response起始位置
+
+        # 转换为张量并进行填充
+        padded_sequences = [torch.tensor(seq, dtype=torch.long) for seq in batch_data]
+        input_ids = torch.nn.utils.rnn.pad_sequence(
+            padded_sequences, 
+            batch_first=True, 
+            padding_value=self.tokenizer.encode("</s>")
+        ).to(next(self.model.parameters()).device)
         
+        # 生成状态跟踪
+        active_mask = torch.ones(batch_size, dtype=torch.bool, device=self.device)
+        stop_ids_tensor = torch.tensor(
+            list(self.tokenizer.stop_ids), 
+            device=self.device
+        )
+        
+        # 生成循环
         self.model.eval()
-        end_items = 0
-        
-        for _ in range(self.config.m_len):
-            next_token_ids = self.sample_next_token_batch(
-                ids_batch, temperature, 
-                top_k=top_k, top_p=top_p
-            )
-            
-            for i, next_token_id in enumerate(next_token_ids):
-                if next_token_id == None:
-                    continue
+        with torch.no_grad():
+            while input_ids.size(1) < self.config.m_len and active_mask.any():
+                # 获取当前有效批次的最后token
+                last_tokens = input_ids[active_mask, -1].unsqueeze(1)
                 
-                if next_token_id in self.tokenizer.stop_ids:
-                    ids_batch[i].append(None)
-                    end_items += 1
-                else:
-                    ids_batch[i].append(next_token_id)
-                    
-                if end_items == batch_size:
-                    break
-        
-        for i, ids in enumerate(ids_batch):
-            ids = [id for id in ids if id is not None]
-            response = self.tokenizer.decode(ids[start_id_pos_batch[i]:])
-            histories[i].append((queries[i], response))
+                # 前向计算（优化内存使用）
+                outputs = self.model(
+                    input_ids=input_ids[active_mask],
+                    use_cache=True,  # 使用KV缓存加速
+                )
+                next_logits = outputs[:, -1, :]
+                
+                # 采样下一个token
+                next_token_ids = self.sample_next_token_batch(
+                    input_ids[active_mask].tolist(),
+                    temperature=temperature,
+                    top_k=top_k,
+                    top_p=top_p,
+                )
+                
+                # 更新序列
+                new_tokens = torch.tensor(
+                    next_token_ids, 
+                    device=self.device
+                ).unsqueeze(1)
+                input_ids = torch.cat([
+                    input_ids, 
+                    torch.full(
+                        (batch_size, 1), 
+                        self.tokenizer.pad_id, 
+                        device=self.device
+                    )
+                ], dim=1)
+                input_ids[active_mask, -1] = new_tokens.squeeze()
+                
+                # 检查停止条件
+                is_stop = torch.isin(new_tokens.flatten(), stop_ids_tensor)
+                active_mask[active_mask.clone()] &= ~is_stop
+
+        # 解码结果
+        responses = []
+        new_histories = []
+        for i, (seq, start_pos) in enumerate(zip(input_ids.tolist(), start_positions)):
+            # 截取生成的response部分
+            generated = seq[start_pos:]
+            # 去除停止符之后的内容
+            stop_positions = [idx for idx, tid in enumerate(generated) 
+                            if tid in self.tokenizer.stop_ids]
+            cutoff = stop_positions[0] if stop_positions else len(generated)
+            response = self.tokenizer.decode(generated[:cutoff])
+            
+            # 更新历史记录
+            updated_history = histories[i] + [(queries[i], response)]
             responses.append(response)
-        
+            new_histories.append(updated_history)
         return responses
