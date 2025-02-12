@@ -45,7 +45,7 @@ class Khaosz:
         ids, 
         temperature=1.0, 
         top_k=0, 
-        top_p=0.0, 
+        top_p=1.0, 
         filter_value=-float('inf')
     ) -> int:
         device = next(self.model.parameters()).device
@@ -78,23 +78,44 @@ class Khaosz:
         ids_batch, 
         temperature=1.0, 
         top_k=0, 
-        top_p=0.0, 
+        top_p=1.0, 
         filter_value=-float('inf')
     ) -> List[int]:
         device = next(self.model.parameters()).device
-        
-        ids_batch_val = list()
-        ids_batch_pos = list()
-        for pos, ids in enumerate(ids_batch):
-            if ids_batch_val[-1] != None:
-                ids_batch_val.append(ids)
-                ids_batch_pos.append(pos)
-        
-        input_tensor = torch.tensor(ids_batch_val, device=device).unsqueeze(0)
+        input_tensor = torch.tensor(ids_batch, device=device)
         logits: torch.Tensor = self.model(input_tensor)[:, -1, :] / temperature
+
+        # 处理 top_k 过滤
+        top_k = min(top_k, logits.size(-1)) if top_k > 0 else 0
+        if top_k > 0:
+            topk_values = torch.topk(logits, top_k, dim=1).values
+            thresholds = topk_values[:, -1].unsqueeze(1)
+            logits = torch.where(logits < thresholds, torch.full_like(logits, filter_value), logits)
+
+        # 处理 top_p 过滤
+        if top_p < 1.0:
+            sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=1)
+            cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=1), dim=1)
+            
+            # 创建需要移除位置的掩码
+            sorted_indices_to_remove = cumulative_probs > top_p
+            sorted_indices_to_remove[:, 1:] = sorted_indices_to_remove[:, :-1].clone()
+            sorted_indices_to_remove[:, 0] = False
+            
+            # 将排序后的索引展开并应用到原始logits
+            scatter_dim = 1
+            range_tensor = torch.arange(sorted_indices.shape[scatter_dim], device=device) \
+                .expand(*sorted_indices.shape)
+            mask = sorted_indices_to_remove.gather(scatter_dim, range_tensor)
+            mask = mask.scatter_(scatter_dim, sorted_indices, sorted_indices_to_remove)
+            
+            logits = torch.where(mask, torch.full_like(logits, filter_value), logits)
+
+        # 采样下一个token
+        probabilities = torch.softmax(logits, dim=1)
+        next_token_ids = torch.multinomial(probabilities, num_samples=1).squeeze(1).tolist()
         
-    
-        return None
+        return next_token_ids
     
     def stream_generate(
             self, 
