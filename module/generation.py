@@ -139,16 +139,17 @@ class Khaosz:
         response = str()
         
         self.model.eval()
-        while len(ids) < self.config.m_len:
-            next_token_id = self.sample_next_token(
-                ids, temperature, 
-                top_k=top_k, top_p=top_p
-            )
-            if next_token_id in self.tokenizer.stop_ids:
-                break
-            ids.append(next_token_id)
-            response = self.tokenizer.decode(ids[start_id_pos:])
-            yield response ,history
+        with torch.no_grad():
+            while len(ids) < self.config.m_len:
+                next_token_id = self.sample_next_token(
+                    ids, temperature, 
+                    top_k=top_k, top_p=top_p
+                )
+                if next_token_id in self.tokenizer.stop_ids:
+                    break
+                ids.append(next_token_id)
+                response = self.tokenizer.decode(ids[start_id_pos:])
+                yield response ,history
         
         history.append((query, response))
 
@@ -174,14 +175,15 @@ class Khaosz:
         response = str()
         
         self.model.eval()
-        while len(ids) < self.config.m_len:
-            next_token_id = self.sample_next_token(
-                ids, temperature, 
-                top_k=top_k, top_p=top_p
-            )
-            if next_token_id in self.tokenizer.stop_ids:
-                break
-            ids.append(next_token_id)
+        with torch.no_grad():
+            while len(ids) < self.config.m_len:
+                next_token_id = self.sample_next_token(
+                    ids, temperature, 
+                    top_k=top_k, top_p=top_p
+                )
+                if next_token_id in self.tokenizer.stop_ids:
+                    break
+                ids.append(next_token_id)
             
         response = self.tokenizer.decode(ids[start_id_pos:])
         history.append((query, response))
@@ -209,6 +211,7 @@ class Khaosz:
         start_positions = []
         
         device = next(self.model.parameters()).device
+        pad_id = self.tokenizer.encode("</s>")[0]
         
         for query, history in zip(queries, histories):
             # 构建prompt并编码
@@ -222,7 +225,7 @@ class Khaosz:
         input_ids = torch.nn.utils.rnn.pad_sequence(
             padded_sequences, 
             batch_first=True, 
-            padding_value=self.tokenizer.encode("</s>")[0]
+            padding_value=pad_id
         ).to(next(self.model.parameters()).device)
         
         # 生成状态跟踪
@@ -233,37 +236,18 @@ class Khaosz:
         self.model.eval()
         with torch.no_grad():
             while input_ids.size(1) < self.config.m_len and active_mask.any():
-                # 获取当前有效批次的最后token
-                last_tokens = input_ids[active_mask, -1].unsqueeze(1)
-                
-                # 前向计算（优化内存使用）
-                outputs = self.model(
-                    input_ids=input_ids[active_mask],
-                    use_cache=True,  # 使用KV缓存加速
-                )
-                next_logits = outputs[:, -1, :]
-                
                 # 采样下一个token
                 next_token_ids = self.sample_next_token_batch(
-                    input_ids[active_mask].tolist(),
-                    temperature=temperature,
-                    top_k=top_k,
-                    top_p=top_p,
+                    input_ids[active_mask].tolist(), temperature=temperature,
+                    top_k=top_k, top_p=top_p,
                 )
                 
                 # 更新序列
                 new_tokens = torch.tensor(
                     next_token_ids, 
-                    device=self.device
+                    device=device
                 ).unsqueeze(1)
-                input_ids = torch.cat([
-                    input_ids, 
-                    torch.full(
-                        (batch_size, 1), 
-                        self.tokenizer.pad_id, 
-                        device=self.device
-                    )
-                ], dim=1)
+                input_ids = torch.cat([input_ids, torch.full((batch_size, 1), pad_id, device=device)], dim=1)
                 input_ids[active_mask, -1] = new_tokens.squeeze()
                 
                 # 检查停止条件

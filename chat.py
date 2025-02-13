@@ -6,7 +6,7 @@ warnings.filterwarnings("ignore")
 
 def chat():
     model = Khaosz("params")
-    model = model.to(device='cpu', dtype=torch.bfloat16)
+    model = model.to(device='cuda', dtype=torch.bfloat16)
     histroy = []
     with torch.no_grad():
         while True:
