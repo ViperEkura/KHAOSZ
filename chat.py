@@ -6,7 +6,7 @@ warnings.filterwarnings("ignore")
 
 def chat():
     model = Khaosz("params")
-    model = model.to(device='cuda', dtype=torch.float16)
+    model = model.to(device='cpu', dtype=torch.bfloat16)
     histroy = []
     with torch.no_grad():
         while True:
@@ -18,9 +18,9 @@ def chat():
             for response, histroy in model.stream_generate(
                 query=query, 
                 history=histroy,
-                temperature=0.95,
+                temperature=0.9,
                 top_p=0.6,
-                top_k=20
+                top_k=50
             ):
                 print(response[response_size:], end="", flush=True)
                 response_size = len(response)       
