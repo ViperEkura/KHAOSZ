@@ -189,7 +189,7 @@ class Khaosz:
         return response
     
     
-    def generate_batch(
+    def batch_generate(
         self, 
         queries: List[str], 
         histories: List[List[Tuple[str, str]]]=None,
@@ -208,6 +208,8 @@ class Khaosz:
         batch_data = []
         start_positions = []
         
+        device = next(self.model.parameters()).device
+        
         for query, history in zip(queries, histories):
             # 构建prompt并编码
             prompt = build_prompt(query, history)
@@ -220,15 +222,12 @@ class Khaosz:
         input_ids = torch.nn.utils.rnn.pad_sequence(
             padded_sequences, 
             batch_first=True, 
-            padding_value=self.tokenizer.encode("</s>")
+            padding_value=self.tokenizer.encode("</s>")[0]
         ).to(next(self.model.parameters()).device)
         
         # 生成状态跟踪
-        active_mask = torch.ones(batch_size, dtype=torch.bool, device=self.device)
-        stop_ids_tensor = torch.tensor(
-            list(self.tokenizer.stop_ids), 
-            device=self.device
-        )
+        active_mask = torch.ones(batch_size, dtype=torch.bool, device=device)
+        stop_ids_tensor = torch.tensor(list(self.tokenizer.stop_ids), device=device)
         
         # 生成循环
         self.model.eval()
