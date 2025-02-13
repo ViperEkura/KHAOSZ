@@ -214,11 +214,10 @@ class Khaosz:
         pad_id = self.tokenizer.encode("</s>")[0]
         
         for query, history in zip(queries, histories):
-            # 构建prompt并编码
             prompt = build_prompt(query, history)
             encoded = self.tokenizer.encode(prompt)
             batch_data.append(encoded)
-            start_positions.append(len(encoded))  # 记录response起始位置
+            start_positions.append(len(encoded))
 
         # 转换为张量并进行填充
         padded_sequences = [torch.tensor(seq, dtype=torch.long) for seq in batch_data]

@@ -1,4 +1,5 @@
 import torch
+import json
 import warnings
 from module import Khaosz
 warnings.filterwarnings("ignore")
@@ -15,6 +16,17 @@ def batch_generate():
     )
     for response in responses:
         print(response)
+
+def generate_dpo_data(data_path, question_key, recepted_key, rejected_key, batch_size):
+    model = Khaosz("params")
+    model = model.to(device='cuda', dtype=torch.float16)
+    
+    with open(data_path, "r") as f:
+        json_file = json.loads(f)
+    questions = [json_file[i][question_key] for i in range(len(json_file))]
+    
+    pass
+    
     
 if __name__  == "__main__":
      batch_generate()
