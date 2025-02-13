@@ -190,83 +190,113 @@ class Khaosz:
         
         return response
     
-    
     def batch_generate(
-        self, 
-        queries: List[str], 
-        histories: List[List[Tuple[str, str]]]=None,
-        temperature: float=0.8,
-        top_k: int=10,
-        top_p: float=0.8,
-    ):
-        assert temperature >= 0.0
-        assert top_k >= 0
-        assert top_p >= 0.0 and top_p <= 1.0
-        
-        if histories is None:
-            histories = [list() for _ in queries]
-        
-        batch_size = len(queries)
-        batch_data = []
-        start_positions = []
-        
-        device = next(self.model.parameters()).device
-        pad_id = self.tokenizer.encode("</s>")[0]
-        
-        for query, history in zip(queries, histories):
-            prompt = build_prompt(query, history)
-            encoded = self.tokenizer.encode(prompt)
-            batch_data.append(encoded)
-            start_positions.append(len(encoded))
-
-        # 转换为张量并进行填充
-        padded_sequences = [torch.tensor(seq, dtype=torch.long) for seq in batch_data]
-        input_ids = torch.nn.utils.rnn.pad_sequence(
-            padded_sequences, 
-            batch_first=True, 
-            padding_value=pad_id
-        ).to(next(self.model.parameters()).device)
-        
-        # 生成状态跟踪
-        active_mask = torch.ones(batch_size, dtype=torch.bool, device=device)
-        stop_ids_tensor = torch.tensor(list(self.tokenizer.stop_ids), device=device)
-        
-        # 生成循环
-        self.model.eval()
-        with torch.no_grad():
-            while input_ids.size(1) < self.config.m_len and active_mask.any():
-                # 采样下一个token
-                next_token_ids = self.sample_next_token_batch(
-                    input_ids[active_mask].tolist(), temperature=temperature,
-                    top_k=top_k, top_p=top_p,
-                )
-                
-                # 更新序列
-                new_tokens = torch.tensor(
-                    next_token_ids, 
-                    device=device
-                ).unsqueeze(1)
-                input_ids = torch.cat([input_ids, torch.full((batch_size, 1), pad_id, device=device)], dim=1)
-                input_ids[active_mask, -1] = new_tokens.squeeze()
-                
-                # 检查停止条件
-                is_stop = torch.isin(new_tokens.flatten(), stop_ids_tensor)
-                active_mask[active_mask.clone()] &= ~is_stop
-
-        # 解码结果
-        responses = []
-        new_histories = []
-        for i, (seq, start_pos) in enumerate(zip(input_ids.tolist(), start_positions)):
-            # 截取生成的response部分
-            generated = seq[start_pos:]
-            # 去除停止符之后的内容
-            stop_positions = [idx for idx, tid in enumerate(generated) 
-                            if tid in self.tokenizer.stop_ids]
-            cutoff = stop_positions[0] if stop_positions else len(generated)
-            response = self.tokenizer.decode(generated[:cutoff])
+            self, 
+            queries: List[str], 
+            histories: List[List[Tuple[str, str]]]=None,
+            temperature: float=0.8,
+            top_k: int=10,
+            top_p: float=0.8,
+            batch_size: int=None,
+        ):
+            assert temperature >= 0.0
+            assert top_k >= 0
+            assert top_p >= 0.0 and top_p <= 1.0
             
-            # 更新历史记录
-            updated_history = histories[i] + [(queries[i], response)]
-            responses.append(response)
-            new_histories.append(updated_history)
-        return responses
+            if histories is None:
+                histories = [list() for _ in queries]
+            
+            # 设置默认batch_size为全部样本
+            if batch_size is None:
+                batch_size = len(queries)
+            
+            responses = []
+            
+            # 分批处理
+            for i in range(0, len(queries), batch_size):
+                batch_queries = queries[i:i+batch_size]
+                batch_histories = histories[i:i+batch_size]
+                
+                # 处理单个子批次
+                batch_responses = self._process_single_batch(
+                    batch_queries, batch_histories,
+                    temperature, top_k, top_p
+                )
+                responses.extend(batch_responses)
+            
+            return responses
+
+    def _process_single_batch(
+            self,
+            queries: List[str],
+            histories: List[List[Tuple[str, str]]],
+            temperature: float,
+            top_k: int,
+            top_p: float,
+        ) -> List[str]:
+            """处理单个子批次的生成逻辑"""
+            batch_size = len(queries)
+            batch_data = []
+            start_positions = []
+            
+            device = next(self.model.parameters()).device
+            pad_id = self.tokenizer.encode("</s>")[0]
+            
+            for query, history in zip(queries, histories):
+                prompt = build_prompt(query, history)
+                encoded = self.tokenizer.encode(prompt)
+                batch_data.append(encoded)
+                start_positions.append(len(encoded))
+            
+            # 转换为张量并进行填充
+            padded_sequences = [torch.tensor(seq, dtype=torch.long) for seq in batch_data]
+            input_ids = torch.nn.utils.rnn.pad_sequence(
+                padded_sequences, 
+                batch_first=True, 
+                padding_value=pad_id
+            ).to(device)
+            
+            # 生成状态跟踪
+            active_mask = torch.ones(batch_size, dtype=torch.bool, device=device)
+            stop_ids_tensor = torch.tensor(list(self.tokenizer.stop_ids), device=device)
+            
+            # 生成循环
+            self.model.eval()
+            with torch.no_grad():
+                while input_ids.size(1) < self.config.m_len and active_mask.any():
+                    # 采样下一个token
+                    next_token_ids = self.sample_next_token_batch(
+                        input_ids[active_mask].tolist(), 
+                        temperature=temperature,
+                        top_k=top_k,
+                        top_p=top_p,
+                    )
+                    
+                    # 更新序列
+                    new_tokens = torch.tensor(
+                        next_token_ids, 
+                        device=device
+                    ).unsqueeze(1)
+                    input_ids = torch.cat(
+                        [input_ids, torch.full((batch_size, 1), pad_id, device=device)],
+                        dim=1
+                    )
+                    input_ids[active_mask, -1] = new_tokens.squeeze()
+                    
+                    # 检查停止条件
+                    is_stop = torch.isin(new_tokens.flatten(), stop_ids_tensor)
+                    active_mask[active_mask.clone()] &= ~is_stop
+            
+            # 解码结果
+            responses = []
+            for seq, start_pos in zip(input_ids.tolist(), start_positions):
+                # 截取生成的response部分
+                generated = seq[start_pos:]
+                # 去除停止符之后的内容
+                stop_positions = [idx for idx, tid in enumerate(generated) 
+                                if tid in self.tokenizer.stop_ids]
+                cutoff = stop_positions[0] if stop_positions else len(generated)
+                response = self.tokenizer.decode(generated[:cutoff])
+                responses.append(response)
+            
+            return responses
