@@ -2,7 +2,7 @@ import os
 import torch
 import safetensors.torch as st
 
-from typing import List, Tuple
+from typing import List, Tuple, Union
 from .transformer import Config, Transformer
 from .tokenizer import BpeTokenizer
 
@@ -45,77 +45,35 @@ class Khaosz:
         ids, 
         temperature=1.0, 
         top_k=0, 
-        top_p=1.0, 
+        top_p=1.0,
+        with_batch=False,
         filter_value=-float('inf')
-    ) -> int:
+    ) -> Union[int, list[int]]:
         device = next(self.model.parameters()).device
-        input_tensor = torch.tensor(ids, device=device).unsqueeze(0)
-        logits: torch.Tensor = self.model(input_tensor)[-1, -1, :] / temperature
-        
-        top_k = min(top_k, logits.size(-1))
-        if top_k > 0:
-            indices_to_remove = logits < torch.topk(logits, top_k)[0][..., -1, None]
-            logits[indices_to_remove] = filter_value
-
-        if top_p < 1.0:
-            sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-            cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
-
-            sorted_indices_to_remove = cumulative_probs > top_p
-            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-            sorted_indices_to_remove[..., 0] = 0
-
-            indices_to_remove = sorted_indices[sorted_indices_to_remove]
-            logits[indices_to_remove] = filter_value
-            
-        probabilities = torch.softmax(logits, dim=-1)
-        next_token_id = torch.multinomial(probabilities, num_samples=1).item()
-        
-        return next_token_id
-    
-    def sample_next_token_batch(
-        self,
-        ids_batch, 
-        temperature=1.0, 
-        top_k=0, 
-        top_p=1.0, 
-        filter_value=-float('inf')
-    ) -> List[int]:
-        device = next(self.model.parameters()).device
-        input_tensor = torch.tensor(ids_batch, device=device)
+        input_tensor = torch.tensor(ids, device=device)
+        input_tensor = input_tensor.unsqueeze(0) if not with_batch else input_tensor
         logits: torch.Tensor = self.model(input_tensor)[:, -1, :] / temperature
-
-        # 处理 top_k 过滤
-        top_k = min(top_k, logits.size(-1)) if top_k > 0 else 0
-        if top_k > 0:
-            topk_values = torch.topk(logits, top_k, dim=1).values
-            thresholds = topk_values[:, -1].unsqueeze(1)
-            logits = torch.where(logits < thresholds, torch.full_like(logits, filter_value), logits)
-
-        # 处理 top_p 过滤
-        if top_p < 1.0:
-            sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=1)
-            cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=1), dim=1)
-            
-            # 创建需要移除位置的掩码
-            sorted_indices_to_remove = cumulative_probs > top_p
-            sorted_indices_to_remove[:, 1:] = sorted_indices_to_remove[:, :-1].clone()
-            sorted_indices_to_remove[:, 0] = False
-            
-            # 将排序后的索引展开并应用到原始logits
-            scatter_dim = 1
-            range_tensor = torch.arange(sorted_indices.shape[scatter_dim], device=device) \
-                .expand(*sorted_indices.shape)
-            mask = sorted_indices_to_remove.gather(scatter_dim, range_tensor)
-            mask = mask.scatter_(scatter_dim, sorted_indices, sorted_indices_to_remove)
-            
-            logits = torch.where(mask, torch.full_like(logits, filter_value), logits)
-
-        # 采样下一个token
-        probabilities = torch.softmax(logits, dim=1)
-        next_token_ids = torch.multinomial(probabilities, num_samples=1).squeeze(1).tolist()
         
-        return next_token_ids
+        top_k = min(top_k, logits.size(-1)) if top_k > 0 else 0
+        
+        if top_k > 0:
+            indices_to_remove = logits < torch.topk(logits, top_k).values[:, -1, None]
+            logits[indices_to_remove] = filter_value
+        if top_p < 1.0:
+            sorted_logits, sorted_indices = torch.sort(logits, dim=-1, descending=True)
+            cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
+            sorted_indices_to_remove = cumulative_probs > top_p
+            sorted_indices_to_remove[:, 0] = False
+
+            batch_indices, sorted_pos = torch.where(sorted_indices_to_remove)
+            original_col_indices = sorted_indices[batch_indices, sorted_pos]
+            logits[batch_indices, original_col_indices] = filter_value
+        
+        probabilities = torch.softmax(logits, dim=-1)
+        next_token_ids = torch.multinomial(probabilities, num_samples=1)
+        
+        return next_token_ids.item() if not with_batch else next_token_ids.tolist()
+    
     
     def stream_generate(
             self, 
@@ -234,7 +192,6 @@ class Khaosz:
             top_k: int,
             top_p: float,
         ) -> List[str]:
-            """处理单个子批次的生成逻辑"""
             batch_size = len(queries)
             batch_data = []
             start_positions = []
@@ -265,11 +222,12 @@ class Khaosz:
             with torch.no_grad():
                 while input_ids.size(1) < self.config.m_len and active_mask.any():
                     # 采样下一个token
-                    next_token_ids = self.sample_next_token_batch(
+                    next_token_ids = self.sample_next_token(
                         input_ids[active_mask].tolist(), 
                         temperature=temperature,
                         top_k=top_k,
                         top_p=top_p,
+                        with_batch=True
                     )
                     
                     # 更新序列
@@ -277,10 +235,7 @@ class Khaosz:
                         next_token_ids, 
                         device=device
                     ).unsqueeze(1)
-                    input_ids = torch.cat(
-                        [input_ids, torch.full((batch_size, 1), pad_id, device=device)],
-                        dim=1
-                    )
+                    input_ids = torch.cat([input_ids, torch.full((batch_size, 1), pad_id, device=device)], dim=1)
                     input_ids[active_mask, -1] = new_tokens.squeeze()
                     
                     # 检查停止条件
