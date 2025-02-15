@@ -7,17 +7,22 @@ warnings.filterwarnings("ignore")
 def batch_generate():
     model = Khaosz("params")
     model = model.to(device='cuda', dtype=torch.float16)
-    queries = ["什么是人工智能", "什么是高性能计算", "你会做什么", "什么是transformer", "什么是物联网"]
+    queries = ["你会做什么", "什么是人工智能", "什么是高性能计算" , "什么是transformer"]
     responses = model.batch_generate(
         queries=queries,
-        temperature=0.9,
+        temperature=0.7,
         top_k=50,
-        top_p=0.6,
+        top_p=0.8,
     )
-    iter = 0
-    for response in responses:
-        print(iter, response)
-        iter += 1
+    out_info = []
+    for query, response in zip(queries, responses):
+        out_dict = {
+            "query": query,
+            "response": response
+        }
+        out_info.append(out_dict)
+        print(out_dict)
+
 
 def generate_dpo_data(data_path, question_key, recepted_key, rejected_key, batch_size):
     model = Khaosz("params")
