@@ -11,14 +11,14 @@ def create_mask(L: int, device) -> Tensor:
     return torch.ones(
         L, L, dtype=torch.bool, device=device
     ).triu(diagonal=1)
-
+    
 def get_rotary_emb(
         dim: int, 
         max_len: int, 
         base: float = 10000, 
         device: torch.device = torch.device('cuda'),
     ) -> torch.Tensor:
-    
+
     theta = base ** (-torch.arange(0, dim, 2, device=device).float() / dim)
     t = torch.arange(0, max_len, device=device).float()
     freqs = torch.outer(t, theta)
@@ -156,8 +156,7 @@ class Attention(nn.Module):
         k = k.permute(0, 2, 1, 3)
         v = v.permute(0, 2, 1, 3)
         
-        is_causal =  (mask == None)
-        attn_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=is_causal)
+        attn_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=True)
         attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(B, L, -1)
         out = self.o_proj(attn_out)
 
@@ -198,14 +197,18 @@ class Transformer(nn.Module):
             parameter_size += p.numel()
         return parameter_size
     
-    def forward(self, x: Tensor):
+    def forward(self, x: Tensor, attn_mask: Tensor=None):
         assert x.ndim == 2
         x = F.embedding(x, self.embedding)
+        
         self.freq_cis = self.freq_cis.to(x.device)
         freq_cis = self.freq_cis[:x.size(1)]
         
+        if attn_mask is not None:
+            attn_mask = attn_mask.to(x.device)
+        
         for layer in self.layers:
-            x = layer(x, freq_cis)
+            x = layer(x, freq_cis, attn_mask)
             
         x = self.norm(x)
         x = F.linear(x, self.embedding)
