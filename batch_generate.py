@@ -7,24 +7,28 @@ warnings.filterwarnings("ignore")
 def batch_generate():
     model = Khaosz("params")
     model = model.to(device='cuda', dtype=torch.float16)
-    queries = ["什么是人工智能", "什么是高性能计算", "什么是transformer"]
+    queries = ["什么是人工智能", "什么是高性能计算", "你会做什么", "什么是transformer", "什么是物联网"]
     responses = model.batch_generate(
         queries=queries,
         temperature=0.9,
         top_k=50,
         top_p=0.6,
     )
+    iter = 0
     for response in responses:
-        print(response)
+        print(iter, response)
+        iter += 1
 
 def generate_dpo_data(data_path, question_key, recepted_key, rejected_key, batch_size):
     model = Khaosz("params")
     model = model.to(device='cuda', dtype=torch.float16)
     
     with open(data_path, "r") as f:
-        json_file = json.loads(f)
-    questions = [json_file[i][question_key] for i in range(len(json_file))]
+        json_file = json.loads(f)    
+        questions = [json_file[i][question_key] for i in range(len(json_file))]
+        recepted = [json_file[i][recepted_key] for i in range(len(json_file))]
     
+    rejected = []
     pass
     
     
