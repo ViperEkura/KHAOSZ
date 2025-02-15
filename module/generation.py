@@ -1,7 +1,9 @@
 import os
 import torch
+
 import safetensors.torch as st
 
+from torch import Tensor 
 from typing import List, Tuple, Union, Optional
 from .transformer import Config, Transformer
 from .tokenizer import BpeTokenizer
@@ -14,6 +16,17 @@ def build_prompt(query, history) -> str:
             ret_prompt += f"<|user|>: {his_query} <|system|>: <s> {his_response} </s>"
     ret_prompt += f"<|user|>: {query} <|system|>: <s> "
     return ret_prompt
+
+def create_seq_mask(batch_attn_mask: Tensor, device: torch.device) -> Tensor:
+    batch_size, seq_len = batch_attn_mask.shape
+    expanded_mask = batch_attn_mask.unsqueeze(1).expand(batch_size, seq_len, seq_len)
+    attention_mask = expanded_mask * expanded_mask.transpose(1, 2)
+
+    attention_mask = attention_mask.float()
+    attention_mask = attention_mask.masked_fill(attention_mask == 1, float('-inf'))
+    attention_mask = attention_mask.to(device)
+
+    return attention_mask
 
 
 class Khaosz:
@@ -47,12 +60,13 @@ class Khaosz:
         top_k: int, 
         top_p: float,
         with_batch: bool=False,
+        attn_mask: Optional[Tensor] = None,
         filter_value: float=-float('inf')
     ) -> Union[int, list[int]]:
         device = next(self.model.parameters()).device
         input_tensor = torch.tensor(ids, device=device)
         input_tensor = input_tensor.unsqueeze(0) if not with_batch else input_tensor
-        logits: torch.Tensor = self.model(input_tensor)[:, -1, :] / temperature
+        logits: torch.Tensor = self.model(input_tensor, attn_mask)[:, -1, :] / temperature
         
         top_k = min(top_k, logits.size(-1)) if top_k > 0 else 0
         
@@ -174,12 +188,11 @@ class Khaosz:
         is_completed = [False] * batch_size
         responses = [''] * batch_size
         device = next(self.model.parameters()).device
-        pad_token_id = self.tokenizer.encode("</s>")[0]
+        pad_token_id = self.config.vocab_size - 1
         
         self.model.eval()
         with torch.no_grad():
             while sum(is_completed) < batch_size and len(batch_input_ids[0]) < self.config.m_len:
-                # 收集未完成样本的当前ids
                 active_indices = [i for i, completed in enumerate(is_completed) if not completed]
                 current_batch = [batch_input_ids[i] for i in active_indices]
                 
