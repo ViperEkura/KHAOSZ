@@ -1,6 +1,5 @@
 import os
 import torch
-
 import safetensors.torch as st
 
 from torch import Tensor 
@@ -16,17 +15,6 @@ def build_prompt(query, history) -> str:
             ret_prompt += f"<|user|>: {his_query} <|system|>: <s> {his_response} </s>"
     ret_prompt += f"<|user|>: {query} <|system|>: <s> "
     return ret_prompt
-
-def create_seq_mask(batch_attn_mask: Tensor, device: torch.device) -> Tensor:
-    batch_size, seq_len = batch_attn_mask.shape
-    expanded_mask = batch_attn_mask.unsqueeze(1).expand(batch_size, seq_len, seq_len)
-    attention_mask = expanded_mask * expanded_mask.transpose(1, 2)
-
-    attention_mask = attention_mask.float()
-    attention_mask = attention_mask.masked_fill(attention_mask == 1, float('-inf'))
-    attention_mask = attention_mask.to(device)
-
-    return attention_mask
 
 
 class Khaosz:
@@ -162,67 +150,3 @@ class Khaosz:
         
         return response
     
-    def batch_generate(
-        self, 
-        queries: List[str], 
-        histories: Optional[List[List[Tuple[str, str]]]] = None,
-        temperature: float = 0.8,
-        top_k: int = 10,
-        top_p: float = 0.8,
-        batch_size: Optional[int] = None,
-    ) -> List[str]:
-        
-        if histories is None:
-            histories = [[] for _ in queries]
-        
-        batch_input_ids: List[List[int]] = []
-        start_id_pos: List[int] = []
-        
-        for query, history in zip(queries, histories):
-            prompt = build_prompt(query, history)
-            ids = self.tokenizer.encode(prompt)
-            start_id_pos.append(len(ids))
-            batch_input_ids.append(ids)
-        
-        batch_size = len(queries)
-        is_completed = [False] * batch_size
-        responses = [''] * batch_size
-        device = next(self.model.parameters()).device
-        pad_token_id = self.config.vocab_size - 1
-        
-        self.model.eval()
-        with torch.no_grad():
-            while sum(is_completed) < batch_size and len(batch_input_ids[0]) < self.config.m_len:
-                active_indices = [i for i, completed in enumerate(is_completed) if not completed]
-                current_batch = [batch_input_ids[i] for i in active_indices]
-                
-                # 转换为张量并填充
-                max_len = max(len(ids) for ids in current_batch)
-                padded_ids = [ids + [pad_token_id] * (max_len - len(ids)) for ids in current_batch]
-                input_tensor = torch.tensor(padded_ids, device=device)
-                
-                # 采样下一个token
-                next_token_ids = self.sample_next_token(
-                    input_tensor, 
-                    temperature=temperature,
-                    top_k=top_k,
-                    top_p=top_p,
-                    with_batch=True
-                )
-                
-                # 更新每个样本的ids并检查停止条件
-                for pos, idx in enumerate(active_indices):
-                    next_token_id = next_token_ids[pos]
-                    batch_input_ids[idx].append(next_token_id)
-                    if next_token_id in self.tokenizer.stop_ids:
-                        is_completed[idx] = True
-                    if len(batch_input_ids[idx]) >= self.config.m_len:
-                        is_completed[idx] = True
-            
-            # 解码响应并更新历史
-            for i in range(batch_size):
-                response_ids = batch_input_ids[i][start_id_pos[i]:]
-                responses[i] = self.tokenizer.decode(response_ids)
-                histories[i].append((queries[i], responses[i]))
-        
-        return responses

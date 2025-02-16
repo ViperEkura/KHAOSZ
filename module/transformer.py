@@ -205,7 +205,7 @@ class Transformer(nn.Module):
         freq_cis = self.freq_cis[:x.size(1)]
         
         if attn_mask is not None:
-            attn_mask = attn_mask.to(x.device)
+            attn_mask = attn_mask.to(device=x.device, dtype=x.dtype)
         
         for layer in self.layers:
             x = layer(x, freq_cis, attn_mask)
