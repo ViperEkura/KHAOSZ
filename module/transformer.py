@@ -1,3 +1,4 @@
+import math
 import json
 import torch
 import torch.nn as nn
@@ -55,6 +56,26 @@ def repeat_kv(x: Tensor, n_rep: int) -> Tensor:
         .reshape(bs, slen, n_kv_heads * n_rep, head_dim)
     )
 
+def self_attention(
+    q: Tensor, 
+    k: Tensor, 
+    v: Tensor, 
+    n_heads: int,
+    n_dim: int,
+    mask=None
+) -> Tensor:
+    head_dim = n_dim // n_heads
+    b, _, l, _ = q.size()
+    
+    scores = torch.matmul(q, k.transpose(2, 3)) / math.sqrt(head_dim)
+    if mask is not None:
+        scores = scores + mask
+    causal_mask = create_mask(l, q.device)
+    scores = scores.masked_fill(causal_mask, -float('inf'))
+    scores = F.softmax(scores.float(), dim=-1).type_as(q)
+    
+    output = torch.matmul(scores, v)
+    return output
 
 class Config:
     def __init__(self, cfg_path=None):
@@ -123,11 +144,12 @@ class MLP(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, n_dim, n_head, n_kvhead, *args, **kwargs):
+    def __init__(self, n_dim, n_head, n_kvhead, flush_attn=True, *args, **kwargs):
         super().__init__(*args, **kwargs)
         assert n_dim % n_head == 0
         assert n_head % n_kvhead == 0
         
+        self.flush_attn = flush_attn
         self.head_dim = n_dim // n_head
         self.n_dim = n_dim
         self.n_heads = n_head
@@ -152,12 +174,18 @@ class Attention(nn.Module):
         q, k = apply_rotary_emb(q, k, freqs_cis)
         k, v = repeat_kv(k, self.n_rep), repeat_kv(v, self.n_rep)
         
+        # (bsz, n_heads, L, head_dim)
         q = q.permute(0, 2, 1, 3)
         k = k.permute(0, 2, 1, 3)
         v = v.permute(0, 2, 1, 3)
         
-        attn_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=True)
-        attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(B, L, -1)
+        if self.flush_attn:
+            attn_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=True)
+            attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(B, L, -1)
+        else:
+            attn_out = self_attention(q, k, v, self.n_heads, self.head_dim, mask)
+            attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(B, L, -1)
+        
         out = self.o_proj(attn_out)
 
         return out
