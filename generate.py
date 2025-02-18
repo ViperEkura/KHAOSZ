@@ -35,7 +35,7 @@ def dpo_generate(
     recepted_key: str="recepted",
 )-> List:  
     with open(input_json_file, "r") as f:
-        json_file = json.loads(f)
+        json_file = json.load(f)
         item_size = len(json_file)
         queries = [item[question_key] for item in json_file]
         recepted = [item[recepted_key] for item in json_file]
@@ -71,7 +71,7 @@ if __name__  == "__main__":
      
      dpo(
          model,
-         input_json_file="data/dpo_data.json",
+         input_json_file="C:/Develop/vocab/dpo.json",
          output_json_file="data/dpo_output.json",
          question_key="question",
          recepted_key="recepted"

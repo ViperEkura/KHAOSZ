@@ -65,12 +65,11 @@ def self_attention(
     mask=None
 ) -> Tensor:
     head_dim = n_dim // n_heads
-    b, _, l, _ = q.size()
     
     scores = torch.matmul(q, k.transpose(2, 3)) / math.sqrt(head_dim)
     if mask is not None:
         scores = scores + mask
-    causal_mask = create_mask(l, q.device)
+    causal_mask = create_mask(q.size(2), q.device)
     scores = scores.masked_fill(causal_mask, -float('inf'))
     scores = F.softmax(scores.float(), dim=-1).type_as(q)
     
