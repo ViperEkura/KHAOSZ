@@ -10,7 +10,7 @@
 代码遵循 http://www.apache.org/licenses/LICENSE-2.0 协议， 使用时请注明代码来源
 
 - **设备选择**：当前代码默认使用CUDA进行训练
-- **性能优化**：代码中设置了`dtype=torch.bfloat16`来启用混合精度训练，这有助于提高训练速度和降低显存消耗，但需确保硬件支持此特性。
+- **性能优化**：代码中设置了`dtype=torch.bfloat16`来启用训练，这有助于提高训练速度和降低显存消耗，但需确保硬件支持此特性。
 - **语言支持**：该模型目前仅仅在中文数据集上训练， 因此通过英文对话可能出现问题， 但是训练tokenzier 的时候加入了英文文段， 也可以解码英文token
 
 ### 1. 如何训练
@@ -29,8 +29,6 @@
 ```bash
 conda env create -f environment.yml --name env_name
 ```
-
-请使用uv 安装
 
 (3).运行训练脚本：
 
@@ -86,8 +84,9 @@ while True:
     for response, histroy in model.stream_generate(
         query=query, 
         history=histroy,
-        temperature=1.0,
-        top_p=0.5
+        temperature=0.95,
+        top_p=0.9,
+        top_K=50,
     ):
         print(response[response_size:], end="")
         response_size = len(response)       
@@ -113,8 +112,9 @@ while True:
     response =  model.generate(
         query=query, 
         history=histroy,
-        temperature=1.0,
-        top_p=0.5
+        temperature=0.95,
+        top_p=0.9,
+        top_K=50,
     )
     print(response)
 ```
