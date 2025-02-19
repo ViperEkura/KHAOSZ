@@ -1,3 +1,4 @@
+import os
 import torch
 import warnings
 from module import Khaosz, Transformer, Config
@@ -5,7 +6,8 @@ from module import Khaosz, Transformer, Config
 warnings.filterwarnings("ignore")
 
 def chat():
-    model = Khaosz("params")
+    model_dir = os.path.join(os.path.dirname(__file__), "params")
+    model = Khaosz(model_dir)
     model = model.to(device='cuda', dtype=torch.bfloat16)
     histroy = []
     while True:
@@ -17,8 +19,9 @@ def chat():
         for response, histroy in model.stream_generate(
             query=query, 
             history=histroy,
-            temperature=1.0,
-            top_p=0.5,
+            temperature=0.95,
+            top_p=0.9,
+            top_k=50
         ):
             print(response[response_size:], end="", flush=True)
             response_size = len(response)       

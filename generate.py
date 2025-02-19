@@ -2,9 +2,11 @@ import os
 import json
 import torch
 import warnings
+import argparse
 
 from module import Khaosz
 from typing import List, Dict
+from tqdm import tqdm
 
 warnings.filterwarnings("ignore")
 
@@ -15,25 +17,24 @@ def batch_generate(
     top_k=50, 
     top_p=0.8 
 ) -> Dict:
-    responses = [
-        model.generate(
+    responses = []
+    for query in tqdm(queries, desc="Generating responses"):
+        response = model.generate(
             query=query, 
             temperature=temperature, 
             top_k=top_k, 
             top_p=top_p
-            ) for query in queries
-        ]
-    outputs = []
-    for response in responses:
-        outputs.append(response)
-    return outputs
+        )
+        responses.append(response)
+    
+    return responses
 
 def dpo_generate(
     model: Khaosz,
     input_json_file: str,
     question_key: str="question",
     recepted_key: str="recepted",
-)-> List:  
+) -> List:  
     with open(input_json_file, "r") as f:
         json_file = json.load(f)
         item_size = len(json_file)
@@ -62,17 +63,27 @@ def dpo(
     output_dict = dpo_generate(model, input_json_file, question_key, recepted_key)
     
     with open(output_json_file, "w") as f:
-        json.dump(output_dict, f)
+        json.dump(output_dict, f, indent=4)
 
+if __name__ == "__main__":
+    # 设置 argparse
+    parser = argparse.ArgumentParser(description="Run DPO (Direct Preference Optimization) with a Khaosz model.")
+    parser.add_argument("--input_json_file", type=str, required=True, help="Path to the input JSON file.")
+    parser.add_argument("--output_json_file", type=str, required=True, help="Path to the output JSON file.")
+    parser.add_argument("--question_key", type=str, default="question", help="Key for the question in the input JSON.")
+    parser.add_argument("--recepted_key", type=str, default="recepted", help="Key for the accepted response in the input JSON.")
+    args = parser.parse_args()
 
-if __name__  == "__main__":
-     model = Khaosz("params")
-     model = model.to(device='cuda', dtype=torch.float16)
-     
-     dpo(
-         model,
-         input_json_file="C:/Develop/vocab/dpo.json",
-         output_json_file="data/dpo_output.json",
-         question_key="question",
-         recepted_key="recepted"
-     )
+    # 加载模型
+    model_dir = os.path.join(os.path.dirname(__file__), "params")
+    model = Khaosz(model_dir)
+    model = model.to(device='cuda', dtype=torch.float16)
+    
+    # 运行 DPO
+    dpo(
+        model,
+        input_json_file=args.input_json_file,
+        output_json_file=args.output_json_file,
+        question_key=args.question_key,
+        recepted_key=args.recepted_key
+    )
