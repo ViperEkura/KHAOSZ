@@ -3,7 +3,7 @@ from tokenizers import decoders, processors, normalizers, pre_tokenizers
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
 
-from typing import List, Tuple
+from typing import List
 
 class BpeTokenizer:
     def __init__(self, path=None):
@@ -77,7 +77,7 @@ class BpeTokenizer:
         return self._tokenizer.get_vocab_size()
     
     @property
-    def stop_ids(self) -> list[int]:
+    def stop_ids(self) -> List[int]:
         stop_ids = []
         for token in self._special_tokens:
             stop_ids.append(self._tokenizer.token_to_id(token))
