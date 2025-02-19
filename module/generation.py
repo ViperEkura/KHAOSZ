@@ -2,17 +2,19 @@ import os
 import torch
 import safetensors.torch as st
 
-from typing import List, Tuple
+from torch import Tensor 
+from typing import List, Tuple, Union, Optional
 from .transformer import Config, Transformer
 from .tokenizer import BpeTokenizer
 
 
 def build_prompt(query, history) -> str:
-    ret_prompt = str()
+    ret_prompt = ""
     if len(history) > 0:
         for his_query, his_response in history:
-            ret_prompt += f"<|user|>: {his_query} <|system|>: <s> {his_response} </s>"
-    ret_prompt += f"<|user|>: {query} <|system|>: <s> "
+            ret_prompt += f"<|user|>: {his_query} <|system|>: <s> {his_response} </s>\n"
+    if query is not None:
+        ret_prompt += f"<|user|>: {query} <|system|>: <s> "
     return ret_prompt
 
 
@@ -43,58 +45,38 @@ class Khaosz:
     def sample_next_token(
         self, 
         ids, 
-        temperature=1.0, 
-        top_k=0, 
-        top_p=0.0, 
-        filter_value=-float('inf')
-    ) -> int:
+        temperature: float, 
+        top_k: int, 
+        top_p: float,
+        with_batch: bool=False,
+        attn_mask: Optional[Tensor] = None,
+        filter_value: float=-float('inf')
+    ) -> Union[int, list[int]]:
         device = next(self.model.parameters()).device
-        input_tensor = torch.tensor(ids, device=device).unsqueeze(0)
-        logits: torch.Tensor = self.model(input_tensor)[-1, -1, :] / temperature
+        input_tensor = torch.tensor(ids, device=device)
+        input_tensor = input_tensor.unsqueeze(0) if not with_batch else input_tensor
+        logits: torch.Tensor = self.model(input_tensor, attn_mask)[:, -1, :] / temperature
         
-        top_k = min(top_k, logits.size(-1))
+        top_k = min(top_k, logits.size(-1)) if top_k > 0 else 0
+        
         if top_k > 0:
-            indices_to_remove = logits < torch.topk(logits, top_k)[0][..., -1, None]
+            indices_to_remove = logits < torch.topk(logits, top_k).values[:, -1, None]
             logits[indices_to_remove] = filter_value
-
         if top_p < 1.0:
-            sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+            sorted_logits, sorted_indices = torch.sort(logits, dim=-1, descending=True)
             cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
-
             sorted_indices_to_remove = cumulative_probs > top_p
-            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-            sorted_indices_to_remove[..., 0] = 0
+            sorted_indices_to_remove[:, 0] = False
 
-            indices_to_remove = sorted_indices[sorted_indices_to_remove]
-            logits[indices_to_remove] = filter_value
-            
+            batch_indices, sorted_pos = torch.where(sorted_indices_to_remove)
+            original_col_indices = sorted_indices[batch_indices, sorted_pos]
+            logits[batch_indices, original_col_indices] = filter_value
+        
         probabilities = torch.softmax(logits, dim=-1)
-        next_token_id = torch.multinomial(probabilities, num_samples=1).item()
+        next_token_ids = torch.multinomial(probabilities, num_samples=1)
         
-        return next_token_id
+        return next_token_ids.item() if not with_batch else next_token_ids.flatten().tolist()
     
-    def sample_next_token_batch(
-        self,
-        ids_batch, 
-        temperature=1.0, 
-        top_k=0, 
-        top_p=0.0, 
-        filter_value=-float('inf')
-    ) -> List[int]:
-        device = next(self.model.parameters()).device
-        
-        ids_batch_val = list()
-        ids_batch_pos = list()
-        for pos, ids in enumerate(ids_batch):
-            if ids_batch_val[-1] != None:
-                ids_batch_val.append(ids)
-                ids_batch_pos.append(pos)
-        
-        input_tensor = torch.tensor(ids_batch_val, device=device).unsqueeze(0)
-        logits: torch.Tensor = self.model(input_tensor)[:, -1, :] / temperature
-        
-    
-        return None
     
     def stream_generate(
             self, 
@@ -118,16 +100,17 @@ class Khaosz:
         response = str()
         
         self.model.eval()
-        while len(ids) < self.config.m_len:
-            next_token_id = self.sample_next_token(
-                ids, temperature, 
-                top_k=top_k, top_p=top_p
-            )
-            if next_token_id in self.tokenizer.stop_ids:
-                break
-            ids.append(next_token_id)
-            response = self.tokenizer.decode(ids[start_id_pos:])
-            yield response ,history
+        with torch.no_grad():
+            while len(ids) < self.config.m_len:
+                next_token_id = self.sample_next_token(
+                    ids, temperature, 
+                    top_k=top_k, top_p=top_p
+                )
+                if next_token_id in self.tokenizer.stop_ids:
+                    break
+                ids.append(next_token_id)
+                response = self.tokenizer.decode(ids[start_id_pos:])
+                yield response ,history
         
         history.append((query, response))
 
@@ -153,69 +136,18 @@ class Khaosz:
         response = str()
         
         self.model.eval()
-        while len(ids) < self.config.m_len:
-            next_token_id = self.sample_next_token(
-                ids, temperature, 
-                top_k=top_k, top_p=top_p
-            )
-            if next_token_id in self.tokenizer.stop_ids:
-                break
-            ids.append(next_token_id)
+        with torch.no_grad():
+            while len(ids) < self.config.m_len:
+                next_token_id = self.sample_next_token(
+                    ids, temperature, 
+                    top_k=top_k, top_p=top_p
+                )
+                if next_token_id in self.tokenizer.stop_ids:
+                    break
+                ids.append(next_token_id)
             
         response = self.tokenizer.decode(ids[start_id_pos:])
         history.append((query, response))
         
         return response
     
-    
-    def generate_batch(
-        self, 
-        queries: List[str], 
-        histories: List[List[Tuple[str, str]]]=None,
-        temperature: float=0.8,
-        top_k: int=10,
-        top_p: float=0.8,
-    ):
-        assert temperature >= 0.0
-        assert top_k >= 0
-        assert top_p >= 0.0 and top_p <= 1.0
-        
-        if histories is None:
-            histories = [list() for _ in queries]
-        
-        batch_size = len(queries)
-        responses = []
-        
-        tokens_batch = [build_prompt(query, hist) for query, hist in zip(queries, histories)]
-        ids_batch = [self.tokenizer.encode(tokens) for tokens in tokens_batch]
-        start_id_pos_batch = [len(ids) for ids in ids_batch]
-        
-        self.model.eval()
-        end_items = 0
-        
-        for _ in range(self.config.m_len):
-            next_token_ids = self.sample_next_token_batch(
-                ids_batch, temperature, 
-                top_k=top_k, top_p=top_p
-            )
-            
-            for i, next_token_id in enumerate(next_token_ids):
-                if next_token_id == None:
-                    continue
-                
-                if next_token_id in self.tokenizer.stop_ids:
-                    ids_batch[i].append(None)
-                    end_items += 1
-                else:
-                    ids_batch[i].append(next_token_id)
-                    
-                if end_items == batch_size:
-                    break
-        
-        for i, ids in enumerate(ids_batch):
-            ids = [id for id in ids if id is not None]
-            response = self.tokenizer.decode(ids[start_id_pos_batch[i]:])
-            histories[i].append((queries[i], response))
-            responses.append(response)
-        
-        return responses
