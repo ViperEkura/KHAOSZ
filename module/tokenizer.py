@@ -7,7 +7,8 @@ from typing import List
 
 class BpeTokenizer:
     def __init__(self, path=None):
-        self._special_tokens = ["<s>", "</s>", "<|user|>", "<|system|>"]
+        self._control_tokens = ["<bos>", "<eos>", "<pad>"]
+        self._special_tokens = ["<|user|>", "<|system|>"]
         model = BPE()
         tokenizer = Tokenizer(model)
         tokenizer.normalizer = normalizers.Sequence([
@@ -33,7 +34,7 @@ class BpeTokenizer:
     
     def __init_trainer(self, vocab_size, min_freq):
         alphabet = pre_tokenizers.ByteLevel.alphabet()
-        min_size  = len(self._special_tokens) + len(alphabet)
+        min_size  = len(self._control_tokens) + len(alphabet)
         assert vocab_size > min_size
         
         lim_len = vocab_size - len(self._special_tokens)
@@ -49,11 +50,13 @@ class BpeTokenizer:
         
     def train(self, files, vocab_size, min_freq):
         trainer = self.__init_trainer(vocab_size, min_freq)
+        self._tokenizer.add_special_tokens(self._control_tokens)
         self._tokenizer.train(files=files, trainer=trainer)
         self._tokenizer.add_special_tokens(self._special_tokens)
         
     def train_from_iterator(self, iterator, vocab_size, min_freq):
         trainer = self.__init_trainer(vocab_size, min_freq)
+        self._tokenizer.add_special_tokens(self._control_tokens)
         self._tokenizer.train_from_iterator(iterator=iterator, trainer=trainer)
         self._tokenizer.add_special_tokens(self._special_tokens)
         
