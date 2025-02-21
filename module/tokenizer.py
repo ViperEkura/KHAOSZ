@@ -48,15 +48,21 @@ class BpeTokenizer:
         )
         return trainer
         
-    def train(self, files, vocab_size, min_freq):
-        trainer = self.__init_trainer(vocab_size, min_freq)
+    def train(self, files, vocab_size, min_freq, reserved_token_size=100):
+        assert reserved_token_size > len(self._special_tokens)
+        reserved_tokens  = [f"<|rsv{i:02d}|>" for i in range(reserved_token_size- len(self._special_tokens))]
+        detail_vocab_size = vocab_size - (len(reserved_tokens) + len(self._special_tokens))
+        trainer = self.__init_trainer(detail_vocab_size, min_freq)
         self._tokenizer.train(files=files, trainer=trainer)
-        self._tokenizer.add_special_tokens(self._special_tokens)
+        self._tokenizer.add_special_tokens(self._special_tokens + reserved_tokens)
         
-    def train_from_iterator(self, iterator, vocab_size, min_freq):
-        trainer = self.__init_trainer(vocab_size, min_freq)
+    def train_from_iterator(self, iterator, vocab_size, min_freq, reserved_token_size=100):
+        assert reserved_token_size > len(self._special_tokens)
+        reserved_tokens  = [f"<|rsv{i:02d}|>" for i in range(reserved_token_size - len(self._special_tokens))]
+        detail_vocab_size = vocab_size - (len(reserved_tokens) + len(self._special_tokens))
+        trainer = self.__init_trainer(detail_vocab_size, min_freq)
         self._tokenizer.train_from_iterator(iterator=iterator, trainer=trainer)
-        self._tokenizer.add_special_tokens(self._special_tokens)
+        self._tokenizer.add_special_tokens(self._special_tokens + reserved_tokens)
         
     def save(self, path):
         self._tokenizer.save(path)
@@ -80,6 +86,6 @@ class BpeTokenizer:
     @property
     def stop_ids(self) -> List[int]:
         stop_ids = []
-        for token in self._special_tokens:
+        for token in self._control_tokens:
             stop_ids.append(self._tokenizer.token_to_id(token))
         return stop_ids
