@@ -1,17 +1,19 @@
 import os
+import copy
 import math
+import torch
 import pickle
 import logging
 
-import torch.nn as nn
 import safetensors.torch as st
 import matplotlib.pyplot as plt
-import torch.nn.functional as F
 
 from module.transformer import Config
 from module.tokenizer import BpeTokenizer
 from .dataset import DpoDataset
 
+import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 from torch.utils.data import DataLoader
 from torch.optim import Optimizer
@@ -32,36 +34,56 @@ def get_lambda_lr(warmup_iters, lr_decay_iters, min_rate=0.1):
     
     return get_lr
 
-def train_loss(in_args: Tuple[Tensor, Tensor], model: nn.Module):
+def train_block(in_args: Tuple[Tensor, Tensor], model: nn.Module):
     x, y = in_args
     B, L = x.size()
     p: Tensor = model(x)
-    return F.cross_entropy(p.view(B * L, -1), y.flatten())
+    loss = F.cross_entropy(p.view(B * L, -1), y.flatten())
+    return loss
 
-def dpo_train_loss(in_args: Tuple[Tensor, Tensor, Tensor], model: nn.Module, beta=0.1):
-    x, y1, y2 = in_args
-    _, _, D = x.size()
+def get_logprobs(model: nn.Module, input_ids: Tensor, pad_token_id: int):
+    with torch.no_grad():
+        logits = model(input_ids)
+    log_probs = torch.log_softmax(logits, dim=-1)
+    
+    shifted_log_probs = log_probs[:, :-1, :]
+    shifted_input_ids = input_ids[:, 1:]
+    
+    token_logprobs = torch.gather(
+        input=shifted_log_probs, 
+        index=shifted_input_ids.unsqueeze(-1),
+        dim=-1
+    ).squeeze(-1)
+    
+    mask = (shifted_input_ids != pad_token_id).type_as(token_logprobs)
+    token_logprobs = token_logprobs * mask
+    seq_logprob = torch.sum(token_logprobs, dim=-1)
+    
+    return seq_logprob
 
-    # 获取模型的 logits (batch_size, seq_len, vocab_size)
-    logits: Tensor = model(x)
+def dpo_train_block(
+    in_args: Tuple[Tensor, Tensor], 
+    model: nn.Module, 
+    ref_model: nn.Module,
+    pad_token_id: int,
+    beta: float=0.1
+):
+    good_response_ids, bad_response_ids = in_args
+    log_policy_good = get_logprobs(model, good_response_ids, pad_token_id)
+    log_policy_bad = get_logprobs(model, bad_response_ids, pad_token_id)
+    
+    log_ref_good = get_logprobs(ref_model, good_response_ids, pad_token_id)
+    log_ref_bad = get_logprobs(ref_model, bad_response_ids, pad_token_id)
+    
+    log_ratio_good = log_policy_good - log_ref_good
+    log_ratio_bad = log_policy_bad - log_ref_bad
+    
+    log_ratio_good = torch.clamp(log_ratio_good, min=-100, max=100)
+    log_ratio_bad = torch.clamp(log_ratio_bad, min=-100, max=100)
 
-    # 计算 chosen 和 rejected 的 log probabilities
-    log_probs = F.log_softmax(logits, dim=-1)  # (batch_size, seq_len, vocab_size)
-
-    # 获取 chosen 和 rejected 的 log probabilities
-    chosen_log_probs = log_probs.gather(-1, y1.unsqueeze(-1)).squeeze(-1)  # (batch_size, seq_len)
-    rejected_log_probs = log_probs.gather(-1, y2.unsqueeze(-1)).squeeze(-1)  # (batch_size, seq_len)
-
-    # 对序列长度取平均（假设每个 token 的权重相同）
-    chosen_log_probs = chosen_log_probs.mean(dim=-1)  # (batch_size,)
-    rejected_log_probs = rejected_log_probs.mean(dim=-1)  # (batch_size,)
-
-    # 计算 DPO 损失
-    log_ratios = chosen_log_probs - rejected_log_probs  # (batch_size,)
-    losses = -F.logsigmoid(beta * log_ratios).mean()  # 平均损失
-
-    return losses
-
+    ratio_diff = log_ratio_good - log_ratio_bad
+    dpo_loss = torch.mean(-F.log_sigmoid(beta * ratio_diff))
+    return dpo_loss
 
 
 class CheckPoint:
@@ -146,7 +168,13 @@ class Trainer:
             optimizer, 
             get_lambda_lr(warmup_iters=warmup_iters, lr_decay_iters=total_iters)
         )
-        is_dpo_train = isinstance(dataloader.dataset, DpoDataset)
+        is_dpo_train = False
+        dpo_ref_model = None
+        if isinstance(dataloader.dataset, DpoDataset):
+            is_dpo_train = True
+            dpo_ref_model = copy.deepcopy(self.model)
+            self.logger.info("DPO training mode")
+    
         
         self.logger.info("start training ...")  
         for epoch in range(n_epoch):
@@ -155,9 +183,16 @@ class Trainer:
             for input_param in tqdm_laoder:
                 
                 if is_dpo_train:
-                    loss = dpo_train_loss(input_param, self.model)
+                    loss = dpo_train_block(
+                        input_param, 
+                        self.model, 
+                        dpo_ref_model
+                    )
                 else:
-                    loss = train_loss(input_param, self.model)
+                    loss = train_block(
+                        input_param,
+                        self.model
+                    )
                     
                 losses.append(loss.item())
                 loss.backward()
@@ -181,4 +216,4 @@ class Trainer:
                     checkpoint = CheckPoint(self.model, self.tokenizer, self.config, losses, epoch + 1)
                     checkpoint.save_ckpt(ckpt_epoch_dir)
                     self.logger.info(f"Saved checkpoint to {ckpt_epoch_dir}")
-                
+                    
