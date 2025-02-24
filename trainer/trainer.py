@@ -66,7 +66,7 @@ def dpo_train_block(
     model: nn.Module, 
     ref_model: nn.Module,
     pad_token_id: int,
-    beta: float=0.1
+    beta: float
 ):
     good_response_ids, bad_response_ids = in_args
     log_policy_good = get_logprobs(model, good_response_ids, pad_token_id)
@@ -78,6 +78,7 @@ def dpo_train_block(
     log_ratio_good = log_policy_good - log_ref_good
     log_ratio_bad = log_policy_bad - log_ref_bad
     
+    # avoid NaN
     log_ratio_good = torch.clamp(log_ratio_good, min=-100, max=100)
     log_ratio_bad = torch.clamp(log_ratio_bad, min=-100, max=100)
 
@@ -158,7 +159,8 @@ class Trainer:
         n_iter_ckpt: int=5000,
         n_iter_step: int=1,
         max_grad_norm: float=1.0,
-        warmup_iters: int=5000,
+        warmup_iters: int=2000,
+        min_rate: float=0.1,
     ):
         n_iter, start_iter  = 0, 0
         losses = list()
@@ -166,8 +168,13 @@ class Trainer:
         total_iters = len(dataloader) * n_epoch
         schdulder = LambdaLR(
             optimizer, 
-            get_lambda_lr(warmup_iters=warmup_iters, lr_decay_iters=total_iters)
+            get_lambda_lr(
+                warmup_iters=warmup_iters,   
+                lr_decay_iters=total_iters, 
+                min_rate=min_rate
+            )
         )
+        
         is_dpo_train = False
         dpo_ref_model = None
         if isinstance(dataloader.dataset, DpoDataset):
