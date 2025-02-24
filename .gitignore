@@ -6,5 +6,5 @@ __pycache__
 *.safetensors
 
 # train_log / test
-train_log*
+*.log
 test*
