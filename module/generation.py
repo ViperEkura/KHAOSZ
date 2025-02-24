@@ -12,9 +12,9 @@ def build_prompt(query, history) -> str:
     ret_prompt = ""
     if len(history) > 0:
         for his_query, his_response in history:
-            ret_prompt += f"<|user|>: {his_query} <|system|>: <s> {his_response} </s>\n"
+            ret_prompt += f"<|user|> {his_query} <|system|> <bos>{his_response}<eos>\n"
     if query is not None:
-        ret_prompt += f"<|user|>: {query} <|system|>: <s> "
+        ret_prompt += f"<|user|> {query} <|system|> <bos>"
     return ret_prompt
 
 
