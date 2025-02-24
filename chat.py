@@ -1,9 +1,7 @@
 import os
 import torch
-import warnings
 from module import Khaosz, Transformer, Config
 
-warnings.filterwarnings("ignore")
 
 def chat():
     model_dir = os.path.join(os.path.dirname(__file__), "params")
@@ -19,7 +17,7 @@ def chat():
         for response, histroy in model.stream_generate(
             query=query, 
             history=histroy,
-            temperature=0.8,
+            temperature=0.95,
             top_p=0.95,
         ):
             print(response[response_size:], end="", flush=True)
