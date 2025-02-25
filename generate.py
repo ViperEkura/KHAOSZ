@@ -1,14 +1,11 @@
 import os
 import json
 import torch
-import warnings
 import argparse
 
 from module import Khaosz
 from typing import List, Dict
 from tqdm import tqdm
-
-warnings.filterwarnings("ignore")
 
 def batch_generate(
     queries: List[str],
@@ -16,7 +13,7 @@ def batch_generate(
     temperature: float, 
     top_k: int, 
     top_p: float,
-    batch_size: int=8 
+    batch_size: int=1
 ) -> Dict:
     sorted_queries = sorted(queries, key=lambda x: len(x), reverse=True)
     original_indices = {query: idx for idx, query in enumerate(queries)}
@@ -34,15 +31,20 @@ def batch_generate(
             top_p=top_p
         )
         
+        for batch_query, batch_response in zip(batch_queries, batch_responses):
+            print((batch_query, batch_response))
+        
         for query, response in zip(batch_queries, batch_responses):
             original_idx = original_indices[query] 
             responses[original_idx] = response  
+            
     
     return responses
 
 def dpo_generate(
     model: Khaosz,
     input_json_file: str,
+    batch_size: int=1,
     question_key: str="question",
     recepted_key: str="recepted",
 ) -> List:  
@@ -58,7 +60,7 @@ def dpo_generate(
         temperature=0.95, 
         top_k=0,        #未启用top_k
         top_p=0.80, 
-        batch_size=8
+        batch_size=batch_size
     )
     output_dict = []
     
@@ -90,6 +92,8 @@ if __name__ == "__main__":
     parser.add_argument("--output_json_file", type=str, required=True, help="Path to the output JSON file.")
     parser.add_argument("--question_key", type=str, default="question", help="Key for the question in the input JSON.")
     parser.add_argument("--recepted_key", type=str, default="recepted", help="Key for the accepted response in the input JSON.")
+    parser.add_argument("--batch_size", type=int, default=1, help="Batch size for generating responses.")
+
     args = parser.parse_args()
 
     # 加载模型
@@ -102,6 +106,7 @@ if __name__ == "__main__":
         model,
         input_json_file=args.input_json_file,
         output_json_file=args.output_json_file,
+        batch_size=args.batch_size,
         question_key=args.question_key,
-        recepted_key=args.recepted_key
+        recepted_key=args.recepted_key,
     )
