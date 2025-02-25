@@ -64,7 +64,6 @@ class Khaosz:
         if top_k > 0:
             indices_to_remove = logits < torch.topk(logits, top_k).values[:, -1, None]
             logits[indices_to_remove] = filter_value
-            
         if top_p < 1.0:
             sorted_logits, sorted_indices = torch.sort(logits, dim=-1, descending=True)
             cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
@@ -184,7 +183,7 @@ class Khaosz:
         with torch.no_grad():
             while max_step < self.config.m_len:
                 active_indices = [i for i, stop in enumerate(stop_flag_list) if not stop]
-                if sum(active_indices) == 0:
+                if sum(stop_flag_list) == batch_size:
                     break
                 input_sequence = [padded_ids_list[i] for i in active_indices]
                 attn_mask = []
