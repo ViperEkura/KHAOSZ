@@ -52,7 +52,10 @@ class Khaosz:
         attn_mask: Optional[Tensor] = None,
         filter_value: float=-float('inf')
     ) -> Union[int, list[int]]:
+        
         device = next(self.model.parameters()).device
+        attn_mask = torch.tensor(attn_mask, dtype=torch.bool)
+        
         input_tensor = torch.tensor(ids, device=device)
         input_tensor = input_tensor.unsqueeze(0) if not with_batch else input_tensor
         logits: torch.Tensor = self.model(input_tensor, attn_mask)[:, -1, :] / temperature
@@ -184,10 +187,15 @@ class Khaosz:
                 if sum(active_indices) == 0:
                     break
                 input_sequence = [padded_ids_list[i] for i in active_indices]
+                attn_mask = []
+                for seq in input_sequence:
+                    mask = [token != self.tokenizer.pad_id for token in seq]
+                    attn_mask.append(mask)
                 
                 next_token_ids = self.sample_next_token(
                     input_sequence, temperature, 
-                    top_k=top_k, top_p=top_p, 
+                    top_k=top_k, top_p=top_p,
+                    attn_mask=attn_mask,
                     with_batch=True
                 )
 
