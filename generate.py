@@ -4,7 +4,7 @@ import torch
 import argparse
 
 from module import Khaosz
-from typing import List, Dict
+from typing import List
 from tqdm import tqdm
 
 def batch_generate(
@@ -14,15 +14,18 @@ def batch_generate(
     top_k: int, 
     top_p: float,
     batch_size: int=1
-) -> Dict:
+) -> List:
+    assert batch_size > 0
     sorted_queries = sorted(queries, key=lambda x: len(x), reverse=True)
     original_indices = {query: idx for idx, query in enumerate(queries)}
     
     responses = [None] * len(queries) 
     total_batches = (len(sorted_queries) + batch_size - 1) // batch_size 
     
-    for i in tqdm(range(total_batches), desc="Generating responses"):
-        batch_queries = sorted_queries[i:min(i + batch_size, len(sorted_queries))]
+    for i in tqdm(range(0, total_batches * batch_size, batch_size), desc="Generating responses"):
+        batch_queries = sorted_queries[i: min(i + batch_size, len(queries))]
+        if not isinstance(batch_queries, list):
+            batch_queries = [batch_queries]
         
         batch_responses = model.batch_generate(
             queries=batch_queries,
@@ -77,13 +80,20 @@ def dpo(
     model: Khaosz,
     input_json_file: str,
     output_json_file: str,
+    batch_size: int=1,
     question_key: str="question",
     recepted_key: str="recepted",
 ):
-    output_dict = dpo_generate(model, input_json_file, question_key, recepted_key)
+    output_dict = dpo_generate(
+        model=model, 
+        input_json_file=input_json_file, 
+        batch_size=batch_size, 
+        question_key=question_key, 
+        recepted_key=recepted_key
+    )
     
-    with open(output_json_file, "w") as f:
-        json.dump(output_dict, f, indent=4)
+    with open(output_json_file, "w", encoding='utf-8') as f:
+        json.dump(output_dict, f, indent=4, ensure_ascii=False)
 
 if __name__ == "__main__":
     # 设置 argparse
