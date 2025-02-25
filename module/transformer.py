@@ -76,6 +76,19 @@ def self_attention(
     output = torch.matmul(scores, v)
     return output
 
+def create_seq_mask(batch_attn_mask: Tensor, device: torch.device, dtype: torch.dtype) -> Tensor:
+    batch_size, seq_len = batch_attn_mask.shape
+    
+    expanded_mask = batch_attn_mask.unsqueeze(1).expand(batch_size, seq_len, seq_len)
+    attention_mask = expanded_mask ^ expanded_mask.transpose(1, 2)
+
+    attention_mask = attention_mask.float()
+    attention_mask = attention_mask.masked_fill(attention_mask == 1, float('-inf'))
+    attention_mask = attention_mask.to(device=device, dtype=dtype).unsqueeze(1)
+
+    return attention_mask
+
+
 class Config:
     def __init__(self, cfg_path=None):
             self.vocab_size = None
@@ -232,10 +245,12 @@ class Transformer(nn.Module):
         freq_cis = self.freq_cis[:x.size(1)]
         
         if attn_mask is not None:
-            attn_mask = attn_mask.to(device=x.device, dtype=x.dtype)
+            format_mask = create_seq_mask(attn_mask, x.device, x.dtype)
+        else:
+            format_mask = None
         
         for layer in self.layers:
-            x = layer(x, freq_cis, attn_mask)
+            x = layer(x, freq_cis, format_mask)
             
         x = self.norm(x)
         x = F.linear(x, self.embedding)
