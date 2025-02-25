@@ -11,21 +11,32 @@ from tqdm import tqdm
 warnings.filterwarnings("ignore")
 
 def batch_generate(
-    queries,
+    queries: List[str],
     model: Khaosz,
-    temperature=0.95, 
-    top_k=50, 
-    top_p=0.8 
+    temperature: float, 
+    top_k: int, 
+    top_p: float,
+    batch_size: int=8 
 ) -> Dict:
-    responses = []
-    for query in tqdm(queries, desc="Generating responses"):
-        response = model.generate(
-            query=query, 
-            temperature=temperature, 
-            top_k=top_k, 
+    sorted_queries = sorted(queries, key=lambda x: len(x), reverse=True)
+    original_indices = {query: idx for idx, query in enumerate(queries)}
+    
+    responses = [None] * len(queries) 
+    total_batches = (len(sorted_queries) + batch_size - 1) // batch_size 
+    
+    for i in tqdm(range(total_batches), desc="Generating responses"):
+        batch_queries = sorted_queries[i:min(i + batch_size, len(sorted_queries))]
+        
+        batch_responses = model.batch_generate(
+            queries=batch_queries,
+            temperature=temperature,
+            top_k=top_k,
             top_p=top_p
         )
-        responses.append(response)
+        
+        for query, response in zip(batch_queries, batch_responses):
+            original_idx = original_indices[query] 
+            responses[original_idx] = response  
     
     return responses
 
@@ -41,7 +52,14 @@ def dpo_generate(
         queries = [item[question_key] for item in json_file]
         recepted = [item[recepted_key] for item in json_file]
     
-    rejected = batch_generate(queries, model)
+    rejected = batch_generate(
+        queries, 
+        model,
+        temperature=0.95, 
+        top_k=0,        #未启用top_k
+        top_p=0.80, 
+        batch_size=8
+    )
     output_dict = []
     
     for i in range(item_size):
