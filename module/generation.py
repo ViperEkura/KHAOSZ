@@ -54,17 +54,17 @@ class Khaosz:
     ) -> Union[int, list[int]]:
         
         device = next(self.model.parameters()).device
-        attn_mask = torch.tensor(attn_mask, dtype=torch.bool)
-        
+        attn_mask = torch.tensor(attn_mask, dtype=torch.bool, device=device)
         input_tensor = torch.tensor(ids, device=device)
         input_tensor = input_tensor.unsqueeze(0) if not with_batch else input_tensor
-        logits: torch.Tensor = self.model(input_tensor, attn_mask)[:, -1, :] / temperature
         
+        logits: torch.Tensor = self.model(input_tensor, attn_mask)[:, -1, :] / temperature
         top_k = min(top_k, logits.size(-1)) if top_k > 0 else 0
         
         if top_k > 0:
             indices_to_remove = logits < torch.topk(logits, top_k).values[:, -1, None]
             logits[indices_to_remove] = filter_value
+            
         if top_p < 1.0:
             sorted_logits, sorted_indices = torch.sort(logits, dim=-1, descending=True)
             cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
