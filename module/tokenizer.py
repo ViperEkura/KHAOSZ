@@ -89,3 +89,15 @@ class BpeTokenizer:
         for token in self._control_tokens:
             stop_ids.append(self._tokenizer.token_to_id(token))
         return stop_ids
+    
+    @property
+    def bos_id(self) -> int:
+        return self._tokenizer.token_to_id("<bos>")
+    
+    @property
+    def eos_id(self) -> int:
+        return self._tokenizer.token_to_id("<eos>")
+    
+    @property
+    def pad_id(self) -> int:
+        return self._tokenizer.token_to_id("<pad>")
