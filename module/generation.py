@@ -119,7 +119,7 @@ class Khaosz:
             query: str, 
             history: list[tuple[str, str]]=None,
             temperature: float=0.8,
-            top_k: int=10,
+            top_k: int=0,
             top_p: float=0.8,
         ):
         
@@ -151,3 +151,56 @@ class Khaosz:
         
         return response
     
+    def batch_generate(
+        self, 
+        queries: List[str],
+        temperature: float=0.95, 
+        top_k: int=0, 
+        top_p: float=0.8 
+    ):
+        assert temperature >= 0.0
+        assert top_k >= 0
+        assert top_p >= 0.0 and top_p <= 1.0
+        
+        batch_size = len(queries)
+        responses = [str() for _ in range(batch_size)] 
+        histories = [list() for _ in range(batch_size)]
+
+        prompts = [build_prompt(query, history) for query, history in zip(queries, histories)]
+        ids_list = [self.tokenizer.encode(tokens) for tokens in prompts]
+        
+        start_id_pos = max([len(ids) for ids in ids_list])
+        padded_ids_list: List[list] = [
+            [self.tokenizer.pad_id] * (start_id_pos - len(ids)) + ids 
+            for ids in ids_list
+        ]
+        stop_flag_list = [False] * batch_size
+        max_step = start_id_pos
+        
+        self.model.eval()
+        with torch.no_grad():
+            while max_step < self.config.m_len:
+                active_indices = [i for i, stop in enumerate(stop_flag_list) if not stop]
+                if sum(active_indices) == 0:
+                    break
+                input_sequence = [padded_ids_list[i] for i in active_indices]
+                
+                next_token_ids = self.sample_next_token(
+                    input_sequence, temperature, 
+                    top_k=top_k, top_p=top_p, 
+                    with_batch=True
+                )
+
+                for idx, next_token_id in zip(active_indices, next_token_ids):
+                    padded_ids_list[idx].append(next_token_id)
+                    if next_token_id in self.tokenizer.stop_ids:
+                        stop_flag_list[idx] = True
+                
+                max_step += 1
+
+        for i in range(batch_size):
+            response_ids = padded_ids_list[i][start_id_pos:]
+            responses[i] = self.tokenizer.decode(response_ids)
+            histories[i].append((queries[i], responses[i]))
+            
+        return responses
