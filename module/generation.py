@@ -54,7 +54,7 @@ class Khaosz:
     ) -> Union[int, list[int]]:
         
         device = next(self.model.parameters()).device
-        attn_mask = torch.tensor(attn_mask, dtype=torch.bool, device=device) if attn_mask is not None else None
+        attn_mask = torch.as_tensor(attn_mask, dtype=torch.bool, device=device) if attn_mask is not None else None
         input_tensor = torch.tensor(ids, device=device)
         input_tensor = input_tensor.unsqueeze(0) if not with_batch else input_tensor
         
