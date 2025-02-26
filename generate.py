@@ -57,12 +57,13 @@ def dpo_generate(
         queries = [item[question_key] for item in json_file]
         recepted = [item[recepted_key] for item in json_file]
     
+    #top_k=0, 未启用top_k
     rejected = batch_generate(
         queries, 
         model,
         temperature=0.95, 
-        top_k=0,        #未启用top_k
-        top_p=0.80, 
+        top_k=0,        
+        top_p=0.95, 
         batch_size=batch_size
     )
     output_dict = []
