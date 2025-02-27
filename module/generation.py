@@ -55,7 +55,7 @@ class Khaosz:
         
         device = next(self.model.parameters()).device
         attn_mask = torch.as_tensor(attn_mask, dtype=torch.bool, device=device) if attn_mask is not None else None
-        input_tensor = torch.tensor(ids, device=device)
+        input_tensor = torch.as_tensor(ids, device=device)
         input_tensor = input_tensor.unsqueeze(0) if not with_batch else input_tensor
         
         logits: torch.Tensor = self.model(input_tensor, attn_mask)[:, -1, :] / temperature
