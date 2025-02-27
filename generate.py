@@ -61,9 +61,9 @@ def dpo_generate(
     rejected = batch_generate(
         queries, 
         model,
-        temperature=0.95, 
-        top_k=0,        
-        top_p=0.95, 
+        temperature=0.95,
+        top_p=0.95,
+        top_k=50,
         batch_size=batch_size
     )
     output_dict = []
