@@ -88,10 +88,10 @@ class SftDataset(Dataset):
         begin_idx = index * self.segment_length 
         end_idx = min(begin_idx + self.segment_length, len(self.data) - 1)
         
-        x = torch.tensor(self.data["squence"][begin_idx:end_idx], device=self.device)
+        x = torch.tensor(self.data["sequence"][begin_idx:end_idx], device=self.device)
         x_mask = torch.tensor(self.data["mask"][begin_idx:end_idx], device=self.device)
         
-        y = torch.tensor(self.data["squence"][begin_idx + 1:end_idx + 1], device=self.device)
+        y = torch.tensor(self.data["sequence"][begin_idx + 1:end_idx + 1], device=self.device)
         y_mask = torch.tensor(self.data["mask"][begin_idx + 1:end_idx + 1], device=self.device)
         
         return x, y, x_mask, y_mask
