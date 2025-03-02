@@ -1,5 +1,5 @@
 import torch
-import pickle
+import pickle as pkl
 
 from torch import device
 from torch import Tensor
@@ -18,18 +18,18 @@ class SeqDataset(Dataset):
 
     def save(self, save_path):
         with open(save_path, "wb") as f:
-            pickle.dump(self.data, f)
+            pkl.dump(self.data, f)
 
     def load(self, load_path: Union[str, List[str]]):
         self.data = list()
         if isinstance(load_path, list):
             for path in load_path:
                 with open(path, "rb") as f:
-                    file = pickle.load(f)
+                    file = pkl.load(f)
                 self.data.extend(file)
         elif isinstance(load_path, str):
             with open(load_path, "rb") as f:
-                self.data = pickle.load(f)
+                self.data = pkl.load(f)
         else:
             raise TypeError("load_path: str | list[str]")
         
@@ -61,20 +61,20 @@ class SftDataset(Dataset):
 
     def save(self, save_path):
         with open(save_path, "wb") as f:
-            pickle.dump(self.data, f)
+            pkl.dump(self.data, f)
 
     def load(self, load_path: Union[str, List[str]]):
         self.data = list()
         if isinstance(load_path, list):
             for path in load_path:
                 with open(path, "rb") as f:
-                    file = pickle.load(f)
+                    file = pkl.load(f)
                 self.data["sequence"].extend(file["sequence"])
                 self.data["mask"].extend(file["mask"])
                 
         elif isinstance(load_path, str):
             with open(load_path, "rb") as f:
-                file = pickle.load(f)
+                file = pkl.load(f)
             self.data["sequence"].extend(file["sequence"])
             self.data["mask"].extend(file["mask"])
             
@@ -113,7 +113,7 @@ class DpoDataset(Dataset):
 
     def save(self, save_path: str):
         with open(save_path, "wb") as f:
-            pickle.dump(self.data, f)
+            pkl.dump(self.data, f)
 
     def load(self, load_path: Union[str, List[str]]):
         self.data = {"accepted": [], "rejected": []}
@@ -121,12 +121,12 @@ class DpoDataset(Dataset):
         if isinstance(load_path, list):
             for path in load_path:
                 with open(path, "rb") as f:
-                    file_data = pickle.load(f)
+                    file_data = pkl.load(f)
                 self.data["accepted"].extend(file_data["accepted"])
                 self.data["rejected"].extend(file_data["rejected"])
         elif isinstance(load_path, str):
             with open(load_path, "rb") as f:
-                file_data = pickle.load(f)
+                file_data = pkl.load(f)
             self.data["accepted"].extend(file_data["accepted"])
             self.data["rejected"].extend(file_data["rejected"])
         else:
