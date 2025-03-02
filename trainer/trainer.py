@@ -165,6 +165,7 @@ class Trainer:
         
     def train(
         self, 
+        train_type: str,
         dataloader: DataLoader, 
         optimizer: Optimizer,
         ckpt_dir: str,
@@ -175,7 +176,7 @@ class Trainer:
         warmup_iters: int=2000,
         min_rate: float=0.1,
         dpo_beta: float=0.1,
-        train_type: str="seq",
+        
     ):
         if train_type not in ["seq", "sft", "dpo"]:
             raise ValueError("train_type must be one of ['seq', 'sft', 'dpo']")
