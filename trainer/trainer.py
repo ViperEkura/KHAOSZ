@@ -191,7 +191,6 @@ class Trainer:
         
         dpo_ref_model = None
         if isinstance(dataloader.dataset, DpoDataset):
-            is_dpo_train = True
             dpo_ref_model = copy.deepcopy(self.model)
             self.logger.info("DPO training mode")
     
