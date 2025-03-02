@@ -39,8 +39,8 @@ class SeqDataset(Dataset):
         begin_idx = index * self.segment_length 
         end_idx = min(begin_idx + self.segment_length, len(self.data) - 1)
         
-        x = torch.tensor(self.data[begin_idx:end_idx], device=self.device)
-        y = torch.tensor(self.data[begin_idx + 1:end_idx + 1], device=self.device)
+        x = torch.tensor(self.data[begin_idx:end_idx], device=self.device, dtype=torch.long)
+        y = torch.tensor(self.data[begin_idx + 1:end_idx + 1], device=self.device, dtype=torch.long)
         
         return x, y
 
@@ -86,13 +86,13 @@ class SftDataset(Dataset):
         
     def __getitem__(self, index):
         begin_idx = index * self.segment_length 
-        end_idx = min(begin_idx + self.segment_length, len(self.data) - 1)
+        end_idx = min(begin_idx + self.segment_length, self.total_samples - 1)
         
-        x = torch.tensor(self.data["sequence"][begin_idx:end_idx], device=self.device)
-        x_mask = torch.tensor(self.data["mask"][begin_idx:end_idx], device=self.device)
+        x = torch.tensor(self.data["sequence"][begin_idx:end_idx], device=self.device, dtype=torch.long)
+        x_mask = torch.tensor(self.data["mask"][begin_idx:end_idx], device=self.device, dtype=torch.bool)
         
-        y = torch.tensor(self.data["sequence"][begin_idx + 1:end_idx + 1], device=self.device)
-        y_mask = torch.tensor(self.data["mask"][begin_idx + 1:end_idx + 1], device=self.device)
+        y = torch.tensor(self.data["sequence"][begin_idx + 1:end_idx + 1], device=self.device, dtype=torch.long)
+        y_mask = torch.tensor(self.data["mask"][begin_idx + 1:end_idx + 1], device=self.device, dtype=torch.bool)
         
         return x, y, x_mask, y_mask
 
@@ -137,7 +137,7 @@ class DpoDataset(Dataset):
 
     def __getitem__(self, index: int):
         start_idx = index * self.segment_length
-        end_idx = min(start_idx + self.segment_length, self.total_samples)
+        end_idx = min(start_idx + self.segment_length, self.total_samples - 1)
         
         accepted_segment = self.data["accepted"][start_idx:end_idx]
         rejected_segment = self.data["rejected"][start_idx:end_idx]
