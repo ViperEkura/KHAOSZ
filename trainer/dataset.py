@@ -51,7 +51,7 @@ class SeqDataset(Dataset):
 class SftDataset(Dataset):
     def __init__(self, segment_length , device=device('cuda')):
         super().__init__()
-        self.data: Dict[str, List[torch.Tensor]] = {
+        self.data: Dict[str, list] = {
             "sequence": [],
             "mask": []
         }
@@ -64,7 +64,7 @@ class SftDataset(Dataset):
             pkl.dump(self.data, f)
 
     def load(self, load_path: Union[str, List[str]]):
-        self.data = list()
+        self.data = {"sequence": [], "mask": []}
         if isinstance(load_path, list):
             for path in load_path:
                 with open(path, "rb") as f:
@@ -103,7 +103,7 @@ class SftDataset(Dataset):
 class DpoDataset(Dataset):
     def __init__(self, segment_length: int, device=device("cuda")):
         super().__init__()
-        self.data: Dict[str, List[Tensor]] = {
+        self.data: Dict[str, list] = {
             "accepted": [],
             "rejected": []
         }

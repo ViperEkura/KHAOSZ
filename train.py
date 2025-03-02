@@ -84,7 +84,7 @@ def train(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the Transformer model.")
-    parser.add_argument("train_type", type=str, required=True,choices=["seq", "sft", "dpo"], help="Train type.")
+    parser.add_argument("--train_type",choices=["seq", "sft", "dpo"], help="Train type.")
     parser.add_argument("--data_root_path", type=str, required=True, help="Path to the root directory of the dataset.")
     parser.add_argument("--n_epoch", type=int, default=1, help="Number of epochs to train.")
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size for training.")
