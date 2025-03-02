@@ -193,7 +193,7 @@ class Trainer:
                 min_rate=min_rate
             )
         )
-        self.logger.log(f"training mode: {train_type}")
+        self.logger.info(f"training mode: {train_type}")
         dpo_ref_model = None
         if train_type == "dpo":
             dpo_ref_model = copy.deepcopy(self.model)
