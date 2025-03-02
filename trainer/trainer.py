@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 
 from module.transformer import Config
 from module.tokenizer import BpeTokenizer
-from .dataset import DpoDataset
 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -37,20 +36,26 @@ def get_lambda_lr(warmup_iters, lr_decay_iters, min_rate=0.1):
 def seq_train_block(in_args: Tuple[Tensor, Tensor], model: nn.Module):
     x, y = in_args
     B, L = x.size()
-    p: Tensor = model(x)
-    loss = F.cross_entropy(p.view(B * L, -1), y.flatten())
+    logits: Tensor = model(x)
+    loss = F.cross_entropy(logits.view(B * L, -1), y.flatten())
     return loss
 
-def sft_train_block(in_args: Tuple[Tensor, Tensor, Tensor], model: nn.Module):
-    x, y, mask = in_args
+def sft_train_block(
+    in_args: Tuple[Tensor, Tensor, Tensor, Tensor], 
+    model: nn.Module
+):
+    x, y, x_mask, y_mask = in_args
     B, L = x.size()
-    p: Tensor = model(x, mask)
-    loss = F.cross_entropy(p.view(B * L, -1), y.flatten())
+    ignore_idx = -1
+    
+    logits: Tensor = model(x, x_mask)
+    masked_y = y.masked_fill(y_mask == 0, ignore_idx)
+    loss = F.cross_entropy(logits.view(B * L, -1), masked_y.flatten(), ignore_index=ignore_idx)
+
     return loss
 
 def get_logprobs(model: nn.Module, input_ids: Tensor, pad_token_id: int):
-    with torch.no_grad():
-        logits = model(input_ids)
+    logits = model(input_ids)
     log_probs = torch.log_softmax(logits, dim=-1)
     
     shifted_log_probs = log_probs[:, :-1, :]
@@ -188,11 +193,10 @@ class Trainer:
                 min_rate=min_rate
             )
         )
-        
+        self.logger.log(f"training mode: {train_type}")
         dpo_ref_model = None
-        if isinstance(dataloader.dataset, DpoDataset):
+        if train_type == "dpo":
             dpo_ref_model = copy.deepcopy(self.model)
-            self.logger.info("DPO training mode")
     
         
         self.logger.info("start training ...")  

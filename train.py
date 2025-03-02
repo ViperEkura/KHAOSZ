@@ -52,7 +52,7 @@ def train(
         dataset = SeqDataset(config.m_len, device=device)
     elif train_type == "sft":
         dataset = SftDataset(config.m_len, device=device)
-    else:
+    elif train_type == "dpo":
         dataset = DpoDataset(config.m_len, device=device)
     
     cache_files = get_files(data_root_path)
