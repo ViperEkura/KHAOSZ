@@ -73,6 +73,7 @@ def train(
     
     trainer = Trainer(model, tokenizer, config)
     trainer.train(
+        train_type=train_type,
         dataloader=dataloader,
         optimizer=optim,
         ckpt_dir=ckpt_dir,
