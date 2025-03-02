@@ -237,15 +237,15 @@ class Transformer(nn.Module):
             parameter_size += p.numel()
         return parameter_size
     
-    def forward(self, x: Tensor, attn_mask: Tensor=None):
+    def forward(self, x: Tensor, pos_mask: Tensor=None):
         assert x.ndim == 2
         x = F.embedding(x, self.embedding)
         
         self.freq_cis = self.freq_cis.to(x.device)
         freq_cis = self.freq_cis[:x.size(1)]
         
-        if attn_mask is not None:
-            format_mask = create_seq_mask(attn_mask, x.device, x.dtype)
+        if pos_mask is not None:
+            format_mask = create_seq_mask(pos_mask, x.device, x.dtype)
         else:
             format_mask = None
         
