@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 
 from module.transformer import Config
 from module.tokenizer import BpeTokenizer
-from .dataset import DpoDataset
 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -34,16 +33,29 @@ def get_lambda_lr(warmup_iters, lr_decay_iters, min_rate=0.1):
     
     return get_lr
 
-def train_block(in_args: Tuple[Tensor, Tensor], model: nn.Module):
+def seq_train_block(in_args: Tuple[Tensor, Tensor], model: nn.Module):
     x, y = in_args
     B, L = x.size()
-    p: Tensor = model(x)
-    loss = F.cross_entropy(p.view(B * L, -1), y.flatten())
+    logits: Tensor = model(x)
+    loss = F.cross_entropy(logits.view(B * L, -1), y.flatten())
+    return loss
+
+def sft_train_block(
+    in_args: Tuple[Tensor, Tensor, Tensor, Tensor], 
+    model: nn.Module
+):
+    x, y, x_mask, y_mask = in_args
+    B, L = x.size()
+    ignore_idx = -1
+    
+    logits: Tensor = model(x, x_mask)
+    masked_y = y.masked_fill(y_mask == 0, ignore_idx)
+    loss = F.cross_entropy(logits.view(B * L, -1), masked_y.flatten(), ignore_index=ignore_idx)
+
     return loss
 
 def get_logprobs(model: nn.Module, input_ids: Tensor, pad_token_id: int):
-    with torch.no_grad():
-        logits = model(input_ids)
+    logits = model(input_ids)
     log_probs = torch.log_softmax(logits, dim=-1)
     
     shifted_log_probs = log_probs[:, :-1, :]
@@ -136,10 +148,11 @@ class Trainer:
         model: nn.Module, 
         tokenizer: BpeTokenizer,  
         config: Config,
+        log_path: str="./train_log.log"
     ):
         logger = logging.getLogger()
         logger.setLevel(level = logging.INFO)
-        handler = logging.FileHandler("./train_log.txt")
+        handler = logging.FileHandler(log_path)
         handler.setLevel(logging.INFO)
         handler.setFormatter(logging.Formatter('%(asctime)s -- %(message)s'))
         logger.addHandler(handler)
@@ -152,6 +165,7 @@ class Trainer:
         
     def train(
         self, 
+        train_type: str,
         dataloader: DataLoader, 
         optimizer: Optimizer,
         ckpt_dir: str,
@@ -161,11 +175,17 @@ class Trainer:
         max_grad_norm: float=1.0,
         warmup_iters: int=2000,
         min_rate: float=0.1,
+        dpo_beta: float=0.1,
+        
     ):
+        if train_type not in ["seq", "sft", "dpo"]:
+            raise ValueError("train_type must be one of ['seq', 'sft', 'dpo']")
+        
         n_iter, start_iter  = 0, 0
         losses = list()
         
         total_iters = len(dataloader) * n_epoch
+        
         schdulder = LambdaLR(
             optimizer, 
             get_lambda_lr(
@@ -174,13 +194,10 @@ class Trainer:
                 min_rate=min_rate
             )
         )
-        
-        is_dpo_train = False
+        self.logger.info(f"training mode: {train_type}")
         dpo_ref_model = None
-        if isinstance(dataloader.dataset, DpoDataset):
-            is_dpo_train = True
+        if train_type == "dpo":
             dpo_ref_model = copy.deepcopy(self.model)
-            self.logger.info("DPO training mode")
     
         
         self.logger.info("start training ...")  
@@ -189,16 +206,23 @@ class Trainer:
             tqdm_laoder = tqdm(dataloader, desc=f"Epoch {epoch+1}/{n_epoch}")
             for input_param in tqdm_laoder:
                 
-                if is_dpo_train:
+                if train_type == "seq":
+                    loss = seq_train_block(
+                        input_param,
+                        self.model
+                    )
+                elif train_type == "sft":
+                    loss = sft_train_block(
+                        input_param,
+                        self.model
+                    )
+                else:
                     loss = dpo_train_block(
                         input_param, 
                         self.model, 
-                        dpo_ref_model
-                    )
-                else:
-                    loss = train_block(
-                        input_param,
-                        self.model
+                        dpo_ref_model,
+                        pad_token_id=self.tokenizer.pad_id,
+                        beta=dpo_beta
                     )
                     
                 losses.append(loss.item())
@@ -219,6 +243,7 @@ class Trainer:
                     avg_loss = sum(losses[start_iter:]) / (n_iter - start_iter)
                     start_iter = n_iter
                     self.logger.info(f"Epoch {epoch + 1}/{n_epoch} Loss: {avg_loss}")
+                    
                     ckpt_epoch_dir = os.path.join(ckpt_dir, f"epoch_{epoch+1:02d}_iter_{n_iter}")
                     checkpoint = CheckPoint(self.model, self.tokenizer, self.config, losses, epoch + 1)
                     checkpoint.save_ckpt(ckpt_epoch_dir)
