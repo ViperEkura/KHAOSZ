@@ -2,6 +2,7 @@ import torch
 import pickle
 
 from torch import device
+from torch import Tensor
 from torch.utils.data import Dataset
 from typing import List, Dict, Union
 
@@ -36,7 +37,7 @@ class SeqDataset(Dataset):
         
     def __getitem__(self, index):
         begin_idx = index * self.segment_length 
-        end_idx = min(begin_idx + self.segment_length , len(self.data))
+        end_idx = min(begin_idx + self.segment_length, len(self.data) - 1)
         
         x = torch.tensor(self.data[begin_idx:end_idx], device=self.device)
         y = torch.tensor(self.data[begin_idx + 1:end_idx + 1], device=self.device)
@@ -44,14 +45,63 @@ class SeqDataset(Dataset):
         return x, y
 
     def __len__(self): 
-        # lower than totoal_samples
+        return self.total_samples // self.segment_length
+    
+    
+class SftDataset(Dataset):
+    def __init__(self, segment_length , device=device('cuda')):
+        super().__init__()
+        self.data: Dict[str, List[torch.Tensor]] = {
+            "sequence": [],
+            "mask": []
+        }
+        self.segment_length  = segment_length 
+        self.total_samples = 0
+        self.device = device
+
+    def save(self, save_path):
+        with open(save_path, "wb") as f:
+            pickle.dump(self.data, f)
+
+    def load(self, load_path: Union[str, List[str]]):
+        self.data = list()
+        if isinstance(load_path, list):
+            for path in load_path:
+                with open(path, "rb") as f:
+                    file = pickle.load(f)
+                self.data["sequence"].extend(file["sequence"])
+                self.data["mask"].extend(file["mask"])
+                
+        elif isinstance(load_path, str):
+            with open(load_path, "rb") as f:
+                file = pickle.load(f)
+            self.data["sequence"].extend(file["sequence"])
+            self.data["mask"].extend(file["mask"])
+            
+        else:
+            raise TypeError("load_path: str | list[str]")
+        
+        assert len(self.data["sequence"]) == len(self.data["mask"])
+        self.total_samples = len(self.data["sequence"])
+        
+    def __getitem__(self, index):
+        begin_idx = index * self.segment_length 
+        end_idx = min(begin_idx + self.segment_length, len(self.data) - 1)
+        
+        x = torch.tensor(self.data["squence"][begin_idx:end_idx], device=self.device)
+        mask = torch.tensor(self.data["mask"][begin_idx:end_idx], device=self.device)
+        y = torch.tensor(self.data["squence"][begin_idx + 1:end_idx + 1], device=self.device)
+        
+        return x, y, mask
+
+    def __len__(self): 
         return self.total_samples // self.segment_length
 
 
 class DpoDataset(Dataset):
     def __init__(self, segment_length: int, device=device("cuda")):
         super().__init__()
-        self.data: Dict[str, List[torch.Tensor]] = {
+        self.data: Dict[str, List[Tensor]] = {
             "accepted": [],
             "rejected": []
         }
