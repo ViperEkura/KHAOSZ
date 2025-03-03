@@ -11,7 +11,7 @@ from typing import List, Dict, Union
 class SeqDataset(Dataset):
     def __init__(self, segment_length , device=device('cuda')):
         super().__init__()
-        self.data = list()
+        self.data = torch.tensor([])
         self.segment_length  = segment_length 
         self.total_samples = 0
         self.device = device
@@ -21,19 +21,22 @@ class SeqDataset(Dataset):
             pkl.dump(self.data, f)
 
     def load(self, load_path: Union[str, List[str]]):
-        self.data = list()
+        sequences = []
+        
         if isinstance(load_path, list):
             for path in load_path:
                 with open(path, "rb") as f:
                     file = pkl.load(f)
-                self.data.extend(file)
+                sequences.extend(file)
         elif isinstance(load_path, str):
             with open(load_path, "rb") as f:
-                self.data = pkl.load(f)
+                file = pkl.load(f)
+            sequences.extend(file)
         else:
             raise TypeError("load_path: str | list[str]")
         
-        self.total_samples = len(self.data)
+        self.data = torch.tensor(sequences, device=self.device, dtype=torch.int32)
+        self.total_samples = self.data.numel()
         
     def __getitem__(self, index):
         begin_idx = index * self.segment_length 
@@ -49,11 +52,11 @@ class SeqDataset(Dataset):
     
     
 class SftDataset(Dataset):
-    def __init__(self, segment_length , device=device('cuda')):
+    def __init__(self, segment_length, device=device('cuda')):
         super().__init__()
-        self.data: Dict[str, list] = {
-            "sequence": [],
-            "mask": []
+        self.data: Dict[str, Tensor] = {
+            "sequence": torch.tensor([]),
+            "mask": torch.tensor([])
         }
         self.segment_length  = segment_length 
         self.total_samples = 0
@@ -64,25 +67,29 @@ class SftDataset(Dataset):
             pkl.dump(self.data, f)
 
     def load(self, load_path: Union[str, List[str]]):
-        self.data = {"sequence": [], "mask": []}
+        sequences = []
+        masks = []
+        def load_file(path):
+            with open(path, "rb") as f:
+                file = pkl.load(f)
+            sequences.append(file["sequence"].to(dtype=torch.int32))
+            masks.append(file["mask"].to(dtype=torch.bool))
+        
         if isinstance(load_path, list):
             for path in load_path:
-                with open(path, "rb") as f:
-                    file = pkl.load(f)
-                self.data["sequence"].extend(file["sequence"])
-                self.data["mask"].extend(file["mask"])
-                
+                load_file(path)
         elif isinstance(load_path, str):
-            with open(load_path, "rb") as f:
-                file = pkl.load(f)
-            self.data["sequence"].extend(file["sequence"])
-            self.data["mask"].extend(file["mask"])
-            
+            load_file(load_path)
         else:
-            raise TypeError("load_path: str | list[str]")
+            raise TypeError("load_path must be str or list[str]")
+    
+        self.data = {
+            "sequence": torch.cat(sequences),
+            "mask": torch.cat(masks)
+        }
         
-        assert len(self.data["sequence"]) == len(self.data["mask"])
-        self.total_samples = len(self.data["sequence"])
+        assert self.data["sequence"].numel() == self.data["mask"].numel()
+        self.total_samples = self.data["sequence"].numel()
         
     def __getitem__(self, index):
         begin_idx = index * self.segment_length 
@@ -103,9 +110,9 @@ class SftDataset(Dataset):
 class DpoDataset(Dataset):
     def __init__(self, segment_length: int, device=device("cuda")):
         super().__init__()
-        self.data: Dict[str, list] = {
-            "accepted": [],
-            "rejected": []
+        self.data: Dict[str, torch.Tensor] = {
+            "accepted": torch.tensor([]),
+            "rejected": torch.tensor([])
         }
         self.segment_length = segment_length
         self.device = device
@@ -116,37 +123,39 @@ class DpoDataset(Dataset):
             pkl.dump(self.data, f)
 
     def load(self, load_path: Union[str, List[str]]):
-        self.data = {"accepted": [], "rejected": []}
+        accepted_data = []
+        rejected_data = []
+        
+        def load_file(path):
+            with open(path, "rb") as f:
+                file_data = pkl.load(f)
+            accepted_data.append(torch.tensor(file_data["accepted"], dtype=torch.long))
+            rejected_data.append(torch.tensor(file_data["rejected"], dtype=torch.long))
         
         if isinstance(load_path, list):
             for path in load_path:
-                with open(path, "rb") as f:
-                    file_data = pkl.load(f)
-                self.data["accepted"].extend(file_data["accepted"])
-                self.data["rejected"].extend(file_data["rejected"])
+                load_file(path)
         elif isinstance(load_path, str):
-            with open(load_path, "rb") as f:
-                file_data = pkl.load(f)
-            self.data["accepted"].extend(file_data["accepted"])
-            self.data["rejected"].extend(file_data["rejected"])
+            load_file(load_path)
         else:
-            raise TypeError("load_path: str | list[str]")
+            raise TypeError("load_path must be str or list[str]")
         
-        assert len(self.data["accepted"]) == len(self.data["rejected"])
-        self.total_samples = len(self.data["accepted"])
+        self.data = {
+            "accepted": torch.cat(accepted_data),
+            "rejected": torch.cat(rejected_data)
+        }
+        
+        assert self.data["accepted"].numel() == self.data["rejected"].numel()
+        self.total_samples = self.data["accepted"].numel()
 
     def __getitem__(self, index: int):
         start_idx = index * self.segment_length
         end_idx = min(start_idx + self.segment_length, self.total_samples - 1)
         
-        accepted_segment = self.data["accepted"][start_idx:end_idx]
-        rejected_segment = self.data["rejected"][start_idx:end_idx]
+        accepted_segment = self.data["accepted"][start_idx:end_idx].to(self.device)
+        rejected_segment = self.data["rejected"][start_idx:end_idx].to(self.device)
         
-        accepted_tensor = torch.stack(accepted_segment)
-        rejected_tensor = torch.stack(rejected_segment)
-        
-        return accepted_tensor, rejected_tensor
+        return accepted_segment, rejected_segment
 
     def __len__(self):
-        # lower than totoal_samples
         return self.total_samples // self.segment_length
