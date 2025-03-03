@@ -68,7 +68,7 @@ def train(
         eps=5e-5,
         lr=max_lr,
         betas=(0.9, 0.99),
-        weight_decay=0.03
+        weight_decay=0.05
     )
     
     trainer = Trainer(model, tokenizer, config)
