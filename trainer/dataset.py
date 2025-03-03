@@ -35,15 +35,15 @@ class SeqDataset(Dataset):
         else:
             raise TypeError("load_path: str | list[str]")
         
-        self.data = torch.tensor(sequences, device=self.device, dtype=torch.int32)
+        self.data = torch.cat(sequences).to(device="cpu", dtype=torch.int32)
         self.total_samples = self.data.numel()
         
     def __getitem__(self, index):
         begin_idx = index * self.segment_length 
         end_idx = min(begin_idx + self.segment_length, len(self.data) - 1)
         
-        x = torch.tensor(self.data[begin_idx:end_idx], device=self.device, dtype=torch.long)
-        y = torch.tensor(self.data[begin_idx + 1:end_idx + 1], device=self.device, dtype=torch.long)
+        x = self.data[begin_idx:end_idx].to(device=self.device, dtype=torch.long)
+        y = self.data[begin_idx + 1:end_idx + 1].to(device=self.device, dtype=torch.long)
         
         return x, y
 
