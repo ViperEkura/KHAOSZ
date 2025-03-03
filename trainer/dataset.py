@@ -71,7 +71,7 @@ class SftDataset(Dataset):
         masks = []
         def load_file(path):
             with open(path, "rb") as f:
-                file = pkl.load(f)
+                file: Dict[str, Tensor] = pkl.load(f)
             sequences.append(file["sequence"].to(dtype=torch.int32))
             masks.append(file["mask"].to(dtype=torch.bool))
         
@@ -95,11 +95,11 @@ class SftDataset(Dataset):
         begin_idx = index * self.segment_length 
         end_idx = min(begin_idx + self.segment_length, self.total_samples - 1)
         
-        x = torch.tensor(self.data["sequence"][begin_idx:end_idx], device=self.device, dtype=torch.long)
-        x_mask = torch.tensor(self.data["mask"][begin_idx:end_idx], device=self.device, dtype=torch.bool)
+        x = self.data["sequence"][begin_idx:end_idx].to(device=self.device, dtype=torch.long)
+        x_mask = self.data["mask"][begin_idx:end_idx].to(device=self.device, dtype=torch.bool)
         
-        y = torch.tensor(self.data["sequence"][begin_idx + 1:end_idx + 1], device=self.device, dtype=torch.long)
-        y_mask = torch.tensor(self.data["mask"][begin_idx + 1:end_idx + 1], device=self.device, dtype=torch.bool)
+        y = self.data["sequence"][begin_idx + 1:end_idx + 1].to(device=self.device, dtype=torch.long)
+        y_mask = self.data["mask"][begin_idx + 1:end_idx + 1].to(device=self.device, dtype=torch.bool)
         
         return x, y, x_mask, y_mask
 
@@ -128,9 +128,9 @@ class DpoDataset(Dataset):
         
         def load_file(path):
             with open(path, "rb") as f:
-                file_data = pkl.load(f)
-            accepted_data.append(torch.tensor(file_data["accepted"], dtype=torch.long))
-            rejected_data.append(torch.tensor(file_data["rejected"], dtype=torch.long))
+                file: Dict[str, Tensor] = pkl.load(f)
+            accepted_data.append(file["accepted"].to(dtype=torch.int32))
+            rejected_data.append(file["rejected"].to(dtype=torch.int32))
         
         if isinstance(load_path, list):
             for path in load_path:
@@ -152,8 +152,8 @@ class DpoDataset(Dataset):
         start_idx = index * self.segment_length
         end_idx = min(start_idx + self.segment_length, self.total_samples - 1)
         
-        accepted_segment = self.data["accepted"][start_idx:end_idx].to(self.device)
-        rejected_segment = self.data["rejected"][start_idx:end_idx].to(self.device)
+        accepted_segment = self.data["accepted"][start_idx:end_idx].to(device=self.device, dtype=torch.long)
+        rejected_segment = self.data["rejected"][start_idx:end_idx].to(device=self.device, dtype=torch.long)
         
         return accepted_segment, rejected_segment
 
