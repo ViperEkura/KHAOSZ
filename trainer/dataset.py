@@ -40,7 +40,7 @@ class SeqDataset(Dataset):
         
     def __getitem__(self, index):
         begin_idx = index * self.segment_length 
-        end_idx = min(begin_idx + self.segment_length, len(self.data) - 1)
+        end_idx = min(begin_idx + self.segment_length, self.total_samples - 1)
         
         x = self.data[begin_idx:end_idx].to(device=self.device, dtype=torch.long)
         y = self.data[begin_idx + 1:end_idx + 1].to(device=self.device, dtype=torch.long)
