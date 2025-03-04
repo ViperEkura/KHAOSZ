@@ -2,7 +2,7 @@ import os
 import copy
 import math
 import torch
-import pickle
+import pickle as pkl
 import logging
 
 import safetensors.torch as st
@@ -133,7 +133,7 @@ class CheckPoint:
             self.config.save(config_path)
             self.tokenizer.save(tokenizer_path)
             plt.savefig(lossfig_path)
-            pickle.dump(self.losses, open(loss_path, "wb"))
+            pkl.dump(self.losses, open(loss_path, "wb"))
             
         except Exception as e:
             raise e
