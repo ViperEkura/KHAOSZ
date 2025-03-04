@@ -96,12 +96,10 @@ class SftDataset(Dataset):
         end_idx = min(begin_idx + self.segment_length, self.total_samples - 1)
         
         x = self.data["sequence"][begin_idx:end_idx].to(device=self.device, dtype=torch.long)
-        x_mask = self.data["mask"][begin_idx:end_idx].to(device=self.device, dtype=torch.bool)
-        
         y = self.data["sequence"][begin_idx + 1:end_idx + 1].to(device=self.device, dtype=torch.long)
-        y_mask = self.data["mask"][begin_idx + 1:end_idx + 1].to(device=self.device, dtype=torch.bool)
+        loss_mask = self.data["mask"][begin_idx + 1:end_idx + 1].to(device=self.device, dtype=torch.bool)
         
-        return x, y, x_mask, y_mask
+        return x, y, loss_mask
 
     def __len__(self): 
         return self.total_samples // self.segment_length
