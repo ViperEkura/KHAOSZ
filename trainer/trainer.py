@@ -44,12 +44,12 @@ def sft_train_block(
     in_args: Tuple[Tensor, Tensor, Tensor, Tensor], 
     model: nn.Module
 ):
-    x, y, x_mask, y_mask = in_args
+    x, y, loss_mask = in_args
     B, L = x.size()
     ignore_idx = -1
     
-    logits: Tensor = model(x, x_mask)
-    masked_y = y.masked_fill(y_mask == 0, ignore_idx)
+    logits: Tensor = model(x)
+    masked_y = y.masked_fill(loss_mask == 0, ignore_idx)
     loss = F.cross_entropy(logits.view(B * L, -1), masked_y.flatten(), ignore_index=ignore_idx)
 
     return loss
