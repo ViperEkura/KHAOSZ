@@ -64,6 +64,7 @@ class Khaosz:
         if top_k > 0:
             indices_to_remove = logits < torch.topk(logits, top_k).values[:, -1, None]
             logits[indices_to_remove] = filter_value
+            
         if top_p < 1.0:
             sorted_logits, sorted_indices = torch.sort(logits, dim=-1, descending=True)
             cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
@@ -113,6 +114,9 @@ class Khaosz:
                 ids.append(next_token_id)
                 response = self.tokenizer.decode(ids[start_id_pos:])
                 yield response ,history
+        
+        response += "\n"
+        yield response ,history
         
         history.append((query, response))
 
