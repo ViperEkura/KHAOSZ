@@ -22,7 +22,7 @@
 (1). 准备数据集：
 
 确保您的数据集位于一个指定的根目录下。数据集应包含用于训练的文本文件，这些文件可以是中文、英文或两者混合。
-数据文件的格式应与模型的输入要求一致，最好是经过tokenizer处理过后的token_id
+数据文件的格式应与模型的输入要求一致，最好是经过tokenizer处理过后的token_id, 为了节省内存占用采用torch.Tensor 存储id,(如果使用python的list, 在读取训练数据的时候内存占用大概是原来的两倍以上，因为python似乎是默认采用64位数精度存储的数据， 但是实际上int32足够)
 
 (2).安装依赖：
 
@@ -38,6 +38,7 @@ conda env create -f environment.yml --name env_name
 
 ```bash
 python train.py \
+--train_type=train_type[seq, sft, dpo] \
 --data_root_path=/path/to/dataset \
 --n_epoch=5 \
 --batch_size=8 \
@@ -45,6 +46,7 @@ python train.py \
 --n_iter_ckpt=10000 \
 --ckpt_dir checkpoints 
 ```
+--train_type: 指定训练的类型，可选值有seq, sft, dpo
 
 --data_root_path：指定数据集的根目录路径。
 
@@ -89,11 +91,11 @@ while True:
         query=query, 
         history=histroy,
         temperature=0.95,
-        top_p=0.9,
+        top_p=0.95,
+        top_k=50
     ):
         print(response[response_size:], end="")
         response_size = len(response)       
-    print()
 
 ```
 
@@ -116,7 +118,8 @@ while True:
         query=query, 
         history=histroy,
         temperature=0.95,
-        top_p=0.9,
+        top_p=0.95,
+        top_k=50
     )
     print(response)
 ```
