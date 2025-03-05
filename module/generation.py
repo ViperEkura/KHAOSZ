@@ -58,7 +58,7 @@ class Khaosz:
         input_tensor = torch.as_tensor(ids, device=device)
         input_tensor = input_tensor.unsqueeze(0) if not with_batch else input_tensor
         
-        logits: torch.Tensor = self.model(input_tensor, attn_mask)[:, -1, :] / temperature
+        logits: torch.Tensor = self.model(input_tensor, attn_mask)[:, -1, :]
         top_k = min(top_k, logits.size(-1)) if top_k > 0 else 0
         
         if top_k > 0:
@@ -75,7 +75,7 @@ class Khaosz:
             original_col_indices = sorted_indices[batch_indices, sorted_pos]
             logits[batch_indices, original_col_indices] = filter_value
         
-        probabilities = torch.softmax(logits, dim=-1)
+        probabilities = torch.softmax(logits / temperature, dim=-1)
         next_token_ids = torch.multinomial(probabilities, num_samples=1)
         
         return next_token_ids.item() if not with_batch else next_token_ids.flatten().tolist()
