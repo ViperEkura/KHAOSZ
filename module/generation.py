@@ -58,12 +58,13 @@ class Khaosz:
         input_tensor = torch.as_tensor(ids, device=device)
         input_tensor = input_tensor.unsqueeze(0) if not with_batch else input_tensor
         
-        logits: torch.Tensor = self.model(input_tensor, attn_mask)[:, -1, :] / temperature
+        logits: torch.Tensor = self.model(input_tensor, attn_mask)[:, -1, :]
         top_k = min(top_k, logits.size(-1)) if top_k > 0 else 0
         
         if top_k > 0:
             indices_to_remove = logits < torch.topk(logits, top_k).values[:, -1, None]
             logits[indices_to_remove] = filter_value
+            
         if top_p < 1.0:
             sorted_logits, sorted_indices = torch.sort(logits, dim=-1, descending=True)
             cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
@@ -74,7 +75,7 @@ class Khaosz:
             original_col_indices = sorted_indices[batch_indices, sorted_pos]
             logits[batch_indices, original_col_indices] = filter_value
         
-        probabilities = torch.softmax(logits, dim=-1)
+        probabilities = torch.softmax(logits / temperature, dim=-1)
         next_token_ids = torch.multinomial(probabilities, num_samples=1)
         
         return next_token_ids.item() if not with_batch else next_token_ids.flatten().tolist()
@@ -113,6 +114,9 @@ class Khaosz:
                 ids.append(next_token_id)
                 response = self.tokenizer.decode(ids[start_id_pos:])
                 yield response ,history
+        
+        response += "\n"
+        yield response ,history
         
         history.append((query, response))
 
