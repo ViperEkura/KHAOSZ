@@ -23,7 +23,6 @@ def chat():
         ):
             print(response[response_size:], end="", flush=True)
             response_size = len(response)       
-        print()
 
 def show_parameter_size():
     cfg = Config("params/config.json")
