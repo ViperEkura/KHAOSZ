@@ -123,7 +123,7 @@ class Khaosz:
     def generate(
             self, 
             query: str, 
-            history: list[tuple[str, str]]=None,
+            history: List[Tuple[str, str]]=None,
             temperature: float=0.8,
             top_k: int=0,
             top_p: float=0.8,
@@ -160,6 +160,7 @@ class Khaosz:
     def batch_generate(
         self, 
         queries: List[str],
+        histories: List[List[Tuple[str, str]]]=None,
         temperature: float=0.95, 
         top_k: int=0, 
         top_p: float=0.8 
@@ -169,8 +170,8 @@ class Khaosz:
         assert top_p >= 0.0 and top_p <= 1.0
         
         batch_size = len(queries)
-        responses = [str() for _ in range(batch_size)] 
-        histories = [list() for _ in range(batch_size)]
+        if histories is None:
+            histories = [list() for _ in range(batch_size)]
 
         prompts = [build_prompt(query, history) for query, history in zip(queries, histories)]
         ids_list = [self.tokenizer.encode(tokens) for tokens in prompts]
@@ -209,6 +210,7 @@ class Khaosz:
                 
                 max_step += 1
 
+        responses = [str()] * batch_size 
         for i in range(batch_size):
             response_ids = padded_ids_list[i][start_id_pos:]
             responses[i] = self.tokenizer.decode(response_ids)
