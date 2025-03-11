@@ -41,7 +41,7 @@ class Khaosz:
     def to(self, *args, **kargs):
         self.model.to(*args, **kargs)
         return self
-        
+
     def sample_next_token(
         self, 
         ids, 
@@ -53,12 +53,14 @@ class Khaosz:
         filter_value: float=-float('inf')
     ) -> Union[int, list[int]]:
         
+        torch.cuda.empty_cache()
         device = next(self.model.parameters()).device
         attn_mask = torch.as_tensor(attn_mask, dtype=torch.bool, device=device) if attn_mask is not None else None
         input_tensor = torch.as_tensor(ids, device=device)
         input_tensor = input_tensor.unsqueeze(0) if not with_batch else input_tensor
         
-        logits: torch.Tensor = self.model(input_tensor, attn_mask)[:, -1, :]
+        with torch.no_grad():
+            logits: torch.Tensor = self.model(input_tensor, attn_mask)[:, -1, :]
         top_k = min(top_k, logits.size(-1)) if top_k > 0 else 0
         
         if top_k > 0:
