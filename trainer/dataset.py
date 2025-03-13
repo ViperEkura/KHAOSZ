@@ -27,11 +27,11 @@ class SeqDataset(Dataset):
             for path in load_path:
                 with open(path, "rb") as f:
                     file = pkl.load(f)
-                sequences.extend(file)
+                sequences.append(file)
         elif isinstance(load_path, str):
             with open(load_path, "rb") as f:
                 file = pkl.load(f)
-            sequences.extend(file)
+            sequences.append(file)
         else:
             raise TypeError("load_path: str | list[str]")
         
