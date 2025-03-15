@@ -65,10 +65,9 @@ def train(
     
     optim = AdamW(
         model.parameters(),
-        eps=5e-5,
         lr=max_lr,
-        betas=(0.9, 0.99),
-        weight_decay=0.05
+        betas=(0.9, 0.95),
+        weight_decay=0.1
     )
     
     trainer = Trainer(model, tokenizer, config)
