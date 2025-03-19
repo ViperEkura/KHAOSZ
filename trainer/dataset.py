@@ -109,7 +109,7 @@ class DpoDataset(Dataset):
     def __init__(self, segment_length: int, device=device("cuda")):
         super().__init__()
         self.data: Dict[str, torch.Tensor] = {
-            "accepted": torch.tensor([]),
+            "chosen": torch.tensor([]),
             "rejected": torch.tensor([])
         }
         self.segment_length = segment_length
@@ -121,13 +121,13 @@ class DpoDataset(Dataset):
             pkl.dump(self.data, f)
 
     def load(self, load_path: Union[str, List[str]]):
-        accepted_data = []
+        chosen_data = []
         rejected_data = []
         
         def load_file(path):
             with open(path, "rb") as f:
                 file: Dict[str, Tensor] = pkl.load(f)
-            accepted_data.append(file["accepted"].to(dtype=torch.int32))
+            chosen_data.append(file["chosen"].to(dtype=torch.int32))
             rejected_data.append(file["rejected"].to(dtype=torch.int32))
         
         if isinstance(load_path, list):
@@ -139,21 +139,21 @@ class DpoDataset(Dataset):
             raise TypeError("load_path must be str or list[str]")
         
         self.data = {
-            "accepted": torch.cat(accepted_data),
+            "chosen": torch.cat(chosen_data),
             "rejected": torch.cat(rejected_data)
         }
         
-        assert self.data["accepted"].numel() == self.data["rejected"].numel()
-        self.total_samples = self.data["accepted"].numel()
+        assert self.data["chosen"].numel() == self.data["rejected"].numel()
+        self.total_samples = self.data["chosen"].numel()
 
     def __getitem__(self, index: int):
         start_idx = index * self.segment_length
-        end_idx = min(start_idx + self.segment_length, self.total_samples - 1)
+        end_idx = min(start_idx + self.segment_length, self.total_samples)
         
-        accepted_segment = self.data["accepted"][start_idx:end_idx].to(device=self.device, dtype=torch.long)
+        chosen_segment = self.data["chosen"][start_idx:end_idx].to(device=self.device, dtype=torch.long)
         rejected_segment = self.data["rejected"][start_idx:end_idx].to(device=self.device, dtype=torch.long)
         
-        return accepted_segment, rejected_segment
+        return chosen_segment, rejected_segment
 
     def __len__(self):
         return self.total_samples // self.segment_length
