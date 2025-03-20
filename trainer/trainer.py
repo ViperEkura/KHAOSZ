@@ -54,46 +54,55 @@ def sft_train_block(
 
     return loss
 
-def get_logprobs(model: nn.Module, input_ids: Tensor, pad_token_id: int):
-    logits = model(input_ids)
+def get_response_logprobs(model, input_ids, response_mask, pad_token_id):
+    # input_ids: [B, L] 完整序列 (prompt + response)
+    # response_mask: [B, L] bool类型标记response部分
+    
+    logits = model(input_ids)  # [B, L, V]
     log_probs = torch.log_softmax(logits, dim=-1)
     
-    shifted_log_probs = log_probs[:, :-1, :]
-    shifted_input_ids = input_ids[:, 1:]
+    # 预测下一个token，所以需要shift
+    shifted_log_probs = log_probs[:, :-1, :]  # [B, L-1, V]
+    shifted_input_ids = input_ids[:, 1:]      # [B, L-1]
     
+    # 计算每个位置的实际logprob
     token_logprobs = torch.gather(
-        input=shifted_log_probs, 
-        index=shifted_input_ids.unsqueeze(-1),
-        dim=-1
-    ).squeeze(-1)
+        shifted_log_probs, 
+        dim=-1, 
+        index=shifted_input_ids.unsqueeze(-1)
+    ).squeeze(-1)  # [B, L-1]
     
-    mask = (shifted_input_ids != pad_token_id).type_as(token_logprobs)
-    token_logprobs = token_logprobs * mask
+    # 生成response_mask的shifted版本（排除最后一个预测位置）
+    shifted_response_mask = response_mask[:, 1:]  # [B, L-1]
     
-    return token_logprobs
+    # 双重过滤：既是response部分，又不是pad
+    valid_mask = (shifted_input_ids != pad_token_id) & shifted_response_mask
+    
+    return (token_logprobs * valid_mask).sum(dim=-1)
 
 def dpo_train_block(
-    in_args: Tuple[Tensor, Tensor], 
+    in_args: Tuple[Tensor, Tensor, Tensor, Tensor],  # 新增response_mask
     model: nn.Module, 
     ref_model: nn.Module,
     pad_token_id: int,
     beta: float
 ):
-    good_response_ids, bad_response_ids = in_args
-    log_policy_good = get_logprobs(model, good_response_ids, pad_token_id)
-    log_policy_bad = get_logprobs(model, bad_response_ids, pad_token_id)
+    # 输入应包含：good_ids, good_mask, bad_ids, bad_mask
+    good_ids, good_mask, bad_ids, bad_mask = in_args
+    
+    log_pi_good = get_response_logprobs(model, good_ids, good_mask, pad_token_id)
+    log_pi_bad = get_response_logprobs(model, bad_ids, bad_mask, pad_token_id)
     
     with torch.no_grad():
-        log_ref_good = get_logprobs(ref_model, good_response_ids, pad_token_id)
-        log_ref_bad = get_logprobs(ref_model, bad_response_ids, pad_token_id)
+        log_ref_good = get_response_logprobs(ref_model, good_ids, good_mask, pad_token_id)
+        log_ref_bad = get_response_logprobs(ref_model, bad_ids, bad_mask, pad_token_id)
     
-    log_ratio_good = log_policy_good - log_ref_good
-    log_ratio_bad = log_policy_bad - log_ref_bad
+    log_ratio_good = log_pi_good - log_ref_good
+    log_ratio_bad = log_pi_bad - log_ref_bad
 
     ratio_diff = log_ratio_good - log_ratio_bad
-    dpo_loss = -torch.mean(F.logsigmoid(beta * ratio_diff))
+    dpo_loss = -F.logsigmoid(beta * ratio_diff).mean()
     return dpo_loss
-
 
 class CheckPoint:
     def __init__(
@@ -192,9 +201,11 @@ class Trainer:
         )
         self.logger.info(f"training mode: {train_type}")
         dpo_ref_model = None
+        pad_token_id = None
         if train_type == "dpo":
             dpo_ref_model = copy.deepcopy(self.model)
             dpo_ref_model.eval()
+            pad_token_id = self.tokenizer.pad_id
     
         
         self.logger.info("start training ...")  
@@ -218,7 +229,7 @@ class Trainer:
                         input_param, 
                         self.model, 
                         dpo_ref_model,
-                        pad_token_id=self.tokenizer.pad_id,
+                        pad_token_id=pad_token_id,
                         beta=dpo_beta
                     )
                     
