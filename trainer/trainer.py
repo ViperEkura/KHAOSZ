@@ -92,7 +92,9 @@ def dpo_train_block(
     log_ratio_bad = log_policy_bad - log_ref_bad
 
     ratio_diff = log_ratio_good - log_ratio_bad
-    dpo_loss = torch.mean(-F.logsigmoid(beta * ratio_diff))
+    ratio_diff = torch.clamp(ratio_diff, min=-10, max=10)
+    dpo_loss = - torch.mean(F.logsigmoid(beta * ratio_diff))
+    
     return dpo_loss
 
 
