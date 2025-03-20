@@ -69,9 +69,8 @@ def get_logprobs(model: nn.Module, input_ids: Tensor, pad_token_id: int):
     
     mask = (shifted_input_ids != pad_token_id).type_as(token_logprobs)
     token_logprobs = token_logprobs * mask
-    seq_logprob = torch.sum(token_logprobs, dim=-1)
     
-    return seq_logprob
+    return token_logprobs
 
 def dpo_train_block(
     in_args: Tuple[Tensor, Tensor], 
@@ -87,14 +86,12 @@ def dpo_train_block(
     with torch.no_grad():
         log_ref_good = get_logprobs(ref_model, good_response_ids, pad_token_id)
         log_ref_bad = get_logprobs(ref_model, bad_response_ids, pad_token_id)
-        
+    
     log_ratio_good = log_policy_good - log_ref_good
     log_ratio_bad = log_policy_bad - log_ref_bad
 
     ratio_diff = log_ratio_good - log_ratio_bad
-    ratio_diff = torch.clamp(ratio_diff, min=-10, max=10)
-    dpo_loss = - torch.mean(F.logsigmoid(beta * ratio_diff))
-    
+    dpo_loss = -torch.mean(F.logsigmoid(beta * ratio_diff))
     return dpo_loss
 
 
