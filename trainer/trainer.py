@@ -23,12 +23,12 @@ from tqdm import tqdm
 from typing import Tuple
 
 
-def get_lambda_lr(warmup_iters, lr_decay_iters, min_rate=0.1):
+def get_lambda_lr(warning_step, lr_decay_iters, min_rate=0.1):
     def get_lr(now_iter):
-        if now_iter <= warmup_iters:
-            return max(min_rate, now_iter / warmup_iters)
+        if now_iter <= warning_step:
+            return max(min_rate, now_iter / warning_step)
         else:
-            rate = (now_iter - warmup_iters) / (lr_decay_iters - warmup_iters)
+            rate = (now_iter - warning_step) / (lr_decay_iters - warning_step)
             return max(min_rate, 0.5 * (1.0 + math.cos(math.pi * rate)))
     
     return get_lr
@@ -84,18 +84,15 @@ def dpo_train_block(
     log_policy_good = get_logprobs(model, good_response_ids, pad_token_id)
     log_policy_bad = get_logprobs(model, bad_response_ids, pad_token_id)
     
-    log_ref_good = get_logprobs(ref_model, good_response_ids, pad_token_id)
-    log_ref_bad = get_logprobs(ref_model, bad_response_ids, pad_token_id)
-    
+    with torch.no_grad():
+        log_ref_good = get_logprobs(ref_model, good_response_ids, pad_token_id)
+        log_ref_bad = get_logprobs(ref_model, bad_response_ids, pad_token_id)
+        
     log_ratio_good = log_policy_good - log_ref_good
     log_ratio_bad = log_policy_bad - log_ref_bad
-    
-    # avoid NaN
-    log_ratio_good = torch.clamp(log_ratio_good, min=-100, max=100)
-    log_ratio_bad = torch.clamp(log_ratio_bad, min=-100, max=100)
 
     ratio_diff = log_ratio_good - log_ratio_bad
-    dpo_loss = torch.mean(-F.log_sigmoid(beta * ratio_diff))
+    dpo_loss = torch.mean(-F.logsigmoid(beta * ratio_diff))
     return dpo_loss
 
 
@@ -173,7 +170,7 @@ class Trainer:
         n_iter_ckpt: int=5000,
         n_iter_step: int=1,
         max_grad_norm: float=1.0,
-        warmup_iters: int=2000,
+        warning_step: int=1000,
         min_rate: float=0.1,
         dpo_beta: float=0.1,
         
@@ -189,7 +186,7 @@ class Trainer:
         schdulder = LambdaLR(
             optimizer, 
             get_lambda_lr(
-                warmup_iters=warmup_iters,   
+                warning_step=warning_step,   
                 lr_decay_iters=total_iters, 
                 min_rate=min_rate
             )
@@ -198,6 +195,7 @@ class Trainer:
         dpo_ref_model = None
         if train_type == "dpo":
             dpo_ref_model = copy.deepcopy(self.model)
+            dpo_ref_model.eval()
     
         
         self.logger.info("start training ...")  
