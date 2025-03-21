@@ -54,7 +54,7 @@ def sft_train_block(
 
     return loss
 
-def get_response_logprobs(model, input_ids, response_mask, pad_token_id):
+def get_response_logprobs(model:nn.Module, input_ids: Tensor, response_mask: Tensor, pad_token_id):
     # input_ids: [B, L] 完整序列 (prompt + response)
     # response_mask: [B, L] bool类型标记response部分
     
@@ -76,9 +76,9 @@ def get_response_logprobs(model, input_ids, response_mask, pad_token_id):
     shifted_response_mask = response_mask[:, 1:]  # [B, L-1]
     
     # 双重过滤：既是response部分，又不是pad
-    valid_mask = (shifted_input_ids != pad_token_id) & shifted_response_mask
+    valid_mask: Tensor = (shifted_input_ids != pad_token_id) & shifted_response_mask
     
-    return (token_logprobs * valid_mask).sum(dim=-1)
+    return (token_logprobs * valid_mask).sum(dim=-1) / valid_mask.sum(dim=-1)
 
 def dpo_train_block(
     in_args: Tuple[Tensor, Tensor, Tensor, Tensor],  # 新增response_mask
@@ -88,7 +88,7 @@ def dpo_train_block(
     beta: float
 ):
     # 输入应包含：good_ids, good_mask, bad_ids, bad_mask
-    good_ids, good_mask, bad_ids, bad_mask = in_args
+    good_ids, bad_ids, good_mask, bad_mask = in_args
     
     log_pi_good = get_response_logprobs(model, good_ids, good_mask, pad_token_id)
     log_pi_bad = get_response_logprobs(model, bad_ids, bad_mask, pad_token_id)
