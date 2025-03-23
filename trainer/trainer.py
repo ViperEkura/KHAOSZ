@@ -78,7 +78,8 @@ def dpo_train_block(
     model: nn.Module, 
     ref_model: nn.Module,
     pad_token_id: int,
-    beta: float
+    beta: float,
+    clip_value: float=100.0
 ):
     # 输入应包含：good_ids, good_mask, bad_ids, bad_mask
     good_ids, bad_ids, good_mask, bad_mask = in_args
@@ -94,6 +95,8 @@ def dpo_train_block(
     log_ratio_bad = log_pi_bad - log_ref_bad
 
     ratio_diff = log_ratio_good - log_ratio_bad
+    ratio_diff = ratio_diff.clamp(min=clip_value, max=clip_value)
+    
     dpo_loss = -F.logsigmoid(beta * ratio_diff).mean()
     return dpo_loss
 
