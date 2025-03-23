@@ -54,34 +54,27 @@ def sft_train_block(
 
     return loss
 
-def get_response_logprobs(model:nn.Module, input_ids: Tensor, response_mask: Tensor, pad_token_id):
-    # input_ids: [B, L] 完整序列 (prompt + response)
-    # response_mask: [B, L] bool类型标记response部分
-    
-    logits = model(input_ids)  # [B, L, V]
+def get_logprobs(model:nn.Module, input_ids: Tensor, mask: Tensor, pad_token_id):
+    logits = model(input_ids)
     log_probs = torch.log_softmax(logits, dim=-1)
     
-    # 预测下一个token，所以需要shift
-    shifted_log_probs = log_probs[:, :-1, :]  # [B, L-1, V]
-    shifted_input_ids = input_ids[:, 1:]      # [B, L-1]
+    shifted_log_probs = log_probs[:, :-1, :] 
+    shifted_input_ids = input_ids[:, 1:]
+    shifted_response_mask = mask[:, 1:]
     
-    # 计算每个位置的实际logprob
     token_logprobs = torch.gather(
         shifted_log_probs, 
         dim=-1, 
         index=shifted_input_ids.unsqueeze(-1)
-    ).squeeze(-1)  # [B, L-1]
+    ).squeeze(-1)
     
-    # 生成response_mask的shifted版本（排除最后一个预测位置）
-    shifted_response_mask = response_mask[:, 1:]  # [B, L-1]
+    prompt_mask  = shifted_input_ids.ne(pad_token_id)
+    valid_mask = (prompt_mask & shifted_response_mask).float()
     
-    # 双重过滤：既是response部分，又不是pad
-    valid_mask: Tensor = (shifted_input_ids != pad_token_id) & shifted_response_mask
-    
-    return (token_logprobs * valid_mask).sum(dim=-1) / valid_mask.sum(dim=-1)
+    return (token_logprobs * valid_mask).sum(dim=-1)
 
 def dpo_train_block(
-    in_args: Tuple[Tensor, Tensor, Tensor, Tensor],  # 新增response_mask
+    in_args: Tuple[Tensor, Tensor, Tensor, Tensor],
     model: nn.Module, 
     ref_model: nn.Module,
     pad_token_id: int,
@@ -90,12 +83,12 @@ def dpo_train_block(
     # 输入应包含：good_ids, good_mask, bad_ids, bad_mask
     good_ids, bad_ids, good_mask, bad_mask = in_args
     
-    log_pi_good = get_response_logprobs(model, good_ids, good_mask, pad_token_id)
-    log_pi_bad = get_response_logprobs(model, bad_ids, bad_mask, pad_token_id)
+    log_pi_good = get_logprobs(model, good_ids, good_mask, pad_token_id)
+    log_pi_bad = get_logprobs(model, bad_ids, bad_mask, pad_token_id)
     
     with torch.no_grad():
-        log_ref_good = get_response_logprobs(ref_model, good_ids, good_mask, pad_token_id)
-        log_ref_bad = get_response_logprobs(ref_model, bad_ids, bad_mask, pad_token_id)
+        log_ref_good = get_logprobs(ref_model, good_ids, good_mask, pad_token_id)
+        log_ref_bad = get_logprobs(ref_model, bad_ids, bad_mask, pad_token_id)
     
     log_ratio_good = log_pi_good - log_ref_good
     log_ratio_bad = log_pi_bad - log_ref_bad
