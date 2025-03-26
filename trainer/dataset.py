@@ -110,7 +110,9 @@ class DpoDataset(Dataset):
         super().__init__()
         self.data: Dict[str, torch.Tensor] = {
             "chosen": torch.tensor([]),
-            "rejected": torch.tensor([])
+            "rejected": torch.tensor([]),
+            "chosen_mask": torch.tensor([]),
+            "rejected_mask": torch.tensor([])
         }
         self.segment_length = segment_length
         self.device = device
@@ -123,12 +125,16 @@ class DpoDataset(Dataset):
     def load(self, load_path: Union[str, List[str]]):
         chosen_data = []
         rejected_data = []
+        chosen_mask = []
+        rejected_mask = []
         
         def load_file(path):
             with open(path, "rb") as f:
                 file: Dict[str, Tensor] = pkl.load(f)
             chosen_data.append(file["chosen"].to(dtype=torch.int32))
             rejected_data.append(file["rejected"].to(dtype=torch.int32))
+            chosen_mask.append(file["chosen_mask"].to(dtype=torch.bool))
+            rejected_mask.append(file["rejected_mask"].to(dtype=torch.bool))
         
         if isinstance(load_path, list):
             for path in load_path:
@@ -140,7 +146,9 @@ class DpoDataset(Dataset):
         
         self.data = {
             "chosen": torch.cat(chosen_data),
-            "rejected": torch.cat(rejected_data)
+            "rejected": torch.cat(rejected_data),
+            "chosen_mask": torch.cat(chosen_mask),
+            "rejected_mask": torch.cat(rejected_mask)
         }
         
         assert self.data["chosen"].numel() == self.data["rejected"].numel()
@@ -152,8 +160,10 @@ class DpoDataset(Dataset):
         
         chosen_segment = self.data["chosen"][start_idx:end_idx].to(device=self.device, dtype=torch.long)
         rejected_segment = self.data["rejected"][start_idx:end_idx].to(device=self.device, dtype=torch.long)
+        chosen_mask = self.data["chosen_mask"][start_idx:end_idx].to(device=self.device, dtype=torch.bool)
+        rejected_mask = self.data["rejected_mask"][start_idx:end_idx].to(device=self.device, dtype=torch.bool)
         
-        return chosen_segment, rejected_segment
+        return chosen_segment, rejected_segment, chosen_mask, rejected_mask
 
     def __len__(self):
         return self.total_samples // self.segment_length
