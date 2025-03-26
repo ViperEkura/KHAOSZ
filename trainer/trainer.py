@@ -54,47 +54,50 @@ def sft_train_block(
 
     return loss
 
-def get_logprobs(model: nn.Module, input_ids: Tensor, pad_token_id: int):
-    logits = model(input_ids)
+def get_logprobs(model:nn.Module, input_ids: Tensor, mask: Tensor, pad_token_id):
+    input_mask =  input_ids.ne(pad_token_id)
+    logits = model(input_ids, input_mask)
     log_probs = torch.log_softmax(logits, dim=-1)
     
-    shifted_log_probs = log_probs[:, :-1, :]
+    shifted_log_probs = log_probs[:, :-1, :] 
     shifted_input_ids = input_ids[:, 1:]
+    shifted_response_mask = mask[:, 1:]
     
     token_logprobs = torch.gather(
-        input=shifted_log_probs, 
-        index=shifted_input_ids.unsqueeze(-1),
-        dim=-1
+        shifted_log_probs, 
+        dim=-1, 
+        index=shifted_input_ids.unsqueeze(-1)
     ).squeeze(-1)
     
-    mask = (shifted_input_ids != pad_token_id).type_as(token_logprobs)
-    token_logprobs = token_logprobs * mask
-    seq_logprob = torch.sum(token_logprobs, dim=-1)
+    prompt_mask = input_mask[:, 1:]
+    valid_mask = (prompt_mask & shifted_response_mask).float()
     
-    return seq_logprob
+    return (token_logprobs * valid_mask).sum(dim=-1)
 
 def dpo_train_block(
-    in_args: Tuple[Tensor, Tensor], 
+    in_args: Tuple[Tensor, Tensor, Tensor, Tensor],
     model: nn.Module, 
     ref_model: nn.Module,
     pad_token_id: int,
-    beta: float
+    beta: float,
 ):
-    good_response_ids, bad_response_ids = in_args
-    log_policy_good = get_logprobs(model, good_response_ids, pad_token_id)
-    log_policy_bad = get_logprobs(model, bad_response_ids, pad_token_id)
+    # 输入应包含：good_ids, good_mask, bad_ids, bad_mask
+    good_ids, bad_ids, good_mask, bad_mask = in_args
+    
+    log_pi_good = get_logprobs(model, good_ids, good_mask, pad_token_id)
+    log_pi_bad = get_logprobs(model, bad_ids, bad_mask, pad_token_id)
     
     with torch.no_grad():
-        log_ref_good = get_logprobs(ref_model, good_response_ids, pad_token_id)
-        log_ref_bad = get_logprobs(ref_model, bad_response_ids, pad_token_id)
-        
-    log_ratio_good = log_policy_good - log_ref_good
-    log_ratio_bad = log_policy_bad - log_ref_bad
+        log_ref_good = get_logprobs(ref_model, good_ids, good_mask, pad_token_id)
+        log_ref_bad = get_logprobs(ref_model, bad_ids, bad_mask, pad_token_id)
+    
+    pi_log_ratio = log_pi_good - log_pi_bad
+    ref_log_ratio = log_ref_good - log_ref_bad
 
-    ratio_diff = log_ratio_good - log_ratio_bad
-    dpo_loss = torch.mean(-F.logsigmoid(beta * ratio_diff))
+    ratio_diff = pi_log_ratio - ref_log_ratio
+    
+    dpo_loss = -F.logsigmoid(beta * ratio_diff).mean()
     return dpo_loss
-
 
 class CheckPoint:
     def __init__(
@@ -193,9 +196,11 @@ class Trainer:
         )
         self.logger.info(f"training mode: {train_type}")
         dpo_ref_model = None
+        pad_token_id = None
         if train_type == "dpo":
             dpo_ref_model = copy.deepcopy(self.model)
             dpo_ref_model.eval()
+            pad_token_id = self.tokenizer.pad_id
     
         
         self.logger.info("start training ...")  
@@ -219,7 +224,7 @@ class Trainer:
                         input_param, 
                         self.model, 
                         dpo_ref_model,
-                        pad_token_id=self.tokenizer.pad_id,
+                        pad_token_id=pad_token_id,
                         beta=dpo_beta
                     )
                     
