@@ -55,7 +55,8 @@ def sft_train_block(
     return loss
 
 def get_logprobs(model:nn.Module, input_ids: Tensor, mask: Tensor, pad_token_id):
-    logits = model(input_ids)
+    input_mask =  input_ids.ne(pad_token_id)
+    logits = model(input_ids, input_mask)
     log_probs = torch.log_softmax(logits, dim=-1)
     
     shifted_log_probs = log_probs[:, :-1, :] 
@@ -68,7 +69,7 @@ def get_logprobs(model:nn.Module, input_ids: Tensor, mask: Tensor, pad_token_id)
         index=shifted_input_ids.unsqueeze(-1)
     ).squeeze(-1)
     
-    prompt_mask  = shifted_input_ids.ne(pad_token_id)
+    prompt_mask = input_mask[:, 1:]
     valid_mask = (prompt_mask & shifted_response_mask).float()
     
     return (token_logprobs * valid_mask).sum(dim=-1)
