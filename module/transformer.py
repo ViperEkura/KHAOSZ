@@ -80,10 +80,10 @@ def create_seq_mask(batch_attn_mask: Tensor, device: torch.device, dtype: torch.
     batch_size, seq_len = batch_attn_mask.shape
     
     expanded_mask = batch_attn_mask.unsqueeze(1).expand(batch_size, seq_len, seq_len)
-    attention_mask = expanded_mask & expanded_mask.transpose(1, 2)
+    bool_mask = expanded_mask & expanded_mask.transpose(1, 2)
 
-    attention_mask = attention_mask.float()
-    attention_mask = (1 - attention_mask) * float('inf')
+    attention_mask = torch.zeros(bool_mask.shape, dtype=dtype, device=device)
+    attention_mask = attention_mask.masked_fill(bool_mask.logical_not(), float('-inf'))
     attention_mask = attention_mask.to(device=device, dtype=dtype).unsqueeze(1)
 
     return attention_mask
