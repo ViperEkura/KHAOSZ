@@ -52,8 +52,10 @@ def train(
     if train_type == "seq":
         dataset = SeqDataset(config.m_len, device=device)
     elif train_type == "sft":
+        assert resume_dir is not None
         dataset = SftDataset(config.m_len, device=device)
     elif train_type == "dpo":
+        assert resume_dir is not None
         dataset = DpoDataset(config.m_len, device=device)
     
     cache_files = get_files(data_root_path)
@@ -66,10 +68,9 @@ def train(
     
     optim = AdamW(
         model.parameters(),
-        eps=5e-5,
         lr=max_lr,
-        betas=(0.9, 0.99),
-        weight_decay=0.05
+        betas=(0.9, 0.95),
+        weight_decay=0.1
     )
     
     trainer = Trainer(model, tokenizer, config)
@@ -96,14 +97,9 @@ if __name__ == "__main__":
     parser.add_argument("--max_lr", type=float, default=3e-4, help="Max learning rate for training.")
     parser.add_argument("--n_iter_ckpt", type=int, default=5000, help="Number of iters between checkpoints.")
     parser.add_argument("--ckpt_dir", type=str, default="checkpoint", help="Directory to save checkpoints.")
-    parser.add_argument("--resume_train", type=bool, default=False, help="Resume training from a checkpoint.")
     parser.add_argument("--resume_dir", type=str, default=None, help="Path to the checkpoint file to resume training.")
 
     args = parser.parse_args()
-    
-    resume_dir = None
-    if args.resume_train and args.resume_dir is not None:
-        resume_dir = args.resume_dir
 
     train(
         data_root_path=args.data_root_path,
@@ -114,6 +110,6 @@ if __name__ == "__main__":
         max_lr=args.max_lr,
         n_iter_ckpt=args.n_iter_ckpt,
         ckpt_dir=args.ckpt_dir,
-        resume_dir=resume_dir,
+        resume_dir=args.resume_dir,
         train_type=args.train_type
     )
