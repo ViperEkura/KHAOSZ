@@ -176,13 +176,24 @@ class Trainer:
         warning_step: int=1000,
         min_rate: float=0.1,
         dpo_beta: float=0.1,
-        
     ):
         if train_type not in ["seq", "sft", "dpo"]:
             raise ValueError("train_type must be one of ['seq', 'sft', 'dpo']")
         
         n_iter, start_iter  = 0, 0
         losses = list()
+        
+        def save_ckpt():
+            nonlocal start_iter
+            avg_loss = sum(losses[start_iter:]) / (n_iter - start_iter)
+            start_iter = n_iter
+            self.logger.info(f"Epoch {epoch + 1}/{n_epoch} Loss: {avg_loss}")
+            
+            ckpt_epoch_dir = os.path.join(ckpt_dir, f"epoch_{epoch+1:02d}_iter_{n_iter}")
+            checkpoint = CheckPoint(self.model, self.tokenizer, self.config, losses, epoch + 1)
+            checkpoint.save_ckpt(ckpt_epoch_dir)
+            self.logger.info(f"Saved checkpoint to {ckpt_epoch_dir}")
+            
         
         total_iters = len(dataloader) * n_epoch
         
@@ -194,14 +205,15 @@ class Trainer:
                 min_rate=min_rate
             )
         )
+        
         self.logger.info(f"training mode: {train_type}")
         dpo_ref_model = None
         pad_token_id = None
+        
         if train_type == "dpo":
             dpo_ref_model = copy.deepcopy(self.model)
             dpo_ref_model.eval()
-            pad_token_id = self.tokenizer.pad_id
-    
+            pad_token_id = self.tokenizer.pad_id    
         
         self.logger.info("start training ...")  
         for epoch in range(n_epoch):
@@ -243,12 +255,10 @@ class Trainer:
                 )
             
                 if n_iter % n_iter_ckpt == 0:
-                    avg_loss = sum(losses[start_iter:]) / (n_iter - start_iter)
-                    start_iter = n_iter
-                    self.logger.info(f"Epoch {epoch + 1}/{n_epoch} Loss: {avg_loss}")
-                    
-                    ckpt_epoch_dir = os.path.join(ckpt_dir, f"epoch_{epoch+1:02d}_iter_{n_iter}")
-                    checkpoint = CheckPoint(self.model, self.tokenizer, self.config, losses, epoch + 1)
-                    checkpoint.save_ckpt(ckpt_epoch_dir)
-                    self.logger.info(f"Saved checkpoint to {ckpt_epoch_dir}")
-                    
+                    save_ckpt()
+        
+        
+        if n_iter % n_iter_ckpt != 0:
+            save_ckpt()
+            
+        self.logger.info("training finished")
