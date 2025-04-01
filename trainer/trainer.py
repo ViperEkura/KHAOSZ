@@ -113,13 +113,13 @@ class CheckPoint:
         model: nn.Module, 
         tokenizer: BpeTokenizer,  
         config: Config,
-        losses: list,
+        loss_list: list,
         n_iter: int 
     ):
         self.model = model
         self.tokenizer = tokenizer
         self.config = config
-        self.losses = losses
+        self.loss_list = loss_list
         self.n_iter = n_iter
 
     def save_ckpt(self, save_dir):
@@ -130,7 +130,7 @@ class CheckPoint:
         tokenizer_path = os.path.join(save_dir, "tokenizer.json")
         
         plt.figure()
-        plt.plot(self.losses)
+        plt.plot(self.loss_list)
         plt.title(f"Training Loss - iter {self.n_iter }")
         plt.xlabel("Batch")
         plt.ylabel("Loss")
@@ -141,7 +141,7 @@ class CheckPoint:
             self.config.save(config_path)
             self.tokenizer.save(tokenizer_path)
             plt.savefig(lossfig_path)
-            pkl.dump(self.losses, open(loss_path, "wb"))
+            pkl.dump(self.loss_list, open(loss_path, "wb"))
             
         except Exception as e:
             raise e
@@ -162,7 +162,7 @@ class Trainer:
         logger.setLevel(level = logging.INFO)
         handler = logging.FileHandler(log_path)
         handler.setLevel(logging.INFO)
-        handler.setFormatter(logging.Formatter('%(asctime)s -- %(message)s'))
+        handler.setFormatter(logging.Formatter('%(asctime)s: %(message)s'))
         logger.addHandler(handler)
         logger.info("initializing trainer ...")
         
@@ -189,7 +189,7 @@ class Trainer:
         assert train_type in VALID_TRAIN_TYPES, "Invalid train type"
         
         n_iter = 0
-        losses = []
+        loss_list = []
         last_ckpt_iter = 0
         
         total_iters = len(dataloader) * n_epoch
@@ -197,7 +197,7 @@ class Trainer:
         scheduler = LambdaLR(optimizer, labmbda_scheduler_fn)
         
         ref_model = None
-        pad_token_id = self.tokenizer.pad_id if train_type == "dpo" else None
+        pad_token_id = self.tokenizer.pad_id
         if train_type == "dpo":
             ref_model = copy.deepcopy(self.model)
             ref_model.eval()
@@ -210,12 +210,8 @@ class Trainer:
         }[train_type]
         
         ckpt_saver = lambda current_iter: CheckPoint(
-            self.model,
-            self.tokenizer,
-            self.config,
-            losses,
-            current_iter
-        ).save_ckpt(ckpt_dir)
+            self.model, self.tokenizer, self.config, loss_list, current_iter
+        ).save_ckpt(os.path.join(ckpt_dir, f"iter_{current_iter}"))
 
         self.logger.info(f"Starting {train_type.upper()} training for {n_epoch} epochs")
         self.logger.info(f"Checkpoint interval: {n_iter_ckpt} iterations")
@@ -231,7 +227,7 @@ class Trainer:
             for batch in progress_bar:
                 #forward
                 loss = train_block(batch)
-                losses.append(loss.item())
+                loss_list.append(loss.item())
                 #backward
                 loss.backward()
                 
