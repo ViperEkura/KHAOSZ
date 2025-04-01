@@ -230,15 +230,14 @@ class Trainer:
                 loss_list.append(loss.item())
                 #backward
                 loss.backward()
-                
                 #step
                 if n_iter % n_iter_step == 0:
                     clip_grad_norm_(self.model.parameters(), max_grad_norm)
                     optimizer.step()
                     optimizer.zero_grad()
-                    scheduler.step()
-
+                    
                 n_iter += 1
+                scheduler.step()
                 progress_bar.set_postfix({
                     "loss": f"{loss.item():.4f}",
                     "lr": f"{optimizer.param_groups[0]['lr']:.2e}"
