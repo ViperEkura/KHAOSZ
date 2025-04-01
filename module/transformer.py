@@ -229,7 +229,11 @@ class Transformer(nn.Module):
         ])
         self.norm = RMSNorm(config.n_dim, config.norm_eps)
         self.freq_cis = get_rotary_emb(self.head_dim, config.m_len)
+        
         init.normal_(self.embedding, mean=0, std=0.02)
+        for layer in self.layers:
+            for parameter in layer.parameters():
+                init.normal_(parameter, mean=0, std=0.006)
     
     def parameter_size(self):
         parameter_size = 0
