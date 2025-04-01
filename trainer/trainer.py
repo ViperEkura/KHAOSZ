@@ -2,17 +2,14 @@ import os
 import copy
 import math
 import torch
-import pickle as pkl
 import logging
-
-import safetensors.torch as st
-import matplotlib.pyplot as plt
-
-from module.transformer import Config
-from module.tokenizer import BpeTokenizer
+import pickle as pkl
 
 import torch.nn as nn
 import torch.nn.functional as F
+import safetensors.torch as st
+import matplotlib.pyplot as plt
+
 from torch import Tensor
 from torch.utils.data import DataLoader
 from torch.optim import Optimizer
@@ -21,6 +18,8 @@ from torch.nn.utils import clip_grad_norm_
 
 from tqdm import tqdm
 from typing import Tuple
+from module.transformer import Config
+from module.tokenizer import BpeTokenizer
 
 
 def get_lambda_lr(warning_step, lr_decay_iters, min_rate=0.1):
@@ -37,7 +36,11 @@ def seq_train_block(in_args: Tuple[Tensor, Tensor], model: nn.Module):
     x, y = in_args
     B, L = x.size()
     logits: Tensor = model(x)
-    loss = F.cross_entropy(logits.view(B * L, -1), y.flatten())
+    
+    loss = F.cross_entropy(
+        logits.view(B * L, -1), 
+        y.flatten()
+    )
     return loss
 
 def sft_train_block(
@@ -50,7 +53,12 @@ def sft_train_block(
     
     logits: Tensor = model(x)
     masked_y = y.masked_fill(loss_mask == 0, ignore_idx)
-    loss = F.cross_entropy(logits.view(B * L, -1), masked_y.flatten(), ignore_index=ignore_idx)
+    
+    loss = F.cross_entropy(
+        logits.view(B * L, -1),
+        masked_y.flatten(), 
+        ignore_index=ignore_idx
+    )
 
     return loss
 
@@ -164,101 +172,87 @@ class Trainer:
         self.config = config
         
     def train(
-        self, 
+        self,
         train_type: str,
-        dataloader: DataLoader, 
+        dataloader: DataLoader,
         optimizer: Optimizer,
         ckpt_dir: str,
-        n_epoch: int=1,
-        n_iter_ckpt: int=5000,
-        n_iter_step: int=1,
-        max_grad_norm: float=1.0,
-        warning_step: int=1000,
-        min_rate: float=0.1,
-        dpo_beta: float=0.1,
+        n_epoch: int = 1,
+        n_iter_ckpt: int = 5000,
+        n_iter_step: int = 1,
+        max_grad_norm: float = 1.0,
+        warning_step: int = 1000,
+        min_rate: float = 0.1,
+        dpo_beta: float = 0.1,
     ):
-        if train_type not in ["seq", "sft", "dpo"]:
-            raise ValueError("train_type must be one of ['seq', 'sft', 'dpo']")
+        VALID_TRAIN_TYPES = {"seq", "sft", "dpo"}
+        assert train_type in VALID_TRAIN_TYPES, "Invalid train type"
         
-        n_iter, start_iter  = 0, 0
-        losses = list()
-        
-        def save_ckpt():
-            nonlocal start_iter
-            avg_loss = sum(losses[start_iter:]) / (n_iter - start_iter)
-            start_iter = n_iter
-            self.logger.info(f"Epoch {epoch + 1}/{n_epoch} Loss: {avg_loss}")
-            
-            ckpt_epoch_dir = os.path.join(ckpt_dir, f"epoch_{epoch+1:02d}_iter_{n_iter}")
-            checkpoint = CheckPoint(self.model, self.tokenizer, self.config, losses, epoch + 1)
-            checkpoint.save_ckpt(ckpt_epoch_dir)
-            self.logger.info(f"Saved checkpoint to {ckpt_epoch_dir}")
-            
+        n_iter = 0
+        losses = []
+        last_ckpt_iter = 0
         
         total_iters = len(dataloader) * n_epoch
+        labmbda_scheduler_fn = get_lambda_lr(warning_step, total_iters, min_rate)
+        scheduler = LambdaLR(optimizer, labmbda_scheduler_fn)
         
-        schdulder = LambdaLR(
-            optimizer, 
-            get_lambda_lr(
-                warning_step=warning_step,   
-                lr_decay_iters=total_iters, 
-                min_rate=min_rate
-            )
-        )
-        
-        self.logger.info(f"training mode: {train_type}")
-        dpo_ref_model = None
-        pad_token_id = None
-        
+        ref_model = None
+        pad_token_id = self.tokenizer.pad_id if train_type == "dpo" else None
         if train_type == "dpo":
-            dpo_ref_model = copy.deepcopy(self.model)
-            dpo_ref_model.eval()
-            pad_token_id = self.tokenizer.pad_id    
+            ref_model = copy.deepcopy(self.model)
+            ref_model.eval()
+            ref_model.requires_grad_(False)
+                    
+        train_block = {
+            "seq": lambda x: seq_train_block(x, self.model),
+            "sft": lambda x: sft_train_block(x, self.model),
+            "dpo": lambda x: dpo_train_block(x, self.model, ref_model, pad_token_id, dpo_beta)
+        }[train_type]
         
-        self.logger.info("start training ...")  
+        ckpt_saver = lambda current_iter: CheckPoint(
+            self.model,
+            self.tokenizer,
+            self.config,
+            losses,
+            current_iter
+        ).save_ckpt(ckpt_dir)
+
+        self.logger.info(f"Starting {train_type.upper()} training for {n_epoch} epochs")
+        self.logger.info(f"Checkpoint interval: {n_iter_ckpt} iterations")
+
         for epoch in range(n_epoch):
             self.model.train()
-            tqdm_laoder = tqdm(dataloader, desc=f"Epoch {epoch+1}/{n_epoch}")
-            for input_param in tqdm_laoder:
-                
-                if train_type == "seq":
-                    loss = seq_train_block(
-                        input_param,
-                        self.model
-                    )
-                elif train_type == "sft":
-                    loss = sft_train_block(
-                        input_param,
-                        self.model
-                    )
-                else:
-                    loss = dpo_train_block(
-                        input_param, 
-                        self.model, 
-                        dpo_ref_model,
-                        pad_token_id=pad_token_id,
-                        beta=dpo_beta
-                    )
-                    
+            progress_bar = tqdm(
+                dataloader,
+                desc=f"Epoch {epoch+1}/{n_epoch}",
+                dynamic_ncols=True
+            )
+
+            for batch in progress_bar:
+                #forward
+                loss = train_block(batch)
                 losses.append(loss.item())
+                #backward
                 loss.backward()
+                
+                #step
                 if n_iter % n_iter_step == 0:
                     clip_grad_norm_(self.model.parameters(), max_grad_norm)
                     optimizer.step()
                     optimizer.zero_grad()
-                    
-                schdulder.step()
+                    scheduler.step()
+
                 n_iter += 1
-                tqdm_laoder.set_postfix(
-                    loss=loss.item(),
-                    lr=optimizer.param_groups[-1]["lr"]
-                )
-            
-                if n_iter % n_iter_ckpt == 0:
-                    save_ckpt()
-        
-        
-        if n_iter % n_iter_ckpt != 0:
-            save_ckpt()
-            
-        self.logger.info("training finished")
+                progress_bar.set_postfix({
+                    "loss": f"{loss.item():.4f}",
+                    "lr": f"{optimizer.param_groups[0]['lr']:.2e}"
+                })
+                #save checkpotint
+                if n_iter - last_ckpt_iter >= n_iter_ckpt:
+                    ckpt_saver(n_iter)
+                    last_ckpt_iter = n_iter
+
+        if n_iter != last_ckpt_iter:
+            ckpt_saver(n_iter)
+
+        self.logger.info("Training completed")
