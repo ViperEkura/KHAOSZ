@@ -154,8 +154,8 @@ class RMSNorm(nn.Module):
     
     
 class MLP(nn.Module):
-    def __init__(self, n_dim, d_ffn, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, n_dim, d_ffn):
+        super().__init__()
         self.up = Linear(n_dim, d_ffn)
         self.gate = Linear(n_dim, d_ffn)
         self.down = Linear(d_ffn, n_dim,)
@@ -166,8 +166,8 @@ class MLP(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, n_dim, n_head, n_kvhead, flush_attn=True, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, n_dim, n_head, n_kvhead, flush_attn=True):
+        super().__init__()
         assert n_dim % n_head == 0
         assert n_head % n_kvhead == 0
         
@@ -214,8 +214,8 @@ class Attention(nn.Module):
 
 
 class DecoderBlock(nn.Module):
-    def __init__(self, n_dim, n_head, d_ffn, n_kvhead, norm_eps, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, n_dim, n_head, d_ffn, n_kvhead, norm_eps):
+        super().__init__()
         self.attention = Attention(n_dim, n_head, n_kvhead)
         self.norm_attn = RMSNorm(n_dim, norm_eps)
         self.ffn = MLP(n_dim, d_ffn)
@@ -228,8 +228,8 @@ class DecoderBlock(nn.Module):
     
   
 class Transformer(nn.Module):
-    def __init__(self, config: Config, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, config: Config):
+        super().__init__()
         self.head_dim = config.n_dim // config.n_head
         self.embedding = nn.Parameter(torch.empty(config.vocab_size, config.n_dim))
         self.layers = nn.ModuleList([
