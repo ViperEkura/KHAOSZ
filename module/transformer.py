@@ -129,7 +129,7 @@ class Config:
 class Linear(nn.Module):
     def __init__(self, in_dim, out_dim, bias=False):
         super().__init__()
-        self.weight = nn.Parameter(torch.empty((in_dim, out_dim)))
+        self.weight = nn.Parameter(torch.empty((out_dim, in_dim)))
         self.bias = nn.Parameter(torch.zeros(out_dim)) if bias else None
         init.normal_(self.weight, mean=0, std=0.006)
         
