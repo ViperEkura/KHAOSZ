@@ -124,11 +124,23 @@ class Config:
         }
         with open(config_path, 'w') as f:
             json.dump(config_dict, f, indent=4)
-               
+            
+
+class Linear(nn.Module):
+    def __init__(self, in_dim, out_dim, bias=False):
+        super().__init__()
+        self.weight = nn.Parameter(torch.empty((in_dim, out_dim)))
+        self.bias = nn.Parameter(torch.zeros(out_dim)) if bias else None
+        z = nn.Linear()
+        init.normal_(self.weight, mean=0, std=0.006)
+        
+    def forward(self, x: Tensor) -> Tensor:
+        return F.linear(x, self.weight, self.bias)
+        
 
 class RMSNorm(nn.Module):
-    def __init__(self, n_dim, norm_eps, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, n_dim, norm_eps):
+        super().__init__()
         self.weight = nn.Parameter(torch.ones(n_dim))
         self.norm_eps = norm_eps
 
@@ -145,10 +157,9 @@ class RMSNorm(nn.Module):
 class MLP(nn.Module):
     def __init__(self, n_dim, d_ffn, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.up = nn.Linear(n_dim, d_ffn, bias=False)
-        self.gate = nn.Linear(n_dim, d_ffn, bias=False)
-        self.down = nn.Linear(d_ffn, n_dim, bias=False)
-
+        self.up = Linear(n_dim, d_ffn)
+        self.gate = Linear(n_dim, d_ffn)
+        self.down = Linear(d_ffn, n_dim,)
     def forward(self, x: Tensor) -> Tensor:
         gated = self.up(x) * F.silu(self.gate(x))
         out = self.down(gated)
@@ -168,10 +179,10 @@ class Attention(nn.Module):
         self.n_kvheads = n_kvhead
         self.n_rep = n_head // n_kvhead
     
-        self.q_proj = nn.Linear(n_dim, n_head * self.head_dim, bias=False)
-        self.k_proj = nn.Linear(n_dim, n_kvhead * self.head_dim, bias=False)
-        self.v_proj = nn.Linear(n_dim, n_kvhead * self.head_dim, bias=False)
-        self.o_proj = nn.Linear(n_dim, n_dim, bias=False)
+        self.q_proj = Linear(n_dim, n_head * self.head_dim)
+        self.k_proj = Linear(n_dim, n_kvhead * self.head_dim)
+        self.v_proj = Linear(n_dim, n_kvhead * self.head_dim)
+        self.o_proj = Linear(n_dim, n_dim)
     def forward(self, x: Tensor, freqs_cis, mask=None) -> Tensor:
         B, L, _ = x.size()
         # x(B, L, D)
@@ -229,11 +240,7 @@ class Transformer(nn.Module):
         ])
         self.norm = RMSNorm(config.n_dim, config.norm_eps)
         self.freq_cis = get_rotary_emb(self.head_dim, config.m_len)
-        
         init.normal_(self.embedding, mean=0, std=0.02)
-        for layer in self.layers:
-            for parameter in layer.parameters():
-                init.normal_(parameter, mean=0, std=0.006)
     
     def parameter_size(self):
         parameter_size = 0
