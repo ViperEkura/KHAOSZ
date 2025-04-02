@@ -245,9 +245,15 @@ class Trainer:
                 #save checkpotint
                 if n_iter - last_ckpt_iter >= n_iter_ckpt:
                     ckpt_saver(n_iter)
+                    diff_iter = n_iter - last_ckpt_iter
+                    avg_loss = sum(loss_list[last_ckpt_iter:n_iter]) / diff_iter
+                    self.logger.info(f"iter: {n_iter} loss: {avg_loss}")
                     last_ckpt_iter = n_iter
 
         if n_iter != last_ckpt_iter:
             ckpt_saver(n_iter)
+            diff_iter = n_iter - last_ckpt_iter
+            avg_loss = sum(loss_list[last_ckpt_iter:n_iter]) / diff_iter
+            self.logger.info(f"iter: {n_iter} loss: {avg_loss}")
 
         self.logger.info("Training completed")
