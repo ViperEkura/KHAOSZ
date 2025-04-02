@@ -131,7 +131,6 @@ class Linear(nn.Module):
         super().__init__()
         self.weight = nn.Parameter(torch.empty((in_dim, out_dim)))
         self.bias = nn.Parameter(torch.zeros(out_dim)) if bias else None
-        z = nn.Linear()
         init.normal_(self.weight, mean=0, std=0.006)
         
     def forward(self, x: Tensor) -> Tensor:
