@@ -30,6 +30,10 @@ def train(
     ckpt_dir: str,
     resume_dir: str = None,
 ):
+    assert train_type in ["seq", "sft", "dpo"]
+    if train_type in ["sft", "dpo"]:
+        assert resume_dir is not None
+    
     if resume_dir is None:
         config_path = os.path.join(dirname, "params", "config.json")
         tokenizer_path = os.path.join(dirname, "params", "tokenizer.json")
@@ -48,15 +52,12 @@ def train(
     device = torch.device("cuda")
     model = model.to(device=device, dtype=torch.bfloat16)
     
-    dataset = None
-    if train_type == "seq":
-        dataset = SeqDataset(config.m_len, device=device)
-    elif train_type == "sft":
-        assert resume_dir is not None
-        dataset = SftDataset(config.m_len, device=device)
-    elif train_type == "dpo":
-        assert resume_dir is not None
-        dataset = DpoDataset(config.m_len, device=device)
+    dataset_creator = {
+        "seq": lambda: SeqDataset(config.m_len, device=device),
+        "sft": lambda: SftDataset(config.m_len, device=device),
+        "dpo": lambda: DpoDataset(config.m_len, device=device)
+    }
+    dataset = dataset_creator[train_type]()
     
     cache_files = get_files(data_root_path)
     dataset.load(cache_files)

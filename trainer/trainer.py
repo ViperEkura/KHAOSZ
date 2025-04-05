@@ -185,8 +185,7 @@ class Trainer:
         min_rate: float = 0.1,
         dpo_beta: float = 0.1,
     ):
-        VALID_TRAIN_TYPES = {"seq", "sft", "dpo"}
-        assert train_type in VALID_TRAIN_TYPES, "Invalid train type"
+        assert train_type in ["seq", "sft", "dpo"]
         
         n_iter = 0
         loss_list = []
