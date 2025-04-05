@@ -28,7 +28,11 @@ def train(
     max_lr: int,
     n_iter_ckpt: int,
     ckpt_dir: str,
-    resume_dir: str = None,
+    dpo_beta: float,
+    adamw_betas: tuple,
+    adamw_weight_decay: float,
+    max_gard_norm: float,
+    resume_dir: str = None
 ):
     assert train_type in ["seq", "sft", "dpo"]
     if train_type in ["sft", "dpo"]:
@@ -70,8 +74,8 @@ def train(
     optim = AdamW(
         model.parameters(),
         lr=max_lr,
-        betas=(0.9, 0.95),
-        weight_decay=0.1
+        betas=adamw_betas,
+        weight_decay=adamw_weight_decay
     )
     
     trainer = Trainer(model, tokenizer, config)
@@ -84,7 +88,8 @@ def train(
         n_iter_ckpt=n_iter_ckpt,
         n_iter_step=n_iter_step,
         warning_step=warning_step,
-        max_grad_norm=1.0
+        dpo_beta=dpo_beta,
+        max_grad_norm=max_gard_norm,
     )
 
 if __name__ == "__main__":
@@ -99,6 +104,10 @@ if __name__ == "__main__":
     parser.add_argument("--n_iter_ckpt", type=int, default=5000, help="Number of iters between checkpoints.")
     parser.add_argument("--ckpt_dir", type=str, default="checkpoint", help="Directory to save checkpoints.")
     parser.add_argument("--resume_dir", type=str, default=None, help="Path to the checkpoint file to resume training.")
+    parser.add_argument("--dpo_beta", type=float, default=0.1, help="DPO beta value.")
+    parser.add_argument("--max_gard_norm", type=float, default=1.0, help="Max gradient norm for clipping.")
+    parser.add_argument("--adamw_betas", type=tuple, default=(0.9, 0.95), help="Beta values for AdamW optimizer.")
+    parser.add_argument("--adamw_weight_decay", type=float, default=0.1, help="Weight decay for AdamW optimizer.")
 
     args = parser.parse_args()
 
@@ -109,6 +118,10 @@ if __name__ == "__main__":
         n_iter_step=args.n_iter_step,
         warning_step=args.warning_step,
         max_lr=args.max_lr,
+        dpo_beta=args.dpo_beta,
+        adamw_betas=args.adamw_betas,
+        adamw_weight_decay=args.adamw_weight_decay,
+        max_gard_norm=args.max_gard_norm,
         n_iter_ckpt=args.n_iter_ckpt,
         ckpt_dir=args.ckpt_dir,
         resume_dir=args.resume_dir,
