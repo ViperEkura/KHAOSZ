@@ -47,6 +47,9 @@ def batch_generate(
 def dpo_generate(
     model: Khaosz,
     input_json_file: str,
+    temperature: float = 0.95,
+    top_p: float = 0.95,
+    top_k: int = 50,
     batch_size: int=1,
     question_key: str="question",
     recepted_key: str="recepted",
@@ -57,13 +60,12 @@ def dpo_generate(
         queries = [item[question_key] for item in json_file]
         recepted = [item[recepted_key] for item in json_file]
     
-    #top_k=0, 未启用top_k
     rejected = batch_generate(
         queries, 
         model,
-        temperature=0.95,
-        top_p=0.95,
-        top_k=50,
+        temperature=temperature,
+        top_p=top_p,
+        top_k=top_k,
         batch_size=batch_size
     )
     output_dict = []
@@ -77,20 +79,26 @@ def dpo_generate(
 
     return output_dict
 
-def dpo(
+def dpo_processor(
     model: Khaosz,
     input_json_file: str,
     output_json_file: str,
-    batch_size: int=1,
+    batch_size: int,
+    temperature: float,
+    top_p: float,
+    top_k: int,
     question_key: str="question",
     recepted_key: str="recepted",
 ):
     output_dict = dpo_generate(
         model=model, 
         input_json_file=input_json_file, 
-        batch_size=batch_size, 
         question_key=question_key, 
-        recepted_key=recepted_key
+        recepted_key=recepted_key,
+        batch_size=batch_size, 
+        temperature=temperature,
+        top_k=top_k,
+        top_p=top_p
     )
     
     with open(output_json_file, "w", encoding='utf-8') as f:
@@ -103,6 +111,9 @@ if __name__ == "__main__":
     parser.add_argument("--output_json_file", type=str, required=True, help="Path to the output JSON file.")
     parser.add_argument("--question_key", type=str, default="question", help="Key for the question in the input JSON.")
     parser.add_argument("--recepted_key", type=str, default="recepted", help="Key for the accepted response in the input JSON.")
+    parser.add_argument("--temperature", type=float, default=0.95, help="Temperature for generating responses.")
+    parser.add_argument("--top_p", type=float, default=0.95, help="Top-p value for generating responses.")
+    parser.add_argument("--top_k", type=int, default=50, help="Top-k value for generating responses.")
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size for generating responses.")
 
     args = parser.parse_args()
@@ -113,11 +124,14 @@ if __name__ == "__main__":
     model = model.to(device='cuda', dtype=torch.float16)
     
     # 运行 DPO
-    dpo(
+    dpo_processor(
         model,
         input_json_file=args.input_json_file,
         output_json_file=args.output_json_file,
-        batch_size=args.batch_size,
         question_key=args.question_key,
         recepted_key=args.recepted_key,
+        batch_size=args.batch_size,
+        temperature=args.temperature,
+        top_k=args.top_k,
+        top_p=args.top_p
     )
