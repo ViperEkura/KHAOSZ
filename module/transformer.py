@@ -238,6 +238,7 @@ class Transformer(nn.Module):
             )for _ in range(config.n_layer)
         ])
         self.norm = RMSNorm(config.n_dim, config.norm_eps)
+        self.lm_head = Linear(config.n_dim, config.vocab_size)
         self.freq_cis = get_rotary_emb(self.head_dim, config.m_len)
         init.normal_(self.embedding, mean=0, std=0.02)
     
@@ -247,9 +248,9 @@ class Transformer(nn.Module):
             parameter_size += p.numel()
         return parameter_size
     
-    def forward(self, x: Tensor, pos_mask: Tensor=None):
-        assert x.ndim == 2
-        x = F.embedding(x, self.embedding)
+    def forward(self, ids: Tensor, pos_mask: Tensor=None) -> Tensor:
+        assert ids.ndim == 2
+        x = F.embedding(ids, self.embedding)
         
         self.freq_cis = self.freq_cis.to(x.device)
         freq_cis = self.freq_cis[:x.size(1)]
@@ -263,6 +264,6 @@ class Transformer(nn.Module):
             x = layer(x, freq_cis, format_mask)
             
         x = self.norm(x)
-        x = F.linear(x, self.embedding)
+        logits = self.lm_head(x)
         
-        return x
+        return logits

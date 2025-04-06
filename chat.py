@@ -1,6 +1,6 @@
 import os
 import torch
-from module import Khaosz, Transformer, Config
+from module import Khaosz
 
 
 def chat():
@@ -22,12 +22,7 @@ def chat():
             top_k=50
         ):
             print(response[response_size:], end="", flush=True)
-            response_size = len(response)       
-
-def show_parameter_size():
-    cfg = Config("params/config.json")
-    model = Transformer(cfg)
-    print(f"parameter size: {model.parameter_size():,}")
+            response_size = len(response)
     
 
 if __name__ == "__main__":
