@@ -5,9 +5,16 @@ __pycache__
 *.pt
 *.safetensors
 
+# params
+config*
+tokenizer*
+
+
 # train_log / test
 *.log
 test*
 
 # debug file
 .vscode
+
+
