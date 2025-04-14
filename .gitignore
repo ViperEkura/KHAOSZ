@@ -6,7 +6,7 @@ __pycache__
 *.safetensors
 
 # params
-params/
+*.json
 
 
 # train_log / test
