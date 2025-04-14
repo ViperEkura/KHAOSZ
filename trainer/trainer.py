@@ -84,7 +84,7 @@ def get_logprobs(model:nn.Module, input_ids: Tensor, mask: Tensor, pad_token_id)
 
 def dpo_train_block(
     in_args: Tuple[Tensor, Tensor, Tensor, Tensor],
-    model: nn.Module, 
+    pi_model: nn.Module, 
     ref_model: nn.Module,
     pad_token_id: int,
     beta: float,
@@ -92,8 +92,8 @@ def dpo_train_block(
     # 输入应包含：good_ids, good_mask, bad_ids, bad_mask
     good_ids, bad_ids, good_mask, bad_mask = in_args
     
-    log_pi_good = get_logprobs(model, good_ids, good_mask, pad_token_id)
-    log_pi_bad = get_logprobs(model, bad_ids, bad_mask, pad_token_id)
+    log_pi_good = get_logprobs(pi_model, good_ids, good_mask, pad_token_id)
+    log_pi_bad = get_logprobs(pi_model, bad_ids, bad_mask, pad_token_id)
     
     with torch.no_grad():
         log_ref_good = get_logprobs(ref_model, good_ids, good_mask, pad_token_id)
@@ -106,6 +106,20 @@ def dpo_train_block(
     
     dpo_loss = -F.logsigmoid(beta * ratio_diff).mean()
     return dpo_loss
+
+def ppo_block(
+    in_args: Tuple[Tensor, Tensor, Tensor, Tensor],
+    pi_model: nn.Module, 
+    ref_model: nn.Module, 
+    pad_token_id: int,
+    epslion:float = 0.1
+):
+    # 输入应包含：good_ids, good_mask, bad_ids, bad_mask
+    good_ids, bad_ids, good_mask, bad_mask = in_args
+    pi_log_probs = get_logprobs(pi_model, good_ids, good_mask,pad_token_id)
+    ref_log_probs = get_logprobs(ref_model, good_ids, good_mask, pad_token_id)
+    pass
+
 
 class CheckPoint:
     def __init__(
