@@ -3,6 +3,7 @@ import argparse
 import torch
 import safetensors.torch as st
 
+from typing import Callable, Dict
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from module import Transformer, Config, BpeTokenizer
@@ -56,12 +57,14 @@ def train(
     device = torch.device("cuda")
     model = model.to(device=device, dtype=torch.bfloat16)
     
-    if train_type == "seq":
-        dataset = SeqDataset(config.m_len, device=device)
-    elif train_type == "sft":
-        dataset = SftDataset(config.m_len, device=device)
-    else: #dpo
-        dataset = DpoDataset(config.m_len, device=device)
+    dataset_factories: Dict[str, Callable[[int, torch.device], SeqDataset | SftDataset | DpoDataset]] = {
+        "seq": lambda m_len, device: SeqDataset(m_len, device=device),
+        "sft": lambda m_len, device: SftDataset(m_len, device=device),
+        "dpo": lambda m_len, device: DpoDataset(m_len, device=device),
+    }
+
+    dataset_generator = dataset_factories[train_type]
+    dataset = dataset_generator(config.m_len, device)
     
     cache_files = get_files(data_root_path)
     dataset.load(cache_files)
