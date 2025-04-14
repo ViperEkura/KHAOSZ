@@ -1,13 +1,12 @@
 # cache
 __pycache__
 
-# # model
+# model
 *.pt
 *.safetensors
 
 # params
 *.json
-
 
 # train_log / test
 *.log
