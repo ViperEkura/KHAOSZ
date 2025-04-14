@@ -1,13 +1,12 @@
 # cache
 __pycache__
 
-# model
+# # model
 *.pt
 *.safetensors
 
 # params
-config*
-tokenizer*
+params/
 
 
 # train_log / test
