@@ -198,6 +198,7 @@ class Trainer:
         warning_step: int = 1000,
         min_rate: float = 0.1,
         dpo_beta: float = 0.1,
+        freeze_embedding: bool = False
     ):
         assert train_type in ["seq", "sft", "dpo"]
         
@@ -215,7 +216,12 @@ class Trainer:
             ref_model = copy.deepcopy(self.model)
             ref_model.eval()
             ref_model.requires_grad_(False)
-                    
+
+        if freeze_embedding:
+            for name, param in self.model.named_parameters():
+                if name.find("embedding") != -1:
+                    param.requires_grad = False
+
         train_block = {
             "seq": lambda x: seq_train_block(x, self.model),
             "sft": lambda x: sft_train_block(x, self.model),
