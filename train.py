@@ -33,7 +33,8 @@ def train(
     adamw_betas: tuple,
     adamw_weight_decay: float,
     max_grad_norm: float,
-    resume_dir: str = None
+    freeze_embedding: bool,
+    resume_dir: str
 ):
     assert train_type in ["seq", "sft", "dpo"]
     if train_type in ["sft", "dpo"]:
@@ -93,6 +94,7 @@ def train(
         warning_step=warning_step,
         dpo_beta=dpo_beta,
         max_grad_norm=max_grad_norm,
+        freeze_embedding=freeze_embedding
     )
 
 if __name__ == "__main__":
@@ -111,6 +113,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_grad_norm", type=float, default=1.0, help="Max gradient norm for clipping.")
     parser.add_argument("--adamw_betas", type=tuple, default=(0.9, 0.95), help="Beta values for AdamW optimizer.")
     parser.add_argument("--adamw_weight_decay", type=float, default=0.1, help="Weight decay for AdamW optimizer.")
+    parser.add_argument("--freeze_embedding", type=bool, default=False, help="Whether to freeze the embedding layer.")
 
     args = parser.parse_args()
 
@@ -125,6 +128,7 @@ if __name__ == "__main__":
         adamw_betas=args.adamw_betas,
         adamw_weight_decay=args.adamw_weight_decay,
         max_grad_norm=args.max_grad_norm,
+        freeze_embedding=args.freeze_embedding,
         n_iter_ckpt=args.n_iter_ckpt,
         ckpt_dir=args.ckpt_dir,
         resume_dir=args.resume_dir,
