@@ -32,7 +32,7 @@ def train(
     dpo_beta: float,
     adamw_betas: tuple,
     adamw_weight_decay: float,
-    max_gard_norm: float,
+    max_grad_norm: float,
     resume_dir: str = None
 ):
     assert train_type in ["seq", "sft", "dpo"]
@@ -92,7 +92,7 @@ def train(
         n_iter_step=n_iter_step,
         warning_step=warning_step,
         dpo_beta=dpo_beta,
-        max_grad_norm=max_gard_norm,
+        max_grad_norm=max_grad_norm,
     )
 
 if __name__ == "__main__":
@@ -108,7 +108,7 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt_dir", type=str, default="checkpoint", help="Directory to save checkpoints.")
     parser.add_argument("--resume_dir", type=str, default=None, help="Path to the checkpoint file to resume training.")
     parser.add_argument("--dpo_beta", type=float, default=0.1, help="DPO beta value.")
-    parser.add_argument("--max_gard_norm", type=float, default=1.0, help="Max gradient norm for clipping.")
+    parser.add_argument("--max_grad_norm", type=float, default=1.0, help="Max gradient norm for clipping.")
     parser.add_argument("--adamw_betas", type=tuple, default=(0.9, 0.95), help="Beta values for AdamW optimizer.")
     parser.add_argument("--adamw_weight_decay", type=float, default=0.1, help="Weight decay for AdamW optimizer.")
 
@@ -124,7 +124,7 @@ if __name__ == "__main__":
         dpo_beta=args.dpo_beta,
         adamw_betas=args.adamw_betas,
         adamw_weight_decay=args.adamw_weight_decay,
-        max_gard_norm=args.max_gard_norm,
+        max_grad_norm=args.max_grad_norm,
         n_iter_ckpt=args.n_iter_ckpt,
         ckpt_dir=args.ckpt_dir,
         resume_dir=args.resume_dir,
