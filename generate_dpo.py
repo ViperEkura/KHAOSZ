@@ -13,7 +13,7 @@ def batch_generate(
     temperature: float, 
     top_k: int, 
     top_p: float,
-    batch_size: int=1
+    batch_size: int
 ) -> List:
     assert batch_size > 0
     sorted_queries = sorted(queries, key=lambda x: len(x), reverse=True)
@@ -47,10 +47,10 @@ def batch_generate(
 def dpo_generate(
     model: Khaosz,
     input_json_file: str,
-    temperature: float = 0.95,
-    top_p: float = 0.95,
-    top_k: int = 50,
-    batch_size: int=1,
+    temperature: float,
+    top_p: float,
+    top_k: int,
+    batch_size: int,
     question_key: str="question",
     recepted_key: str="recepted",
 ) -> List:  
@@ -111,9 +111,9 @@ if __name__ == "__main__":
     parser.add_argument("--output_json_file", type=str, required=True, help="Path to the output JSON file.")
     parser.add_argument("--question_key", type=str, default="question", help="Key for the question in the input JSON.")
     parser.add_argument("--recepted_key", type=str, default="recepted", help="Key for the accepted response in the input JSON.")
-    parser.add_argument("--temperature", type=float, default=0.95, help="Temperature for generating responses.")
-    parser.add_argument("--top_p", type=float, default=0.95, help="Top-p value for generating responses.")
-    parser.add_argument("--top_k", type=int, default=50, help="Top-k value for generating responses.")
+    parser.add_argument("--temperature", type=float, default=0.60, help="Temperature for generating responses.")
+    parser.add_argument("--top_p", type=float, default=0.98, help="Top-p value for generating responses.")
+    parser.add_argument("--top_k", type=int, default=20, help="Top-k value for generating responses.")
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size for generating responses.")
 
     args = parser.parse_args()
