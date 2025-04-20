@@ -74,7 +74,12 @@ def train(
         batch_size=batch_size, 
         shuffle=True
     )
-    
+
+    if freeze_embedding:
+        for name, param in model.named_parameters():
+            if name.find("embedding") != -1:
+                param.requires_grad = False
+
     optim = AdamW(
         model.parameters(),
         lr=max_lr,

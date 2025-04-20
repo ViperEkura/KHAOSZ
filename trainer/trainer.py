@@ -217,11 +217,6 @@ class Trainer:
             ref_model.eval()
             ref_model.requires_grad_(False)
 
-        if freeze_embedding:
-            for name, param in self.model.named_parameters():
-                if name.find("embedding") != -1:
-                    param.requires_grad = False
-
         train_block = {
             "seq": lambda x: seq_train_block(x, self.model),
             "sft": lambda x: sft_train_block(x, self.model),
