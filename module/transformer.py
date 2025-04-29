@@ -248,7 +248,7 @@ class Transformer(nn.Module):
             parameter_size += p.numel()
         return parameter_size
     
-    def forward(self, ids: Tensor, pos_mask: Tensor=None) -> Tensor:
+    def forward(self, ids: Tensor, pos_mask: Tensor=None, return_hidden=False) -> Tensor:
         assert ids.ndim == 2
         x = F.embedding(ids, self.embedding)
         
@@ -264,6 +264,5 @@ class Transformer(nn.Module):
             x = layer(x, freq_cis, format_mask)
             
         x = self.norm(x)
-        logits = self.lm_head(x)
         
-        return logits
+        return x if return_hidden else self.lm_head(x)
