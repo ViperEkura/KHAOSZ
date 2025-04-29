@@ -60,7 +60,7 @@ class Khaosz:
         input_tensor = input_tensor.unsqueeze(0) if not with_batch else input_tensor
         
         with torch.no_grad():
-            logits: torch.Tensor = self.model(input_tensor, attn_mask)[:, -1, :]
+            logits: Tensor = self.model(input_tensor, attn_mask)[:, -1, :]
         top_k = min(top_k, logits.size(-1)) if top_k > 0 else 0
         
         if top_k > 0:
@@ -219,3 +219,19 @@ class Khaosz:
             histories[i].append((queries[i], responses[i]))
             
         return responses
+    
+    def sentence_embedding(self, sentence: str) -> torch.Tensor:
+        ids = self.tokenizer.encode(sentence)
+        torch.cuda.empty_cache()
+        device = next(self.model.parameters()).device
+        input_tensor = torch.as_tensor(ids, device=device)
+        if input_tensor.dim() == 1:
+            input_tensor = input_tensor.unsqueeze(0)
+        
+        with torch.no_grad():
+            emb_sentence: Tensor = \
+                self.model(input_tensor, return_hidden=True)[:, -1, :]
+            
+        return emb_sentence
+    
+        
