@@ -229,9 +229,9 @@ class Khaosz:
             input_tensor = input_tensor.unsqueeze(0)
         
         with torch.no_grad():
-            emb_sentence: Tensor = \
-                self.model(input_tensor, return_hidden=True)[:, -1, :]
-            
+            output_seg = self.model(input_tensor, return_hidden=True)
+            emb_sentence = output_seg[:, -1, :]
+                        
         return emb_sentence
     
         
