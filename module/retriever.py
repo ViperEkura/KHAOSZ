@@ -6,42 +6,39 @@ from typing import Dict, List, Callable, Tuple
 
 class Retriever:
     def __init__(self, file_path=None):
-        self.data: List[Dict[str, Tensor]] = []
+        self.items: List[str] = []
+        self.embeddings: List[Tensor] = None
+        
         if file_path is not None:
             self.load(file_path)
         
     def add_vector(self, key: str, vector_data: Tensor):
-        self.data.append({
-            "key": key,
-            "vector": vector_data
-        })
+        self.items.append(key)
+        self.embeddings.append(vector_data)
         
     def delete_vector(self, key: str):
-        for elm in self.data:
-            if elm["key"] == key:
-                self.data.remove(elm)    
+        for i, item in enumerate(self.items):
+            if item == key:
+                self.items.pop(i)
+                self.embeddings.pop(i)
     
     def simliarity(self, processor: Callable, input_str: str, top_k: int) -> List[Tuple[str, float]]:
-        top_k_clip = min(top_k, len(self.data))
-        top_k_data: List[Tuple[str, float]] = []
+        top_k_clip = min(top_k, len(self.items))
         inoput_tensor = processor(input_str)
+        segment = torch.cat(self.embeddings, dim=0)
+        sim_scores = torch.matmul(segment, inoput_tensor)
         
-        for elm in self.data:
-            key, vector = elm["key"], elm["vector"]
-            upper = torch.dot(inoput_tensor, vector)
-            lower  = torch.norm(inoput_tensor) * torch.norm(vector)
-            sim = upper / lower
-            top_k_data.append((key, sim.item()))
-            
-            if len(top_k_data) >= top_k_clip:
-                break
+        top_k_data = [
+            (self.items[i], sim_scores[i].item()) 
+            for i in sim_scores.topk(top_k_clip).indices.tolist()
+        ]
         
         return top_k_data
     
     def save(self, file_path):
         serializable_data = [
-            {"key": elm["key"],"vector": elm["vector"].tolist()}
-            for elm in self.data
+            {"key": item,"vector": vec.tolist()}
+            for (item, vec) in zip(self.items, self.embeddings)
         ]
         
         with open(file_path, "w") as f:
@@ -51,13 +48,15 @@ class Retriever:
     def load(self, file_path):
         with open(file_path, "r") as f:
             data = json.load(f)
-        
-        self.data.clear()
+            
+        self.items = []
+        self.embeddings = []
         
         for elm in data:
             key = elm["key"]
             vector = torch.tensor(elm["vector"])
-            self.data.append({"key": key, "vector": vector})
+            self.items.append(key)
+            self.embeddings.append(vector)
 
     
     
