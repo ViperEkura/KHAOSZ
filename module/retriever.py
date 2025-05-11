@@ -1,10 +1,10 @@
 import torch
 import json
 from torch import Tensor
-from typing import Dict, List, Callable, Tuple, Self
+from typing import Dict, List, Callable, Tuple
 
 
-class VectorAssets:
+class Retriever:
     def __init__(self, file_path=None):
         self.data: List[Dict[str, Tensor]] = []
         if file_path is not None:
@@ -21,7 +21,7 @@ class VectorAssets:
             if elm["key"] == key:
                 self.data.remove(elm)    
     
-    def simliarity(self, processor: Callable, input_str: str, top_k: int) -> List[Tuple[str, float]]:        
+    def simliarity(self, processor: Callable, input_str: str, top_k: int) -> List[Tuple[str, float]]:
         top_k_clip = min(top_k, len(self.data))
         top_k_data: List[Tuple[str, float]] = []
         inoput_tensor = processor(input_str)
