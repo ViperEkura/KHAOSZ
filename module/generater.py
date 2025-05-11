@@ -6,6 +6,7 @@ from torch import Tensor
 from typing import List, Tuple, Union, Optional
 from .transformer import Config, Transformer
 from .tokenizer import BpeTokenizer
+from .retriever import Retriever
 
 
 def build_prompt(query, history) -> str:
@@ -23,6 +24,7 @@ class Khaosz:
         self.tokenizer : BpeTokenizer = None
         self.config : Config = None
         self.model : Transformer = None
+        self.retriever : Retriever = None
         
         if path is not None:
             self.load(path)
@@ -31,12 +33,16 @@ class Khaosz:
         tokenizer_path = os.path.join(model_dir, "tokenizer.json")
         config_path = os.path.join(model_dir, "config.json")
         weight_path = os.path.join(model_dir, "model.safetensors")
+        vector_assets_path = os.path.join(model_dir, "vectorassets.json")
         
         self.tokenizer = BpeTokenizer(tokenizer_path)
         self.config = Config(config_path)
         self.model = Transformer(self.config)
         state_dict = st.load_file(weight_path)
         self.model.load_state_dict(state_dict)
+        
+        if os.path.exists(vector_assets_path):
+            self.retriever = Retriever(vector_assets_path)
     
     def to(self, *args, **kargs):
         self.model.to(*args, **kargs)
@@ -118,7 +124,7 @@ class Khaosz:
                 yield response ,history
         
         response += "\n"
-        yield response ,history
+        yield response, history
         
         history.append((query, response))
 
@@ -234,4 +240,30 @@ class Khaosz:
                         
         return emb_sentence
     
+    def retrieve_generate(
+        self,
+        query: str, 
+        history: List[Tuple[str, str]]=None,
+        temperature: float=0.8,
+        top_k: int=0,
+        top_p: float=0.8,
+    ):
+        query_tensor = self.sentence_embedding(query)
+        def processor(sentence):
+            ids = self.tokenizer.encode(sentence)
+            torch.cuda.empty_cache()
+            device = next(self.model.parameters()).device
+            input_tensor = torch.as_tensor(ids, device=device)
+            if input_tensor.dim() == 1:
+                input_tensor = input_tensor.unsqueeze(0)
+            
+            with torch.no_grad():
+                output_seg = self.model(input_tensor, return_hidden=True)
+                emb_sentence = torch.squeeze(output_seg[:, -1, :], 1)
+                            
+            return emb_sentence
         
+        top_k_retrived = self.retriever.simliarity(processor, query_tensor, top_k)
+        
+    
+        pass
