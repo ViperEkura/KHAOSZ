@@ -7,26 +7,25 @@ from typing import List, Callable, Tuple
 class Retriever:
     def __init__(self, file_path=None):
         self.items: List[str] = []
-        self.embeddings: List[Tensor] = None
+        self.embeddings: List[Tensor] = []
         
         if file_path is not None:
             self.load(file_path)
         
     def add_vector(self, key: str, vector_data: Tensor):
         self.items.append(key)
-        self.embeddings.append(vector_data)
+        self.embeddings.append(vector_data.flatten())
         
     def delete_vector(self, key: str):
-        for i, item in enumerate(self.items):
-            if item == key:
+        for i in range(len(self.items)-1, -1, -1):
+            if self.items[i] == key:
                 self.items.pop(i)
                 self.embeddings.pop(i)
-    
     def similarity(self, processor: Callable, input_str: str, top_k: int) -> List[Tuple[str, float]]:
         top_k_clip = min(top_k, len(self.items))
-        inoput_tensor = processor(input_str)
+        input_tensor = processor(input_str)
         segment = torch.cat(self.embeddings, dim=0)
-        sim_scores = torch.matmul(segment, inoput_tensor)
+        sim_scores = torch.matmul(segment, input_tensor)
         
         top_k_data = [
             (self.items[i], sim_scores[i].item()) 
