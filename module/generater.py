@@ -220,7 +220,7 @@ class Khaosz:
             
         return responses
     
-    def sentence_embedding(self, sentence: str) -> torch.Tensor:
+    def sentence_embedding(self, sentence: str) -> Tensor:
         ids = self.tokenizer.encode(sentence)
         torch.cuda.empty_cache()
         device = next(self.model.parameters()).device
@@ -230,7 +230,7 @@ class Khaosz:
         
         with torch.no_grad():
             output_seg = self.model(input_tensor, return_hidden=True)
-            emb_sentence = output_seg[:, -1, :]
+            emb_sentence = torch.squeeze(output_seg[:, -1, :], 1)
                         
         return emb_sentence
     
