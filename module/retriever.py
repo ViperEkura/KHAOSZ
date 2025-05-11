@@ -1,7 +1,7 @@
 import torch
 import json
 from torch import Tensor
-from typing import Dict, List, Callable, Tuple
+from typing import List, Callable, Tuple
 
 
 class Retriever:
@@ -22,7 +22,7 @@ class Retriever:
                 self.items.pop(i)
                 self.embeddings.pop(i)
     
-    def simliarity(self, processor: Callable, input_str: str, top_k: int) -> List[Tuple[str, float]]:
+    def similarity(self, processor: Callable, input_str: str, top_k: int) -> List[Tuple[str, float]]:
         top_k_clip = min(top_k, len(self.items))
         inoput_tensor = processor(input_str)
         segment = torch.cat(self.embeddings, dim=0)
