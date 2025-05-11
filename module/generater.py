@@ -243,27 +243,38 @@ class Khaosz:
     def retrieve_generate(
         self,
         query: str, 
-        history: List[Tuple[str, str]]=None,
-        temperature: float=0.8,
-        top_k: int=0,
-        top_p: float=0.8,
+        history: List[Tuple[str, str]] = None,
+        temperature: float = 0.8,
+        top_k: int = 0,
+        top_p: float = 0.8,
     ):
         query_tensor = self.sentence_embedding(query)
-        def processor(sentence):
-            ids = self.tokenizer.encode(sentence)
-            torch.cuda.empty_cache()
-            device = next(self.model.parameters()).device
-            input_tensor = torch.as_tensor(ids, device=device)
-            if input_tensor.dim() == 1:
-                input_tensor = input_tensor.unsqueeze(0)
+        top_k_retrieved = self.retriever.similarity(query_tensor, top_k)
+        
+        retrieved_context = "\n".join(
+            [f"Retrieved: {key} (Score: {score:.4f})" 
+             for key, score in top_k_retrieved]
+        )
+        prompt = build_prompt(query, history)
+        prompt_with_retrieval = f"{retrieved_context}\n{prompt}"
+        
+        ids = self.tokenizer.encode(prompt_with_retrieval)
+        start_id_pos = len(ids)
+        response = str()
+        
+        self.model.eval()
+        with torch.no_grad():
+            while len(ids) < self.config.m_len:
+                next_token_id = self.sample_next_token(
+                    ids, temperature, 
+                    top_k=top_k, top_p=top_p
+                )
+                if next_token_id in self.tokenizer.stop_ids:
+                    break
+                ids.append(next_token_id)
             
-            with torch.no_grad():
-                output_seg = self.model(input_tensor, return_hidden=True)
-                emb_sentence = torch.squeeze(output_seg[:, -1, :], 1)
-                            
-            return emb_sentence
+        response = self.tokenizer.decode(ids[start_id_pos:])
+        if history is not None:
+            history.append((query, response))
         
-        top_k_retrived = self.retriever.simliarity(processor, query_tensor, top_k)
-        
-    
-        pass
+        return response
