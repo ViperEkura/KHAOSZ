@@ -1,6 +1,7 @@
 import torch
+import json
 from torch import Tensor
-from typing import Dict, List, Callable, Tuple
+from typing import Dict, List, Callable, Tuple, Self
 
 
 class VectorAssets:
@@ -20,14 +21,16 @@ class VectorAssets:
             if elm["key"] == key:
                 self.data.remove(elm)    
     
-    def simliarity(self, processor: Callable, input_str: str, top_k: int):        
+    def simliarity(self, processor: Callable, input_str: str, top_k: int) -> List[Tuple[str, float]]:        
         top_k_clip = min(top_k, len(self.data))
-        top_k_data: List[Tuple[str, int]] = []
+        top_k_data: List[Tuple[str, float]] = []
         inoput_tensor = processor(input_str)
         
         for elm in self.data:
             key, vector = elm["key"], elm["vector"]
-            sim = torch.dot(inoput_tensor, vector) / (torch.norm(inoput_tensor) * torch.norm(vector))
+            upper = torch.dot(inoput_tensor, vector)
+            lower  = torch.norm(inoput_tensor) * torch.norm(vector)
+            sim = upper / lower
             top_k_data.append((key, sim.item()))
             
             if len(top_k_data) >= top_k_clip:
@@ -35,5 +38,26 @@ class VectorAssets:
         
         return top_k_data
     
-    def load(file_path):
-        pass
+    def save(self, file_path):
+        serializable_data = [
+            {"key": elm["key"],"vector": elm["vector"].tolist()}
+            for elm in self.data
+        ]
+        
+        with open(file_path, "w") as f:
+            json.dump(serializable_data, f)
+        
+
+    def load(self, file_path):
+        with open(file_path, "r") as f:
+            data = json.load(f)
+        
+        self.data.clear()
+        
+        for elm in data:
+            key = elm["key"]
+            vector = torch.tensor(elm["vector"])
+            self.data.append({"key": key, "vector": vector})
+
+    
+    
