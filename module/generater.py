@@ -252,11 +252,11 @@ class Khaosz:
         top_k_retrieved = self.retriever.similarity(query_tensor, top_k)
         
         retrieved_context = "\n".join(
-            [f"Retrieved: {key} (Score: {score:.4f})" 
+            [f"条目: {key} (得分: {score:.3f})" 
              for key, score in top_k_retrieved]
         )
         prompt = build_prompt(query, history)
-        prompt_with_retrieval = f"{retrieved_context}\n{prompt}"
+        prompt_with_retrieval = f"请根据以下信息回答: {retrieved_context}\n{prompt}"
         
         ids = self.tokenizer.encode(prompt_with_retrieval)
         start_id_pos = len(ids)
