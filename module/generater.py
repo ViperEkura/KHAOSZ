@@ -43,6 +43,8 @@ class Khaosz:
         
         if os.path.exists(vector_assets_path):
             self.retriever = Retriever(vector_assets_path)
+        else:
+            self.retriever = Retriever()
     
     def to(self, *args, **kargs):
         self.model.to(*args, **kargs)
@@ -247,9 +249,13 @@ class Khaosz:
         temperature: float = 0.8,
         top_k: int = 0,
         top_p: float = 0.8,
+        retrive_top_k: int = 5,
     ):
+        if history is None:
+            history = list()
+            
         query_tensor = self.sentence_embedding(query)
-        top_k_retrieved = self.retriever.similarity(query_tensor, top_k)
+        top_k_retrieved = self.retriever.similarity(query_tensor, retrive_top_k)
         
         retrieved_context = "\n".join(
             [f"条目: {key} (得分: {score:.3f})" 
