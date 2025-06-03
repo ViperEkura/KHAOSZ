@@ -1,7 +1,7 @@
 import torch
 import json
 from torch import Tensor
-from typing import List, Callable, Tuple
+from typing import List, Tuple
 
 
 class Retriever:
@@ -21,9 +21,12 @@ class Retriever:
             if self.items[i] == key:
                 self.items.pop(i)
                 self.embeddings.pop(i)
-    def similarity(self, processor: Callable, input_str: str, top_k: int) -> List[Tuple[str, float]]:
+                
+    def similarity(self, input_tensor: Tensor, top_k: int) -> List[Tuple[str, float]]:
+        if len(self.items) == 0:
+            return []
+        
         top_k_clip = min(top_k, len(self.items))
-        input_tensor = processor(input_str)
         segment = torch.cat(self.embeddings, dim=0)
         sim_scores = torch.matmul(segment, input_tensor)
         
