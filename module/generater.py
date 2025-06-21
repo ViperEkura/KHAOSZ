@@ -238,7 +238,8 @@ class Khaosz:
         
         with torch.no_grad():
             output_seg = self.model(input_tensor, return_hidden=True)
-            emb_sentence = torch.squeeze(output_seg[:, -1, :], 1)
+            emb_sentence = torch.sum(output_seg, 1)
+            emb_sentence = emb_sentence / emb_sentence.norm(dim=-1, keepdim=True)
                         
         return emb_sentence
     
