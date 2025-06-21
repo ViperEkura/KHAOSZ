@@ -1,8 +1,9 @@
+import re
 import torch
 import sqlite3
 import numpy as np
 from torch import Tensor
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Tuple
 
 
 class Retriever:
@@ -70,3 +71,30 @@ class Retriever:
                 key TEXT UNIQUE NOT NULL,
                 vector BLOB NOT NULL
             )''')
+        
+        
+class TextSpliter:
+    def __init__(self):
+        pass
+    
+    
+    def chunk(text: str, emb_func: Callable[[str], Tensor], threshold: int = 0.4) -> List[str]:
+        pattern = r'(?<=[。！？.!?])\s+'
+        sentences = re.split(pattern, text.strip())
+        sentences = [s.strip() for s in sentences if s.strip()]
+        sentence_embs = [emb_func(s) for s in sentences]
+
+        merged_sentences = [sentences[0]]
+        current_emb = sentence_embs[0]
+
+        for i in range(1, len(sentences)):
+            cos_sim = torch.dot(current_emb, sentence_embs[i])
+            
+            if cos_sim.item() >= threshold:
+                merged_sentences[-1] += " " + sentences[i]
+                current_emb = emb_func(merged_sentences[-1])
+            else:
+                merged_sentences.append(sentences[i])
+                current_emb = sentence_embs[i]
+
+        return merged_sentences
