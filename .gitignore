@@ -9,6 +9,7 @@ __pycache__
 *.json
 *.pkl
 *.png
+*.db
 
 # train_log / test
 *.log

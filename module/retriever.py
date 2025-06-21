@@ -41,20 +41,13 @@ class Retriever:
     def save(self, db_path):
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-        
-        # Create table if not exists (in case loading from a new database)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS vectors (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                key TEXT NOT NULL,
-                vector BLOB NOT NULL
-            )''')
-        
+        self.__init_db__(cursor)
         cursor.execute('DELETE FROM vectors')
         
         for item, vec in zip(self.items, self.embeddings):
             vec_bytes = vec.numpy().tobytes()
-            cursor.execute('INSERT INTO vectors (key, vector) VALUES (?, ?)', (item, vec_bytes))
+            cursor.execute('INSERT OR REPLACE INTO vectors (key, vector) VALUES (?, ?)', 
+                           (item, vec_bytes))
         
         conn.commit()
         conn.close()
@@ -62,15 +55,7 @@ class Retriever:
     def load(self, db_path):
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-        
-        # Create table if not exists (in case loading from a new database)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS vectors (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                key TEXT NOT NULL,
-                vector BLOB NOT NULL
-            )''')
-        
+        self.__init_db__(cursor)
         cursor.execute('SELECT key, vector FROM vectors')
         rows = cursor.fetchall()
         
@@ -86,3 +71,12 @@ class Retriever:
             self.embeddings.append(vec)
         
         conn.close()
+        
+    def __init_db__(self,cursor: sqlite3.Cursor):
+        # Create table if not exists (in case loading from a new database)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS vectors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key TEXT UNIQUE NOT NULL,
+                vector BLOB NOT NULL
+            )''')
