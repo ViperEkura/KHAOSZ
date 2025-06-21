@@ -239,9 +239,9 @@ class Khaosz:
         with torch.no_grad():
             output_seg = self.model(input_tensor, return_hidden=True)
             emb_sentence = torch.sum(output_seg, 1)
-            emb_sentence = emb_sentence / emb_sentence.norm(dim=-1, keepdim=True)
+            norm_emb_sentence = emb_sentence / emb_sentence.norm(dim=-1, keepdim=True)
                         
-        return emb_sentence
+        return norm_emb_sentence
     
     def retrieve_generate(
         self,
