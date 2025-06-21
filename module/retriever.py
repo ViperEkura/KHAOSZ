@@ -14,7 +14,7 @@ class Retriever:
             self.load(db_path)
         
     def add_vector(self, key: str, vector_data: Tensor):
-        self.data[key] = vector_data.flatten()
+        self.data[key] = vector_data.flatten().float()
         
     def delete_vector(self, key: str):
         self.data.pop(key, None)
