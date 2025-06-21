@@ -198,7 +198,6 @@ class Trainer:
         warning_step: int = 1000,
         min_rate: float = 0.1,
         dpo_beta: float = 0.1,
-        freeze_embedding: bool = False
     ):
         assert train_type in ["seq", "sft", "dpo"]
         
