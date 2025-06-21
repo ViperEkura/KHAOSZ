@@ -2,41 +2,35 @@ import torch
 import sqlite3
 import numpy as np
 from torch import Tensor
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 
 class Retriever:
     def __init__(self, db_path=None):
-        self.items: List[str] = []
-        self.embeddings: List[Tensor] = []
+        self.data: Dict[str, Tensor] = {} 
         
         if db_path is not None:
             self.load(db_path)
         
     def add_vector(self, key: str, vector_data: Tensor):
-        self.items.append(key)
-        self.embeddings.append(vector_data.flatten())
+        self.data[key] = vector_data.flatten()
         
     def delete_vector(self, key: str):
-        for i in range(len(self.items)-1, -1, -1):
-            if self.items[i] == key:
-                self.items.pop(i)
-                self.embeddings.pop(i)
+        self.data.pop(key, None)
                 
-    def similarity(self, input_tensor: Tensor, top_k: int) -> List[Tuple[str, float]]:
-        if len(self.items) == 0:
+    def similarity(self, query: Tensor, top_k: int) -> List[Tuple[str, float]]:
+        if not self.data:
             return []
         
-        top_k_clip = min(top_k, len(self.items))
-        segment = torch.cat(self.embeddings, dim=0)
-        sim_scores = torch.matmul(segment, input_tensor)
+        query = query.flatten().unsqueeze(1)  # [dim, 1]
+        embeddings = torch.stack(list(self.data.values()))  # [n_vectors, dim]
+        sim_scores = torch.matmul(embeddings, query).squeeze() # [n_vectors]
         
-        top_k_data = [
-            (self.items[i], sim_scores[i].item()) 
-            for i in sim_scores.topk(top_k_clip).indices.tolist()
-        ]
+        top_k = min(top_k, len(self.data))
+        indices = sim_scores.topk(top_k).indices
+        keys = list(self.data.keys())
         
-        return top_k_data
+        return [(keys[i], sim_scores[i].item()) for i in indices]
     
     def save(self, db_path):
         conn = sqlite3.connect(db_path)
@@ -44,7 +38,7 @@ class Retriever:
         self.__init_db__(cursor)
         cursor.execute('DELETE FROM vectors')
         
-        for item, vec in zip(self.items, self.embeddings):
+        for item, vec in self.data.items():
             vec_bytes = vec.numpy().tobytes()
             cursor.execute('INSERT OR REPLACE INTO vectors (key, vector) VALUES (?, ?)', 
                            (item, vec_bytes))
@@ -58,17 +52,13 @@ class Retriever:
         self.__init_db__(cursor)
         cursor.execute('SELECT key, vector FROM vectors')
         rows = cursor.fetchall()
-        
-        self.items = []
-        self.embeddings = []
+        self.data = {}
         
         for row in rows:
             key, vec_bytes = row
             vec_numpy = np.frombuffer(vec_bytes, dtype=np.float32).copy()
             vec = torch.from_numpy(vec_numpy)
-            
-            self.items.append(key)
-            self.embeddings.append(vec)
+            self.data[key] = vec
         
         conn.close()
         
