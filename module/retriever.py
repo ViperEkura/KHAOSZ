@@ -1,16 +1,17 @@
 import torch
-import json
+import sqlite3
+import numpy as np
 from torch import Tensor
 from typing import List, Tuple
 
 
 class Retriever:
-    def __init__(self, file_path=None):
+    def __init__(self, db_path=None):
         self.items: List[str] = []
         self.embeddings: List[Tensor] = []
         
-        if file_path is not None:
-            self.load(file_path)
+        if db_path is not None:
+            self.load(db_path)
         
     def add_vector(self, key: str, vector_data: Tensor):
         self.items.append(key)
@@ -37,28 +38,51 @@ class Retriever:
         
         return top_k_data
     
-    def save(self, file_path):
-        serializable_data = [
-            {"key": item,"vector": vec.tolist()}
-            for (item, vec) in zip(self.items, self.embeddings)
-        ]
+    def save(self, db_path):
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
         
-        with open(file_path, "w") as f:
-            json.dump(serializable_data, f)
+        # Create table if not exists (in case loading from a new database)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS vectors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key TEXT NOT NULL,
+                vector BLOB NOT NULL
+            )''')
         
+        cursor.execute('DELETE FROM vectors')
+        
+        for item, vec in zip(self.items, self.embeddings):
+            vec_bytes = vec.numpy().tobytes()
+            cursor.execute('INSERT INTO vectors (key, vector) VALUES (?, ?)', (item, vec_bytes))
+        
+        conn.commit()
+        conn.close()
 
-    def load(self, file_path):
-        with open(file_path, "r") as f:
-            data = json.load(f)
-            
+    def load(self, db_path):
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Create table if not exists (in case loading from a new database)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS vectors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key TEXT NOT NULL,
+                vector BLOB NOT NULL
+            )''')
+        
+        cursor.execute('SELECT key, vector FROM vectors')
+        rows = cursor.fetchall()
+        
         self.items = []
         self.embeddings = []
         
-        for elm in data:
-            key = elm["key"]
-            vector = torch.tensor(elm["vector"])
+        for row in rows:
+            key, vec_bytes = row
+            vec_numpy = np.frombuffer(vec_bytes, dtype=np.float32).copy()
+            vec = torch.from_numpy(vec_numpy)
+            
             self.items.append(key)
-            self.embeddings.append(vector)
-
-    
-    
+            self.embeddings.append(vec)
+        
+        conn.close()
