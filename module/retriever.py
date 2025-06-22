@@ -2,6 +2,7 @@ import re
 import torch
 import sqlite3
 import numpy as np
+import torch.nn.functional as F
 from torch import Tensor
 from typing import Callable, Dict, List, Tuple
 
@@ -14,7 +15,7 @@ class Retriever:
             self.load(db_path)
         
     def add_vector(self, key: str, vector_data: Tensor):
-        self.data[key] = vector_data.flatten().float()
+        self.data[key] = vector_data.flatten().float().cpu()
         
     def delete_vector(self, key: str):
         self.data.pop(key, None)
@@ -87,12 +88,11 @@ class TextSplitter:
         current_emb = sentence_embs[0]
 
         for i in range(1, len(sentences)):
-            cos_sim = torch.dot(current_emb, sentence_embs[i])
+            cos_sim = F.cosine_similarity(current_emb, sentence_embs[i], dim=0)
             
             if cos_sim.item() >= threshold:
                 chunks[-1] += " " + sentences[i]
-                current_emb = (current_emb + sentence_embs[i]) / 2
-                current_emb = current_emb / current_emb.norm()
+                current_emb = self.emb_func(chunks[-1])
             else:
                 chunks.append(sentences[i])
                 current_emb = sentence_embs[i]

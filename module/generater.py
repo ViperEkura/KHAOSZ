@@ -233,15 +233,13 @@ class Khaosz:
         torch.cuda.empty_cache()
         device = next(self.model.parameters()).device
         input_tensor = torch.as_tensor(ids, device=device)
-        if input_tensor.dim() == 1:
-            input_tensor = input_tensor.unsqueeze(0)
-        
+        input_tensor = input_tensor.unsqueeze(0)
+
         with torch.no_grad():
             output_seg = self.model(input_tensor, return_hidden=True)
-            emb_sentence = torch.sum(output_seg, 1)
-            norm_emb_sentence = emb_sentence / emb_sentence.norm(dim=-1, keepdim=True)
-                        
-        return norm_emb_sentence.flatten()
+            emb_sentence = output_seg[0, -1, :]
+
+        return emb_sentence
     
     def retrieve_generate(
         self,
