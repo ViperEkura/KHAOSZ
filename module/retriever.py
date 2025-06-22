@@ -78,7 +78,7 @@ class TextSplitter:
         self.emb_func = emb_func
     
     def chunk(self, text: str, threshold: int = 0.5) -> List[str]:
-        pattern = r'(?<=[。！？.!?])\s+'
+        pattern = r'(?<=[。！？!?]|\.(?!\w))\s*'
         sentences = re.split(pattern, text)
         sentences = [s.strip() for s in sentences if s.strip()]
         sentence_embs = [self.emb_func(s) for s in sentences]
@@ -91,7 +91,8 @@ class TextSplitter:
             
             if cos_sim.item() >= threshold:
                 chunks[-1] += " " + sentences[i]
-                current_emb = self.emb_func(chunks[-1])
+                current_emb = (current_emb + sentence_embs[i]) / 2
+                current_emb = current_emb / current_emb.norm()
             else:
                 chunks.append(sentences[i])
                 current_emb = sentence_embs[i]
