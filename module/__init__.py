@@ -4,3 +4,4 @@ __author__ = "ViperEkura"
 from .generater import *
 from .tokenizer import *
 from .transformer import *
+from .retriever import *

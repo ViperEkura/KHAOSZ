@@ -73,28 +73,27 @@ class Retriever:
             )''')
         
         
-class TextSpliter:
-    def __init__(self):
-        pass
+class TextSplitter:
+    def __init__(self, emb_func: Callable[[str], Tensor]):
+        self.emb_func = emb_func
     
-    
-    def chunk(text: str, emb_func: Callable[[str], Tensor], threshold: int = 0.4) -> List[str]:
+    def chunk(self, text: str, threshold: int = 0.5) -> List[str]:
         pattern = r'(?<=[。！？.!?])\s+'
-        sentences = re.split(pattern, text.strip())
+        sentences = re.split(pattern, text)
         sentences = [s.strip() for s in sentences if s.strip()]
-        sentence_embs = [emb_func(s) for s in sentences]
+        sentence_embs = [self.emb_func(s) for s in sentences]
 
-        merged_sentences = [sentences[0]]
+        chunks = [sentences[0]]
         current_emb = sentence_embs[0]
 
         for i in range(1, len(sentences)):
             cos_sim = torch.dot(current_emb, sentence_embs[i])
             
             if cos_sim.item() >= threshold:
-                merged_sentences[-1] += " " + sentences[i]
-                current_emb = emb_func(merged_sentences[-1])
+                chunks[-1] += " " + sentences[i]
+                current_emb = self.emb_func(chunks[-1])
             else:
-                merged_sentences.append(sentences[i])
+                chunks.append(sentences[i])
                 current_emb = sentence_embs[i]
 
-        return merged_sentences
+        return chunks

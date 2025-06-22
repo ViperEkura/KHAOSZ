@@ -241,7 +241,7 @@ class Khaosz:
             emb_sentence = torch.sum(output_seg, 1)
             norm_emb_sentence = emb_sentence / emb_sentence.norm(dim=-1, keepdim=True)
                         
-        return norm_emb_sentence
+        return norm_emb_sentence.flatten()
     
     def retrieve_generate(
         self,
