@@ -253,15 +253,17 @@ class Transformer(nn.Module):
         
         self.freq_cis = self.freq_cis.to(x.device)
         freq_cis = self.freq_cis[:x.size(1)]
+        format_mask = None
         
         if pos_mask is not None:
             format_mask = create_seq_mask(pos_mask, x.device, x.dtype)
-        else:
-            format_mask = None
         
         for layer in self.layers:
             x = layer(x, freq_cis, format_mask)
             
         x = self.norm(x)
         
-        return x if return_hidden else F.linear(x,  self.embedding)
+        if return_hidden:
+            return torch.masked_fill(x, ~pos_mask.unsqueeze(-1), 0)
+        else :
+            return F.linear(x,  self.embedding)

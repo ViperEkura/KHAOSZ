@@ -90,7 +90,31 @@ class Khaosz:
         
         return next_token_ids.item() if not with_batch else next_token_ids.flatten().tolist()
     
+    def sentence_embedding(self, sentence: Union[str, List[str]]) -> Union[Tensor, List[Tensor]]:
+        with_batch = isinstance(sentence, list)
+        encode_fn = self.tokenizer.encode
+        ids = encode_fn(sentence) if not with_batch else [encode_fn(s) for s in sentence]
+        
+        torch.cuda.empty_cache()
+        device = next(self.model.parameters()).device
+        if not with_batch:
+            input_tensor = torch.as_tensor(ids, device=device)
+            input_tensor = input_tensor.unsqueeze(0)
+            seq_mask = torch.ones_like(input_tensor, dtype=torch.bool, device=device)
+        else:
+            max_len = max(len(seq) for seq in ids)
+            padded_ids = [[self.tokenizer.pad_id] * (max_len - len(seq)) + seq for seq in ids]
+            masks = [[token != self.tokenizer.pad_id for token in seq] for seq in padded_ids]
+            input_tensor = torch.as_tensor(padded_ids, device=device)
+            seq_mask = torch.as_tensor(masks, device=device)
+
+        with torch.no_grad():
+            output_seg = self.model(input_tensor, seq_mask, return_hidden=True)
+            emb_sentence = torch.mean(output_seg, dim=1)
+
+        return emb_sentence.flatten() if not with_batch else [e.flatten() for e in emb_sentence.split(1, dim=0)]
     
+
     def stream_generate(
             self, 
             query: str, 
@@ -228,19 +252,6 @@ class Khaosz:
             
         return responses
     
-    def sentence_embedding(self, sentence: str) -> Tensor:
-        ids = self.tokenizer.encode(sentence)
-        torch.cuda.empty_cache()
-        device = next(self.model.parameters()).device
-        input_tensor = torch.as_tensor(ids, device=device)
-        input_tensor = input_tensor.unsqueeze(0)
-
-        with torch.no_grad():
-            output_seg = self.model(input_tensor, return_hidden=True)
-            emb_sentence = torch.mean(output_seg, dim=1).flatten()
-
-        return emb_sentence
-    
     def retrieve_generate(
         self,
         query: str, 
@@ -254,7 +265,7 @@ class Khaosz:
             history = list()
             
         query_tensor = self.sentence_embedding(query)
-        top_k_retrieved = self.retriever.similarity(query_tensor, retrive_top_k)
+        top_k_retrieved = self.retriever.retrieve(query_tensor, retrive_top_k)
         
         retrieved_context = "\n".join(
             [f"条目: {key} (得分: {score:.3f})" 

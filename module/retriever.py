@@ -75,7 +75,7 @@ class Retriever:
         
         
 class TextSplitter:
-    def __init__(self, emb_func: Callable[[str], Tensor]):
+    def __init__(self, emb_func: Callable[[List[str]], List[Tensor]]):
         self.emb_func = emb_func
     
     def chunk(self, text: str, threshold: float = 0.5, window_size: int = 1) -> List[str]:
@@ -86,7 +86,7 @@ class TextSplitter:
             return sentences
         
         chunks = []
-        sentence_embs = [self.emb_func(s) for s in sentences]        
+        sentence_embs = self.emb_func(sentences)     
         current_chunk = [sentences[0]]
         
         for i in range(1, len(sentences)):
