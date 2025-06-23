@@ -264,6 +264,6 @@ class Transformer(nn.Module):
         x = self.norm(x)
         
         if return_hidden:
-            return torch.masked_fill(x, ~pos_mask.unsqueeze(-1), 0)
+            return torch.masked_fill(x, pos_mask.logical_not().unsqueeze(-1), 0)
         else :
             return F.linear(x,  self.embedding)

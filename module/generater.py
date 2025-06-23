@@ -56,16 +56,16 @@ class Khaosz:
         temperature: float, 
         top_k: int, 
         top_p: float,
-        with_batch: bool=False,
-        attn_mask: Optional[Tensor] = None,
+        attn_mask: Optional[List] = None,
         filter_value: float=-float('inf')
     ) -> Union[int, list[int]]:
         
         torch.cuda.empty_cache()
         device = next(self.model.parameters()).device
-        attn_mask = torch.as_tensor(attn_mask, dtype=torch.bool, device=device) if attn_mask is not None else None
         input_tensor = torch.as_tensor(ids, device=device)
+        with_batch = input_tensor.ndim == 2
         input_tensor = input_tensor.unsqueeze(0) if not with_batch else input_tensor
+        attn_mask = torch.as_tensor(attn_mask, dtype=torch.bool, device=device) if attn_mask is not None else None
         
         with torch.no_grad():
             logits: Tensor = self.model(input_tensor, attn_mask)[:, -1, :]
@@ -106,7 +106,7 @@ class Khaosz:
             padded_ids = [[self.tokenizer.pad_id] * (max_len - len(seq)) + seq for seq in ids]
             masks = [[token != self.tokenizer.pad_id for token in seq] for seq in padded_ids]
             input_tensor = torch.as_tensor(padded_ids, device=device)
-            seq_mask = torch.as_tensor(masks, device=device)
+            seq_mask = torch.as_tensor(masks, device=device, dtype=torch.bool)
 
         with torch.no_grad():
             output_seg = self.model(input_tensor, seq_mask, return_hidden=True)
@@ -234,7 +234,6 @@ class Khaosz:
                     input_sequence, temperature, 
                     top_k=top_k, top_p=top_p,
                     attn_mask=attn_mask,
-                    with_batch=True
                 )
 
                 for idx, next_token_id in zip(active_indices, next_token_ids):
