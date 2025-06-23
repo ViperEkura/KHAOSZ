@@ -13,14 +13,8 @@ class Retriever:
         
         if db_path is not None:
             self.load(db_path)
-        
-    def add_vector(self, key: str, vector_data: Tensor):
-        self.data[key] = vector_data.flatten().float().cpu()
-        
-    def delete_vector(self, key: str):
-        self.data.pop(key, None)
                 
-    def similarity(self, query: Tensor, top_k: int) -> List[Tuple[str, float]]:
+    def retrieve(self, query: Tensor, top_k: int) -> List[Tuple[str, float]]:
         if not self.data:
             return []
         
@@ -33,6 +27,12 @@ class Retriever:
         keys = list(self.data.keys())
         
         return [(keys[i], sim_scores[i].item()) for i in indices]
+    
+    def add_vector(self, key: str, vector_data: Tensor):
+        self.data[key] = vector_data.flatten().float().cpu()
+        
+    def delete_vector(self, key: str):
+        self.data.pop(key, None)
     
     def save(self, db_path):
         conn = sqlite3.connect(db_path)
