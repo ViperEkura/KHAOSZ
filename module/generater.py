@@ -237,7 +237,7 @@ class Khaosz:
 
         with torch.no_grad():
             output_seg = self.model(input_tensor, return_hidden=True)
-            emb_sentence = output_seg[0, -1, :]
+            emb_sentence = torch.mean(output_seg, dim=1).flatten()
 
         return emb_sentence
     

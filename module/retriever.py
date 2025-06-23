@@ -78,23 +78,33 @@ class TextSplitter:
     def __init__(self, emb_func: Callable[[str], Tensor]):
         self.emb_func = emb_func
     
-    def chunk(self, text: str, threshold: int = 0.5) -> List[str]:
+    def chunk(self, text: str, threshold: float = 0.5, window_size: int = 1) -> List[str]:
         pattern = r'(?<=[。！？!?]|\.(?!\w))\s*'
-        sentences = re.split(pattern, text)
-        sentences = [s.strip() for s in sentences if s.strip()]
-        sentence_embs = [self.emb_func(s) for s in sentences]
-
-        chunks = [sentences[0]]
-        current_emb = sentence_embs[0]
-
+        sentences = [s.strip() for s in re.split(pattern, text.strip()) if s.strip()]
+        
+        if len(sentences) <= 1:
+            return sentences
+        
+        chunks = []
+        sentence_embs = [self.emb_func(s) for s in sentences]        
+        current_chunk = [sentences[0]]
+        
         for i in range(1, len(sentences)):
-            cos_sim = F.cosine_similarity(current_emb, sentence_embs[i], dim=0)
+            start = max(0, i - window_size)
+            end = min(len(sentences), i + window_size)
             
-            if cos_sim.item() >= threshold:
-                chunks[-1] += " " + sentences[i]
-                current_emb = self.emb_func(chunks[-1])
+            prev_window = torch.mean(torch.stack(sentence_embs[start:i]), dim=0)
+            next_window = torch.mean(torch.stack(sentence_embs[i:end]), dim=0)
+            window_sim = F.cosine_similarity(prev_window,next_window, dim=0).item()
+            dynamic_threshold = min(threshold * (1 + 0.03 * window_size), 0.8)
+            
+            if window_sim >= dynamic_threshold:
+                current_chunk.append(sentences[i])
             else:
-                chunks.append(sentences[i])
-                current_emb = sentence_embs[i]
-
+                chunks.append(" ".join(current_chunk))
+                current_chunk = [sentences[i]]
+        
+        if current_chunk:
+            chunks.append(" ".join(current_chunk))
+        
         return chunks
