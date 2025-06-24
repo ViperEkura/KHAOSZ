@@ -33,18 +33,14 @@ class Khaosz:
         tokenizer_path = os.path.join(model_dir, "tokenizer.json")
         config_path = os.path.join(model_dir, "config.json")
         weight_path = os.path.join(model_dir, "model.safetensors")
-        vector_assets_path = os.path.join(model_dir, "vectorassets.json")
+        vector_assets_path = os.path.join(model_dir, "vectors.db")
         
         self.tokenizer = BpeTokenizer(tokenizer_path)
         self.config = Config(config_path)
         self.model = Transformer(self.config)
         state_dict = st.load_file(weight_path)
         self.model.load_state_dict(state_dict)
-        
-        if os.path.exists(vector_assets_path):
-            self.retriever = Retriever(vector_assets_path)
-        else:
-            self.retriever = Retriever()
+        self.retriever = Retriever(vector_assets_path)
     
     def to(self, *args, **kargs):
         self.model.to(*args, **kargs)
