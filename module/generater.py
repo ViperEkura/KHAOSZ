@@ -6,7 +6,7 @@ from torch import Tensor
 from typing import List, Tuple, Union, Optional
 from .transformer import Config, Transformer
 from .tokenizer import BpeTokenizer
-from .retriever import Retriever
+from .retriever import Retriever, TextSplitter
 
 
 def build_prompt(query, history) -> str:
@@ -290,3 +290,7 @@ class Khaosz:
             history.append((query, response))
         
         return response
+    
+    def chunk(self, text: str, threshold: float = 0.5, window_size: int = 1) -> List[str]:
+        splitter = TextSplitter(self.sentence_embedding)
+        return splitter.chunk(text, threshold, window_size)
