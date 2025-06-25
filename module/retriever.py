@@ -19,7 +19,7 @@ class Retriever:
             return []
         
         query = query.flatten().unsqueeze(1)  # [dim, 1]
-        embeddings = torch.stack(list(self.data.values()))  # [n_vectors, dim]
+        embeddings = torch.stack(list(self.data.values())).to(device=query.device,dtype=query.dtype)   # [n_vectors, dim]
         sim_scores = torch.matmul(embeddings, query).squeeze() # [n_vectors]
         
         top_k = min(top_k, len(self.data))
