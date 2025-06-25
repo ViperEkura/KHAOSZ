@@ -79,7 +79,7 @@ class TextSplitter:
         self.emb_func = emb_func
     
     def chunk(self, text: str, threshold: float = 0.5, window_size: int = 1) -> List[str]:
-        pattern = r'(?<=[。！？!?]|\.(?!\w))\s*'
+        pattern = r'(?<=[。！？!?])(?=(?:[^"\'‘’“”]*["\'‘’“”][^"\'‘’“”]*["\'‘’“”])*[^"\'‘’“”]*$)'
         sentences = [s.strip() for s in re.split(pattern, text.strip()) if s.strip()]
         
         if len(sentences) <= 1:
@@ -96,7 +96,7 @@ class TextSplitter:
             prev_window = torch.mean(torch.stack(sentence_embs[start:i]), dim=0)
             next_window = torch.mean(torch.stack(sentence_embs[i:end]), dim=0)
             window_sim = F.cosine_similarity(prev_window,next_window, dim=0).item()
-            dynamic_threshold = min(threshold * (1 + 0.03 * window_size), 0.8)
+            dynamic_threshold = max(threshold * (1 - 0.03 * (end - start)), 0.2)
             
             if window_sim >= dynamic_threshold:
                 current_chunk.append(sentences[i])
