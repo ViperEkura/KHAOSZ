@@ -17,9 +17,9 @@ class Retriever:
     def retrieve(self, query: Tensor, top_k: int) -> List[Tuple[str, float]]:
         if not self.data:
             return []
-        
         query = query.flatten().unsqueeze(1)  # [dim, 1]
         embeddings = torch.stack(list(self.data.values())).to(device=query.device,dtype=query.dtype)   # [n_vectors, dim]
+        embeddings = embeddings / torch.norm(embeddings, dim=-1, keepdim=True)
         sim_scores = torch.matmul(embeddings, query).squeeze() # [n_vectors]
         
         top_k = min(top_k, len(self.data))

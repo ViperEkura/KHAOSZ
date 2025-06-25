@@ -263,8 +263,8 @@ class Khaosz:
         top_k_retrieved = self.retriever.retrieve(query_tensor, retrive_top_k)
         
         retrieved_context = "\n".join(
-            [f"条目: {key} (得分: {score:.3f})" 
-             for key, score in top_k_retrieved]
+            [f"条目:{idx}, 内容: {key}" 
+             for idx, (key, _) in enumerate(top_k_retrieved)]
         ) if top_k_retrieved else ""
         
         prompt = build_prompt(query, history)
