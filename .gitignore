@@ -1,0 +1,19 @@
+# cache
+__pycache__
+
+# model
+*.pt
+*.safetensors
+
+# params
+*.json
+*.pkl
+*.png
+*.db
+
+# train_log / test
+*.log
+test*
+
+# debug file
+.vscode
