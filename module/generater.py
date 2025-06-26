@@ -263,11 +263,11 @@ class Khaosz:
         top_k_retrieved = self.retriever.retrieve(query_tensor, retrive_top_k)
         
         retrieved_context = "\n".join(
-            [f"条目:{idx + 1}, 内容: {key}" 
+            [f"{idx + 1}. {key}" 
              for idx, (key, _) in enumerate(top_k_retrieved)]
         ) if top_k_retrieved else ""
         
-        retrieved_query = f"{retrieved_context}\n根据以上检索内容回答: {query}"
+        retrieved_query = f"{retrieved_context}\n\n根据以上内容回答: {query}"
         retrieved_prompt  = build_prompt(retrieved_query, history)
         
         ids = self.tokenizer.encode(retrieved_prompt)
