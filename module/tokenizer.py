@@ -1,9 +1,10 @@
+import concurrent.futures
 from tokenizers import Tokenizer, Encoding
 from tokenizers import decoders, processors, normalizers, pre_tokenizers
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
 
-from typing import List
+from typing import List, Union
 
 class BpeTokenizer:
     def __init__(self, path=None):
@@ -79,12 +80,14 @@ class BpeTokenizer:
     def load(self, path):
         self._tokenizer = Tokenizer.from_file(path)
 
-    def encode(self, tokens: str, out_ids=True) -> List:
-        encoded: Encoding = self._tokenizer.encode(tokens)
-        if out_ids:
-            return encoded.ids
+    def encode(self, tokens: Union[str, List[str]], out_ids=True, num_threads=4) -> List:
+        if isinstance(tokens, str):
+            encoded: Encoding = self._tokenizer.encode(tokens)
+            return encoded.ids if out_ids else encoded.tokens
         else:
-            return encoded.tokens
+            with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+                encodings: List[Encoding] = list(executor.map(self._tokenizer.encode, tokens))
+            return [encoding.ids for encoding in encodings] if out_ids else [encoding.tokens for encoding in encodings]
 
     def decode(self, tokens: List[int]) -> str:
         return self._tokenizer.decode(tokens)
