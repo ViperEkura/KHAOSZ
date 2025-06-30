@@ -1,25 +1,41 @@
 import torch
 import pickle as pkl
-
+from abc import ABC, abstractmethod
 from torch import device
 from torch import Tensor
 from torch.utils.data import Dataset
 from typing import List, Dict, Union
 
 
-
-class SeqDataset(Dataset):
-    def __init__(self, segment_length , device=device('cuda')):
+class BaseDataset(Dataset, ABC):
+    def __init__(self, segment_length: int, device: device = device('cuda')):
         super().__init__()
-        self.data = torch.tensor([])
-        self.segment_length  = segment_length 
+        self.data = None
+        self.segment_length = segment_length
         self.total_samples = 0
         self.device = device
 
-    def save(self, save_path):
+    def save(self, save_path: str):
         with open(save_path, "wb") as f:
             pkl.dump(self.data, f)
+    @abstractmethod
+    def load(self, load_path: Union[str, List[str]]):
+        pass
 
+    @abstractmethod
+    def __getitem__(self, index: int):
+        pass
+    
+    def __len__(self) -> int:
+        return self.total_samples // self.segment_length
+
+
+
+class SeqDataset(BaseDataset):
+    def __init__(self, segment_length , device=device('cuda')):
+        super().__init__(segment_length, device)
+        self.data = torch.tensor([])
+        
     def load(self, load_path: Union[str, List[str]]):
         sequences = []
         
@@ -46,25 +62,15 @@ class SeqDataset(Dataset):
         y = self.data[begin_idx + 1:end_idx + 1].to(device=self.device, dtype=torch.long)
         
         return x, y
-
-    def __len__(self): 
-        return self.total_samples // self.segment_length
     
     
-class SftDataset(Dataset):
+class SftDataset(BaseDataset):
     def __init__(self, segment_length, device=device('cuda')):
-        super().__init__()
+        super().__init__(segment_length, device)
         self.data: Dict[str, Tensor] = {
             "sequence": torch.tensor([]),
             "mask": torch.tensor([])
         }
-        self.segment_length  = segment_length 
-        self.total_samples = 0
-        self.device = device
-
-    def save(self, save_path):
-        with open(save_path, "wb") as f:
-            pkl.dump(self.data, f)
 
     def load(self, load_path: Union[str, List[str]]):
         sequences = []
@@ -101,26 +107,17 @@ class SftDataset(Dataset):
         
         return x, y, loss_mask
 
-    def __len__(self): 
-        return self.total_samples // self.segment_length
 
 
-class DpoDataset(Dataset):
+class DpoDataset(BaseDataset):
     def __init__(self, segment_length: int, device=device("cuda")):
-        super().__init__()
+        super().__init__(segment_length, device)
         self.data: Dict[str, torch.Tensor] = {
             "chosen": torch.tensor([]),
             "rejected": torch.tensor([]),
             "chosen_mask": torch.tensor([]),
             "rejected_mask": torch.tensor([])
         }
-        self.segment_length = segment_length
-        self.device = device
-        self.total_samples = 0
-
-    def save(self, save_path: str):
-        with open(save_path, "wb") as f:
-            pkl.dump(self.data, f)
 
     def load(self, load_path: Union[str, List[str]]):
         chosen_data = []
@@ -164,6 +161,3 @@ class DpoDataset(Dataset):
         rejected_mask = self.data["rejected_mask"][start_idx:end_idx].to(device=self.device, dtype=torch.bool)
         
         return chosen_segment, rejected_segment, chosen_mask, rejected_mask
-
-    def __len__(self):
-        return self.total_samples // self.segment_length
