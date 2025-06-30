@@ -27,6 +27,7 @@ class BaseDataset(Dataset, ABC):
         pass
     
     def __len__(self) -> int:
+        assert self.total_samples // self.segment_length > 0
         return self.total_samples // self.segment_length
 
 

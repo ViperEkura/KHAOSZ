@@ -7,7 +7,7 @@ from typing import Callable, Dict
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from module import Transformer, Config, BpeTokenizer
-from trainer import Trainer, SeqDataset, SftDataset, DpoDataset
+from trainer import Trainer, SeqDataset, SftDataset, DpoDataset, BaseDataset
 
 dirname = os.path.dirname(__file__)
 
@@ -58,7 +58,7 @@ def train(
     device = torch.device("cuda")
     model = model.to(device=device, dtype=torch.bfloat16)
     
-    dataset_factories: Dict[str, Callable[[int, torch.device], SeqDataset | SftDataset | DpoDataset]] = {
+    dataset_factories: Dict[str, Callable[[int, torch.device], BaseDataset]] = {
         "seq": lambda m_len, device: SeqDataset(m_len, device=device),
         "sft": lambda m_len, device: SftDataset(m_len, device=device),
         "dpo": lambda m_len, device: DpoDataset(m_len, device=device),
