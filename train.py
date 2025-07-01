@@ -98,8 +98,7 @@ def train(
         n_iter_step=n_iter_step,
         warning_step=warning_step,
         dpo_beta=dpo_beta,
-        max_grad_norm=max_grad_norm,
-        freeze_embedding=freeze_embedding
+        max_grad_norm=max_grad_norm
     )
 
 if __name__ == "__main__":
