@@ -79,8 +79,8 @@ class SftDataset(BaseDataset):
         def load_file(path):
             with open(path, "rb") as f:
                 file: Dict[str, Tensor] = pkl.load(f)
-            sequences.append(file["sequence"].to(dtype=torch.int32))
-            masks.append(file["mask"].to(dtype=torch.bool))
+            sequences.append(file["sequence"].to(device="cpu", dtype=torch.int32))
+            masks.append(file["mask"].to(device="cpu", dtype=torch.bool))
         
         if isinstance(load_path, list):
             for path in load_path:
@@ -129,10 +129,10 @@ class DpoDataset(BaseDataset):
         def load_file(path):
             with open(path, "rb") as f:
                 file: Dict[str, Tensor] = pkl.load(f)
-            chosen_data.append(file["chosen"].to(dtype=torch.int32))
-            rejected_data.append(file["rejected"].to(dtype=torch.int32))
-            chosen_mask.append(file["chosen_mask"].to(dtype=torch.bool))
-            rejected_mask.append(file["rejected_mask"].to(dtype=torch.bool))
+            chosen_data.append(file["chosen"].to(device="cpu", dtype=torch.int32))
+            rejected_data.append(file["rejected"].to(device="cpu", dtype=torch.int32))
+            chosen_mask.append(file["chosen_mask"].to(device="cpu", dtype=torch.bool))
+            rejected_mask.append(file["rejected_mask"].to(device="cpu",dtype=torch.bool))
         
         if isinstance(load_path, list):
             for path in load_path:
