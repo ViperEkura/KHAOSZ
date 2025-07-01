@@ -8,7 +8,7 @@
 
 演示视频链接：https://www.bilibili.com/video/BV1z5RPYHEkd
 
-训练数据集来源同样在以上链接中注明，请下载后放置于 params 目录
+训练数据集来源在模型的参数下载链接中注明，若要使用模型请下载后将参数放置于 params 目录
 
 代码遵循 http://www.apache.org/licenses/LICENSE-2.0 协议， 使用时请注明代码来源
 
@@ -130,7 +130,39 @@ while True:
 
 **(2) 使用模型完成向量检索生成(RAG)：**
 
-正在开发中...
+如果您想对文本进行分段处理
+
+```python
+from module import Khaosz
+
+model = Khaosz("params")
+model = model.to(device='cuda', dtype=torch.bfloat16)
+
+chunks = model.chunk(text, threshold=0.8, window_size=2)
+print(chunks)
+```
+
+如果您想在文本分段之后进行检索
+
+```python
+from module import Khaosz
+
+model = Khaosz("params")
+model = model.to(device='cuda', dtype=torch.bfloat16)
+
+res_embs = [model.sentence_embedding(text) for text in res]
+for sentence, emb in zip(res, res_embs):
+    model.retriever.add_vector(sentence, emb)
+
+retrive_content = model.retrieve_generate(
+    query=query,
+    retrive_top_k=5,
+    temperature=0.6,
+    top_k=30,
+    top_p=0.95
+)
+print(retrive_content)
+```
 
 
 ## 📌其他问题
