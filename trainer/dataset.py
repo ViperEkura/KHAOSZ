@@ -156,7 +156,7 @@ class DpoDataset(BaseDataset):
 
     def __getitem__(self, index: int):
         start_idx = index * self.chunk_size
-        end_idx = min(start_idx + self.chunk_size, self.total_samples)
+        end_idx = min(start_idx + self.chunk_size, self.total_samples - 1)
         
         chosen = self._fetch_data(start_idx, end_idx, "chosen").to(device=self.device, dtype=torch.long)
         rejected = self._fetch_data(start_idx, end_idx, "rejected").to(device=self.device, dtype=torch.long)
