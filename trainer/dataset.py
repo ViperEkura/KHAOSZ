@@ -78,7 +78,6 @@ class MutiSegmentFetcher:
         return self.key_fetch(begin_idx, end_idx, self.muti_keys)
 
 
-
 class BaseDataset(Dataset, ABC):
     def __init__(self, chunk_size: int, device: str):
         super().__init__()
@@ -87,24 +86,29 @@ class BaseDataset(Dataset, ABC):
         self.total_samples = 0
         self.device = device
 
-    def save(self, save_path: str):
-        with open(save_path, "wb") as f:
-            pkl.dump(self.segments, f)
+    def save(self, save_path: str):      
+        first_item = self.segments[keys[0]]
+        segment_size = len(first_item)
+        keys = list(self.segments.keys())
+        
+        for i in range(segment_size):
+            formated_segment = {key: self.segments[key][i] for key in keys}
+            pkl.dump(formated_segment, open(f"{save_path}_{i}.pkl", "wb"))
+                
     
     def load(self, load_path: Union[str, List[str]]):
         paths = [load_path] if isinstance(load_path, str) else load_path
         self.segments, self.total_samples = load_pkl_files(paths)
         self.fetcher = MutiSegmentFetcher(self.segments)
-    
+        
     @abstractmethod
     def __getitem__(self, index: int):
         pass
-    
+        
     def __len__(self) -> int:
         assert self.total_samples // self.chunk_size > 0
         return self.total_samples // self.chunk_size
-
-
+    
 
 class SeqDataset(BaseDataset):
     def __init__(self, chunk_size , device='cuda'):
@@ -140,7 +144,6 @@ class SftDataset(BaseDataset):
         loss_mask = self._fetch_data(begin_idx + 1, end_idx + 1, "mask").to(device=self.device, dtype=torch.bool)
         
         return x, y, loss_mask
-
 
 
 class DpoDataset(BaseDataset):
