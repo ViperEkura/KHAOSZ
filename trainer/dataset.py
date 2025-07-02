@@ -1,23 +1,55 @@
 import torch
+import bisect
 import pickle as pkl
 from abc import ABC, abstractmethod
-from torch import device
 from torch import Tensor
 from torch.utils.data import Dataset
 from typing import List, Dict, Union
 
 
+class SegmentTensorFetcher:
+    def __init__(self, segments: List[Tensor]):
+        self.segments = segments
+        self.cum_lengths = []
+        total = 0
+        for seg in segments:
+            total += len(seg)
+            self.cum_lengths.append(total)
+        self.total_length = total if segments else 0
+
+    def fetch_data(self, begin_idx: int, end_idx: int) -> Tensor:
+        if not (0 <= begin_idx < self.total_length and 0 <= end_idx <= self.total_length):
+            raise ValueError("begin_idx or end_idx out of bounds")
+        if begin_idx >= end_idx:
+            return torch.tensor([], dtype=torch.long)
+        
+        seg_start_idx = bisect.bisect_right(self.cum_lengths, begin_idx - 1)
+        seg_end_idx = bisect.bisect_left(self.cum_lengths, end_idx - 1)
+
+        result_segments = []
+
+        for i in range(seg_start_idx, seg_end_idx + 1):
+            prev_cum = self.cum_lengths[i - 1] if i > 0 else 0
+            start = max(begin_idx - prev_cum, 0)
+            end = min(end_idx - prev_cum, len(self.segments[i]))
+            result_segments.append(self.segments[i][start:end])
+
+        return torch.cat(result_segments, dim=0)
+    
+
+
 class BaseDataset(Dataset, ABC):
-    def __init__(self, segment_length: int, device: device = device('cuda')):
+    def __init__(self, chunk_size: int, device: str):
         super().__init__()
-        self.data = None
-        self.segment_length = segment_length
+        self.segments: List = []
+        self.chunk_size = chunk_size
         self.total_samples = 0
         self.device = device
 
     def save(self, save_path: str):
         with open(save_path, "wb") as f:
-            pkl.dump(self.data, f)
+            pkl.dump(self.segments, f)
+    
     @abstractmethod
     def load(self, load_path: Union[str, List[str]]):
         pass
@@ -27,47 +59,44 @@ class BaseDataset(Dataset, ABC):
         pass
     
     def __len__(self) -> int:
-        assert self.total_samples // self.segment_length > 0
-        return self.total_samples // self.segment_length
+        assert self.total_samples // self.chunk_size > 0
+        return self.total_samples // self.chunk_size
 
 
 
 class SeqDataset(BaseDataset):
-    def __init__(self, segment_length , device=device('cuda')):
-        super().__init__(segment_length, device)
-        self.data = torch.tensor([])
+    def __init__(self, chunk_size , device='cuda'):
+        super().__init__(chunk_size, device)
+        self.fetcher = SegmentTensorFetcher(self.segments)
         
     def load(self, load_path: Union[str, List[str]]):
-        sequences = []
+        paths = [load_path] if isinstance(load_path, str) else load_path
+
+        for path in paths:
+            with open(path, "rb") as f:
+                pkl_file: Tensor = pkl.load(f)
+            self.total_samples += pkl_file.numel()
+            self.segments.append(pkl_file)
         
-        if isinstance(load_path, list):
-            for path in load_path:
-                with open(path, "rb") as f:
-                    file = pkl.load(f)
-                sequences.append(file)
-        elif isinstance(load_path, str):
-            with open(load_path, "rb") as f:
-                file = pkl.load(f)
-            sequences.append(file)
-        else:
-            raise TypeError("load_path: str | list[str]")
+        self.fetcher = SegmentTensorFetcher(self.segments)
+
         
-        self.data = torch.cat(sequences).to(device="cpu", dtype=torch.int32)
-        self.total_samples = self.data.numel()
-        
+    def _fetch_data(self, begin_idx: int, end_idx: int) -> Tensor:
+        return self.fetcher.fetch_data(begin_idx, end_idx)
+    
     def __getitem__(self, index):
-        begin_idx = index * self.segment_length 
-        end_idx = min(begin_idx + self.segment_length, self.total_samples - 1)
+        begin_idx = index * self.chunk_size 
+        end_idx = min(begin_idx + self.chunk_size, self.total_samples - 1)
         
-        x = self.data[begin_idx:end_idx].to(device=self.device, dtype=torch.long)
-        y = self.data[begin_idx + 1:end_idx + 1].to(device=self.device, dtype=torch.long)
+        x = self._fetch_data(begin_idx, end_idx).to(device=self.device, dtype=torch.long)
+        y = self._fetch_data(begin_idx + 1, end_idx + 1).to(device=self.device, dtype=torch.long)
         
         return x, y
     
     
 class SftDataset(BaseDataset):
-    def __init__(self, segment_length, device=device('cuda')):
-        super().__init__(segment_length, device)
+    def __init__(self, chunk_size, device='cuda'):
+        super().__init__(chunk_size, device)
         self.data: Dict[str, Tensor] = {
             "sequence": torch.tensor([]),
             "mask": torch.tensor([])
@@ -99,8 +128,8 @@ class SftDataset(BaseDataset):
         self.total_samples = self.data["sequence"].numel()
         
     def __getitem__(self, index):
-        begin_idx = index * self.segment_length 
-        end_idx = min(begin_idx + self.segment_length, self.total_samples - 1)
+        begin_idx = index * self.chunk_size 
+        end_idx = min(begin_idx + self.chunk_size, self.total_samples - 1)
         
         x = self.data["sequence"][begin_idx:end_idx].to(device=self.device, dtype=torch.long)
         y = self.data["sequence"][begin_idx + 1:end_idx + 1].to(device=self.device, dtype=torch.long)
@@ -111,8 +140,8 @@ class SftDataset(BaseDataset):
 
 
 class DpoDataset(BaseDataset):
-    def __init__(self, segment_length: int, device=device("cuda")):
-        super().__init__(segment_length, device)
+    def __init__(self, chunk_size: int, device="cuda"):
+        super().__init__(chunk_size, device)
         self.data: Dict[str, torch.Tensor] = {
             "chosen": torch.tensor([]),
             "rejected": torch.tensor([]),
@@ -153,8 +182,8 @@ class DpoDataset(BaseDataset):
         self.total_samples = self.data["chosen"].numel()
 
     def __getitem__(self, index: int):
-        start_idx = index * self.segment_length
-        end_idx = min(start_idx + self.segment_length, self.total_samples)
+        start_idx = index * self.chunk_size
+        end_idx = min(start_idx + self.chunk_size, self.total_samples)
         
         chosen_segment = self.data["chosen"][start_idx:end_idx].to(device=self.device, dtype=torch.long)
         rejected_segment = self.data["rejected"][start_idx:end_idx].to(device=self.device, dtype=torch.long)
