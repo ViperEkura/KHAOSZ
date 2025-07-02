@@ -7,7 +7,7 @@ from torch.utils.data import Dataset
 from typing import List, Dict, Union
 
 
-class SegmentTensorFetcher:
+class BaseSegmentFetcher:
     def __init__(self, segments: List[Tensor]):
         self.segments = segments
         self.cum_lengths = []
@@ -37,11 +37,23 @@ class SegmentTensorFetcher:
         return torch.cat(result_segments, dim=0)
     
 
+class MutiSegmentFetcher:
+    def __init__(self, muti_segments: Dict[str, List[Tensor]]):
+        self.muti_segments: Dict[str, List[Tensor]] = muti_segments
+        self.muti_sement_keys = list(muti_segments.keys())
+        self.muti_fetchers = [BaseSegmentFetcher(muti_segments[k]) for k in self.muti_sement_keys]
+    
+    def fetch_data(self, begin_idx: int, end_idx: int) -> Dict[str, Tensor]:
+        fetch_dict = {}
+        for key, fetcher in zip(self.muti_sement_keys, self.muti_fetchers):
+            fetch_dict[key] = fetcher.fetch_data(begin_idx, end_idx)
+        return fetch_dict
+
 
 class BaseDataset(Dataset, ABC):
     def __init__(self, chunk_size: int, device: str):
         super().__init__()
-        self.segments: List = []
+        self.segments: Dict[str, List[Tensor]] = {}
         self.chunk_size = chunk_size
         self.total_samples = 0
         self.device = device
@@ -67,18 +79,20 @@ class BaseDataset(Dataset, ABC):
 class SeqDataset(BaseDataset):
     def __init__(self, chunk_size , device='cuda'):
         super().__init__(chunk_size, device)
-        self.fetcher = SegmentTensorFetcher(self.segments)
+        self.fetcher = MutiSegmentFetcher(self.segments)
         
     def load(self, load_path: Union[str, List[str]]):
         paths = [load_path] if isinstance(load_path, str) else load_path
 
         for path in paths:
             with open(path, "rb") as f:
-                pkl_file: Tensor = pkl.load(f)
-            self.total_samples += pkl_file.numel()
-            self.segments.append(pkl_file)
+                pkl_file: Dict[str, Tensor] = pkl.load(f)
+                first_key = list(pkl_file.keys())[0]
+                self.total_samples += pkl_file[first_key].numel()
+                for key, value in pkl_file.items():
+                    self.segments[key].append(value)
         
-        self.fetcher = SegmentTensorFetcher(self.segments)
+        self.fetcher = MutiSegmentFetcher(self.segments)
 
         
     def _fetch_data(self, begin_idx: int, end_idx: int) -> Tensor:
