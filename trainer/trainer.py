@@ -3,12 +3,8 @@ import copy
 import math
 import torch
 import logging
-import pickle as pkl
-
 import torch.nn as nn
 import torch.nn.functional as F
-import safetensors.torch as st
-import matplotlib.pyplot as plt
 
 from torch import Tensor
 from torch.optim import Optimizer
@@ -17,9 +13,10 @@ from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import Dataset, DataLoader, RandomSampler
 from tqdm import tqdm
 from typing import Tuple
+
 from module.transformer import Config
 from module.tokenizer import BpeTokenizer
-
+from .checkpoint import TrainCheckPoint
 
 def get_lambda_lr(warning_step, lr_decay_iters, min_rate=0.1):
     def get_lr(now_iter):
@@ -120,49 +117,6 @@ def ppo_block(
     pass
 
 
-class CheckPoint:
-    def __init__(
-        self, 
-        model: nn.Module, 
-        tokenizer: BpeTokenizer,  
-        config: Config,
-        loss_list: list,
-        n_iter: int 
-    ):
-        self.model = model
-        self.tokenizer = tokenizer
-        self.config = config
-        self.loss_list = loss_list
-        self.n_iter = n_iter
-
-    def save_ckpt(self, save_dir):
-        model_path = os.path.join(save_dir, "model.safetensors")
-        config_path = os.path.join(save_dir, "config.json")
-        lossfig_path = os.path.join(save_dir, "loss.png")
-        loss_path = os.path.join(save_dir, "loss.pkl")
-        tokenizer_path = os.path.join(save_dir, "tokenizer.json")
-        
-        plt.figure()
-        plt.plot(self.loss_list)
-        plt.title(f"Training Loss - iter {self.n_iter }")
-        plt.xlabel("Batch")
-        plt.ylabel("Loss")
-        
-        try:    
-            os.makedirs(save_dir, exist_ok=True)
-            st.save_file(self.model.state_dict(), model_path)
-            self.config.save(config_path)
-            self.tokenizer.save(tokenizer_path)
-            plt.savefig(lossfig_path)
-            pkl.dump(self.loss_list, open(loss_path, "wb"))
-            
-        except Exception as e:
-            raise e
-        
-        finally:
-            plt.close()
-
-
 class Trainer:
     def __init__(
         self,
@@ -205,16 +159,16 @@ class Trainer:
         n_iter = 0
         loss_list = []
         last_ckpt_iter = 0
-        generator = torch.Generator().manual_seed(random_seed)
-        sampler = RandomSampler(dataset, generator=generator)
-        dataloader = DataLoader(dataset, batch_size=batch_size, sampler=sampler)
         
-        total_iters = len(dataloader) * n_epoch
+        total_iters = len(dataset) // batch_size * n_epoch
         labmbda_scheduler_fn = get_lambda_lr(warning_step, total_iters, min_rate)
-        scheduler = LambdaLR(optimizer, labmbda_scheduler_fn)
-        
         ref_model = None
         pad_token_id = self.tokenizer.pad_id
+        
+        scheduler = LambdaLR(optimizer, labmbda_scheduler_fn)
+        generator = torch.Generator().manual_seed(random_seed)
+        sampler = RandomSampler(dataset, generator=generator)
+        
         if train_type == "dpo":
             ref_model = copy.deepcopy(self.model)
             ref_model.eval()
@@ -226,7 +180,7 @@ class Trainer:
             "dpo": lambda x: dpo_train_block(x, self.model, ref_model, pad_token_id, dpo_beta)
         }[train_type]
         
-        ckpt_saver = lambda current_iter: CheckPoint(
+        ckpt_saver = lambda current_iter: TrainCheckPoint(
             self.model, self.tokenizer, self.config, loss_list, current_iter
         ).save_ckpt(os.path.join(ckpt_dir, f"iter_{current_iter}"))
 
@@ -235,11 +189,8 @@ class Trainer:
 
         for epoch in range(n_epoch):
             self.model.train()
-            progress_bar = tqdm(
-                dataloader,
-                desc=f"Epoch {epoch+1}/{n_epoch}",
-                dynamic_ncols=True
-            )
+            dataloader = DataLoader(dataset, batch_size=batch_size, sampler=sampler)
+            progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{n_epoch}", dynamic_ncols=True)
 
             for batch in progress_bar:
                 #forward
