@@ -11,11 +11,10 @@ import safetensors.torch as st
 import matplotlib.pyplot as plt
 
 from torch import Tensor
-from torch.utils.data import DataLoader
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR
 from torch.nn.utils import clip_grad_norm_
-
+from torch.utils.data import Dataset, DataLoader, RandomSampler
 from tqdm import tqdm
 from typing import Tuple
 from module.transformer import Config
@@ -188,22 +187,27 @@ class Trainer:
     def train(
         self,
         train_type: str,
-        dataloader: DataLoader,
+        dataset: Dataset,
         optimizer: Optimizer,
         ckpt_dir: str,
         n_epoch: int = 1,
+        batch_size: int = 4,
         n_iter_ckpt: int = 5000,
         n_iter_step: int = 1,
         max_grad_norm: float = 1.0,
         warning_step: int = 1000,
         min_rate: float = 0.1,
         dpo_beta: float = 0.1,
+        random_seed: int = 3306
     ):
         assert train_type in ["seq", "sft", "dpo"]
         
         n_iter = 0
         loss_list = []
         last_ckpt_iter = 0
+        generator = torch.Generator().manual_seed(random_seed)
+        sampler = RandomSampler(dataset, generator=generator)
+        dataloader = DataLoader(dataset, batch_size=batch_size, sampler=sampler)
         
         total_iters = len(dataloader) * n_epoch
         labmbda_scheduler_fn = get_lambda_lr(warning_step, total_iters, min_rate)

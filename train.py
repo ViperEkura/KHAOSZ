@@ -12,11 +12,10 @@ from trainer import Trainer, SeqDataset, SftDataset, DpoDataset, BaseDataset
 dirname = os.path.dirname(__file__)
 
 def get_files(root_path: str) -> list[str]:
-    paths = list()
+    paths = []
     for root, _, files in os.walk(root_path):
-        for file in files:
-            path = os.path.join(root, file)
-            paths.append(path)
+        paths.extend([os.path.join(root, file) for file in files])
+
     return paths
 
 def train(
@@ -34,6 +33,7 @@ def train(
     adamw_weight_decay: float,
     max_grad_norm: float,
     freeze_embedding: bool,
+    random_seed: int,
     resume_dir: str
 ):
     assert train_type in ["seq", "sft", "dpo"]
@@ -69,11 +69,6 @@ def train(
     
     cache_files = get_files(data_root_path)
     dataset.load(cache_files)
-    dataloader = DataLoader(
-        dataset, 
-        batch_size=batch_size, 
-        shuffle=True
-    )
 
     if freeze_embedding:
         for name, param in model.named_parameters():
@@ -90,15 +85,17 @@ def train(
     trainer = Trainer(model, tokenizer, config)
     trainer.train(
         train_type=train_type,
-        dataloader=dataloader,
+        dataset=dataset,
         optimizer=optim,
         ckpt_dir=ckpt_dir,
         n_epoch=n_epoch,
+        batch_size=batch_size,
         n_iter_ckpt=n_iter_ckpt,
         n_iter_step=n_iter_step,
         warning_step=warning_step,
         dpo_beta=dpo_beta,
-        max_grad_norm=max_grad_norm
+        max_grad_norm=max_grad_norm,
+        random_seed=random_seed
     )
 
 if __name__ == "__main__":
@@ -117,6 +114,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_grad_norm", type=float, default=1.0, help="Max gradient norm for clipping.")
     parser.add_argument("--adamw_betas", type=tuple, default=(0.9, 0.95), help="Beta values for AdamW optimizer.")
     parser.add_argument("--adamw_weight_decay", type=float, default=0.1, help="Weight decay for AdamW optimizer.")
+    parser.add_argument("--random_seed", type=int, default=3306, help="Random seed for reproducibility.")
     parser.add_argument("--freeze_embedding", type=bool, default=False, help="Whether to freeze the embedding layer.")
 
     args = parser.parse_args()
@@ -136,5 +134,6 @@ if __name__ == "__main__":
         n_iter_ckpt=args.n_iter_ckpt,
         ckpt_dir=args.ckpt_dir,
         resume_dir=args.resume_dir,
-        train_type=args.train_type
+        train_type=args.train_type,
+        random_seed=args.random_seed
     )
