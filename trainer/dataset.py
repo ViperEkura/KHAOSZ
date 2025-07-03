@@ -103,7 +103,7 @@ class BaseDataset(Dataset, ABC):
         
     @abstractmethod
     def __getitem__(self, index: int):
-        pass
+        raise NotImplementedError
         
     def __len__(self) -> int:
         assert self.total_samples // self.chunk_size > 0
