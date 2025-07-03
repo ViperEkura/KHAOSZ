@@ -17,7 +17,7 @@ def load_pkl_files(paths: List[str]):
         with open(path, "rb") as f:
             pkl_file: Seg = pkl.load(f)
         for key, value in pkl_file.items():
-            segments[key].append(value)
+            segments[key] = value
         first_key = list(pkl_file.keys())[0]
         total_samples += pkl_file[first_key].numel()
     
