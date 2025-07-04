@@ -112,7 +112,7 @@ if __name__ == "__main__":
     parser.add_argument("--dpo_beta", type=float, default=0.1, help="DPO beta value.")
     parser.add_argument("--max_grad_norm", type=float, default=1.0, help="Max gradient norm for clipping.")
     parser.add_argument("--adamw_betas", type=tuple, default=(0.9, 0.95), help="Beta values for AdamW optimizer.")
-    parser.add_argument("--adamw_weight_decay", type=float, default=0.1, help="Weight decay for AdamW optimizer.")
+    parser.add_argument("--adamw_weight_decay", type=float, default=0.01, help="Weight decay for AdamW optimizer.")
     parser.add_argument("--random_seed", type=int, default=3306, help="Random seed for reproducibility.")
     parser.add_argument("--freeze_embedding", type=bool, default=False, help="Whether to freeze the embedding layer.")
 
