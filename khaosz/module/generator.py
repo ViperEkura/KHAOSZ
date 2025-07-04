@@ -1,8 +1,7 @@
 import torch
 from torch import Tensor 
 from typing import List, Tuple, Union, Optional, Generator
-from .retriever import TextSplitter
-from .parameter import ModelParameter, RetrieverParameter
+from .parameter import ModelParameter
 
 
 def build_prompt(query, history) -> str:
@@ -86,9 +85,41 @@ class GeneratorCore:
 
         return emb_sentence.flatten() if not with_batch else [e.flatten() for e in emb_sentence.split(1, dim=0)]
 
-    def chunk(self, text: str, threshold: float = 0.5, window_size: int = 1) -> List[str]:
-        splitter = TextSplitter(self.sentence_embedding)
-        return splitter.chunk(text, threshold, window_size)
+    def to(self, *args, **kargs):
+        self.model.to(*args, **kargs)
+        return self
+
+
+class EmbeddingEncoderCore:
+    def __init__(self, parameter: ModelParameter):
+        self.model = parameter.model
+        self.tokenizer = parameter.tokenizer
+        self.config = parameter.config
+    
+
+    def sentence_embedding(self, sentence: Union[str, List[str]]) -> Union[Tensor, List[Tensor]]:
+        with_batch = isinstance(sentence, list)
+        encode_fn = self.tokenizer.encode
+        ids = encode_fn(sentence) if not with_batch else [encode_fn(s) for s in sentence]
+        
+        torch.cuda.empty_cache()
+        device = next(self.model.parameters()).device
+        if not with_batch:
+            input_tensor = torch.as_tensor(ids, device=device)
+            input_tensor = input_tensor.unsqueeze(0)
+            seq_mask = torch.ones_like(input_tensor, dtype=torch.bool, device=device)
+        else:
+            max_len = max(len(seq) for seq in ids)
+            padded_ids = [[self.tokenizer.pad_id] * (max_len - len(seq)) + seq for seq in ids]
+            masks = [[token != self.tokenizer.pad_id for token in seq] for seq in padded_ids]
+            input_tensor = torch.as_tensor(padded_ids, device=device)
+            seq_mask = torch.as_tensor(masks, device=device, dtype=torch.bool)
+
+        with torch.no_grad():
+            output_seg = self.model(input_tensor, seq_mask, return_hidden=True)
+            emb_sentence = torch.mean(output_seg, dim=1)
+
+        return emb_sentence.flatten() if not with_batch else [e.flatten() for e in emb_sentence.split(1, dim=0)]
 
     def to(self, *args, **kargs):
         self.model.to(*args, **kargs)
@@ -238,11 +269,11 @@ class BatchGenerator(GeneratorCore):
             histories[i].append((queries[i], responses[i]))
             
         return responses
-        
+
+
 class RetrievalGenerator(GeneratorCore):
-    def __init__(self, retriever_parameter: RetrieverParameter):
+    def __init__(self, retriever_parameter: ModelParameter):
         super().__init__(retriever_parameter)
-        self.retriever = retriever_parameter.retriver
     
     def generate(
         self,
