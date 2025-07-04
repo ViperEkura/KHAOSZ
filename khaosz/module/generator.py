@@ -102,13 +102,14 @@ class ChatGenerator(GeneratorCore):
     def generate(
             self, 
             query: str, 
-            history: List[Tuple[str, str]]=None,
-            temperature: float=0.8,
-            top_k: int=0,
-            top_p: float=0.8,
+            history: List[Tuple[str, str]],
+            temperature: float,
+            top_k: int,
+            top_p: float,
         ) -> str:
         
-        assert temperature >= 0.0 and top_k >= 0
+        assert temperature >= 0.0
+        assert top_k >= 0
         assert top_p >= 0.0 and top_p <= 1.0
         
         if history is None:
@@ -140,13 +141,14 @@ class StreamGenerator(GeneratorCore):
     def generate(
             self, 
             query: str, 
-            history: List[Tuple[str, str]]=None,
-            temperature: float=1.0,
-            top_k: int=0,
-            top_p: float=1.0,
+            history: List[Tuple[str, str]],
+            temperature: float,
+            top_k: int,
+            top_p: float,
         ) -> Generator[Tuple[str, List[Tuple[str, str]]], None, None]:
         
-        assert temperature >= 0.0 and top_k >= 0
+        assert temperature >= 0.0
+        assert top_k >= 0
         assert top_p >= 0.0 and top_p <= 1.0
         
         if history is None:
@@ -180,10 +182,10 @@ class BatchGenerator(GeneratorCore):
     def generate(
         self, 
         queries: List[str],
-        histories: List[List[Tuple[str, str]]]=None,
-        temperature: float=0.95, 
-        top_k: int=0, 
-        top_p: float=0.8 
+        histories: List[List[Tuple[str, str]]],
+        temperature: float, 
+        top_k: int, 
+        top_p: float 
     ) -> List[str]:
         assert temperature >= 0.0
         assert top_k >= 0
@@ -191,7 +193,7 @@ class BatchGenerator(GeneratorCore):
         
         batch_size = len(queries)
         if histories is None:
-            histories = [list() for _ in range(batch_size)]
+            histories = [[] for _ in range(batch_size)]
 
         prompts = [build_prompt(query, history) for query, history in zip(queries, histories)]
         ids_list = [self.tokenizer.encode(tokens) for tokens in prompts]
@@ -229,7 +231,7 @@ class BatchGenerator(GeneratorCore):
                 
                 max_step += 1
 
-        responses = [str()] * batch_size 
+        responses = [""] * batch_size 
         for i in range(batch_size):
             response_ids = padded_ids_list[i][start_id_pos:]
             responses[i] = self.tokenizer.decode(response_ids)
@@ -244,44 +246,28 @@ class RetrievalGenerator(GeneratorCore):
     
     def generate(
         self,
+        retrieved: List[str],
         query: str, 
-        history: List[Tuple[str, str]] = None,
-        temperature: float = 0.8,
-        top_k: int = 0,
-        top_p: float = 0.8,
-        retrive_top_k: int = 5,
+        history: List[Tuple[str, str]],
+        temperature: float,
+        top_k: int,
+        top_p: float,
     ) -> str:
+        assert temperature >= 0.0
+        assert top_k >= 0
+        assert top_p >= 0.0 and top_p <= 1.0
+        
         if history is None:
-            history = list()
+            history = []
             
-        query_tensor = self.sentence_embedding(query)
-        top_k_retrieved = self.retriever.retrieve(query_tensor, retrive_top_k)
+        retrieved = "\n".join([f"{idx + 1}. {key}" for idx, key in enumerate(retrieved)]) if retrieved else ""
+        retrieved_query = f"{retrieved}\n\n根据以上内容回答: {query}" if retrieved else query
+        parameter = ModelParameter(self.model, self.tokenizer, self.config)
         
-        retrieved_context = "\n".join(
-            [f"{idx + 1}. {key}" 
-             for idx, (key, _) in enumerate(top_k_retrieved)]
-        ) if top_k_retrieved else ""
-        
-        retrieved_query = f"{retrieved_context}\n\n根据以上内容回答: {query}"
-        retrieved_prompt  = build_prompt(retrieved_query, history)
-        
-        ids = self.tokenizer.encode(retrieved_prompt)
-        start_id_pos = len(ids)
-        response = str()
-        
-        self.model.eval()
-        with torch.no_grad():
-            while len(ids) < self.config.m_len:
-                next_token_id = self.sample_next_token(
-                    ids, temperature, 
-                    top_k=top_k, top_p=top_p
-                )
-                if next_token_id in self.tokenizer.stop_ids:
-                    break
-                ids.append(next_token_id)
-            
-        response = self.tokenizer.decode(ids[start_id_pos:])
-        if history is not None:
-            history.append((query, response))
-        
-        return response
+        return ChatGenerator(parameter).generate(
+            retrieved_query, 
+            history,
+            temperature=temperature,
+            top_k=top_k,
+            top_p=top_p,
+        )
