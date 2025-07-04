@@ -79,7 +79,7 @@ python train.py \
 或者， 您可以使用流式输出接口/对话生成接口完成对话
 
 ```python
-from module import Khaosz
+from khaosz import Khaosz
 
 model = Khaosz("params")
 model = model.to(device='cuda', dtype=torch.bfloat16)
@@ -106,7 +106,7 @@ while True:
 或者您可以使用非流式输出的方式完成对话
 
 ```python
-from module import Khaosz
+from khaosz import Khaosz
 
 model = Khaosz("params")
 model = model.to(device='cuda', dtype=torch.bfloat16)
@@ -130,29 +130,16 @@ while True:
 
 **(2) 使用模型完成向量检索生成(RAG)：**
 
-如果您想对文本进行分段处理
-
-```python
-from module import Khaosz
-
-model = Khaosz("params")
-model = model.to(device='cuda', dtype=torch.bfloat16)
-
-chunks = model.chunk(text, threshold=0.8, window_size=2)
-print(chunks)
-```
 
 如果您想在文本分段之后进行检索
 
 ```python
-from module import Khaosz
+from khaosz import Khaosz
 
 model = Khaosz("params")
 model = model.to(device='cuda', dtype=torch.bfloat16)
 
-res_embs = [model.sentence_embedding(text) for text in res]
-for sentence, emb in zip(res, res_embs):
-    model.retriever.add_vector(sentence, emb)
+# after init database
 
 retrive_content = model.retrieve_generate(
     query=query,
