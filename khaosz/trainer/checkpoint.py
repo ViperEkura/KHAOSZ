@@ -1,43 +1,14 @@
 import os
 import pickle as pkl
 import torch.nn as nn
-import safetensors.torch as st
 import matplotlib.pyplot as plt
 
+from module.parameter import ModelParameter
 from module.tokenizer import BpeTokenizer
 from module.transformer import Config
 
-class ParamCheckPoint:
-    def __init__(self, model: nn.Module, tokenizer: BpeTokenizer, config: Config):
-        self.model = model
-        self.tokenizer = tokenizer
-        self.config = config
-
-    def _get_paths(self, save_dir):
-        return {
-            "model": os.path.join(save_dir, "model.safetensors"),
-            "config": os.path.join(save_dir, "config.json"),
-            "tokenizer": os.path.join(save_dir, "tokenizer.json")
-        }
-
-    def save(self, save_dir):
-        paths = self._get_paths(save_dir)
-        os.makedirs(save_dir, exist_ok=True)
-        
-        st.save_file(self.model.state_dict(), paths["model"])
-        self.config.save(paths["config"])
-        self.tokenizer.save(paths["tokenizer"])
-
-    def load(self, load_dir):
-        paths = self._get_paths(load_dir)
-        
-        state_dict = st.load_file(paths["model"])
-        self.model.load_state_dict(state_dict)
-        self.config.load(paths["config"])
-        self.tokenizer.load(paths["tokenizer"])
-        
-
-class TrainCheckPoint(ParamCheckPoint):
+    
+class TrainCheckPoint(ModelParameter):
     def __init__(
             self, 
             model: nn.Module, 

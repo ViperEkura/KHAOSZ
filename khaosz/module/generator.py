@@ -1,12 +1,8 @@
-import os
 import torch
-import safetensors.torch as st
-
 from torch import Tensor 
 from typing import List, Tuple, Union, Optional
-from .transformer import Config, Transformer
-from .tokenizer import BpeTokenizer
-from .retriever import Retriever, TextSplitter
+from .retriever import TextSplitter
+from .parameter import ModelParameter, RetrieverParameter
 
 
 def build_prompt(query, history) -> str:
@@ -19,33 +15,12 @@ def build_prompt(query, history) -> str:
     return ret_prompt
 
 
-class Khaosz:
-    def __init__(self, path=None):
-        self.tokenizer : BpeTokenizer = None
-        self.config : Config = None
-        self.model : Transformer = None
-        self.retriever : Retriever = None
-        
-        if path is not None:
-            self.load(path)
-            
-    def load(self, model_dir):
-        tokenizer_path = os.path.join(model_dir, "tokenizer.json")
-        config_path = os.path.join(model_dir, "config.json")
-        weight_path = os.path.join(model_dir, "model.safetensors")
-        vector_assets_path = os.path.join(model_dir, "vectors.db")
-        
-        self.tokenizer = BpeTokenizer(tokenizer_path)
-        self.config = Config(config_path)
-        self.model = Transformer(self.config)
-        state_dict = st.load_file(weight_path)
-        self.model.load_state_dict(state_dict)
-        self.retriever = Retriever(vector_assets_path)
+class GeneratorCore:
+    def __init__(self, parameter: ModelParameter):
+        self.model = parameter.model
+        self.tokenizer = parameter.tokenizer
+        self.config = parameter.config
     
-    def to(self, *args, **kargs):
-        self.model.to(*args, **kargs)
-        return self
-
     def sample_next_token(
         self, 
         ids, 
@@ -85,7 +60,8 @@ class Khaosz:
         next_token_ids = torch.multinomial(probabilities, num_samples=1)
         
         return next_token_ids.item() if not with_batch else next_token_ids.flatten().tolist()
-    
+
+
     def sentence_embedding(self, sentence: Union[str, List[str]]) -> Union[Tensor, List[Tensor]]:
         with_batch = isinstance(sentence, list)
         encode_fn = self.tokenizer.encode
@@ -109,9 +85,59 @@ class Khaosz:
             emb_sentence = torch.mean(output_seg, dim=1)
 
         return emb_sentence.flatten() if not with_batch else [e.flatten() for e in emb_sentence.split(1, dim=0)]
+
+    def chunk(self, text: str, threshold: float = 0.5, window_size: int = 1) -> List[str]:
+        splitter = TextSplitter(self.sentence_embedding)
+        return splitter.chunk(text, threshold, window_size)
+
+    def to(self, *args, **kargs):
+        self.model.to(*args, **kargs)
+        return self
+
+
+class Generator(GeneratorCore):
+    def __init__(self, parameter: ModelParameter):
+        super().__init__(parameter)
+        
+    def generate(
+            self, 
+            query: str, 
+            history: List[Tuple[str, str]]=None,
+            temperature: float=0.8,
+            top_k: int=0,
+            top_p: float=0.8,
+        ):
+        
+        assert temperature >= 0.0 and top_k >= 0
+        assert top_p >= 0.0 and top_p <= 1.0
+        
+        if history is None:
+            history = []
+        
+        tokens = build_prompt(query, history)
+        ids = self.tokenizer.encode(tokens)
+        start_id_pos = len(ids)
+        response = str()
+        
+        self.model.eval()
+        with torch.no_grad():
+            while len(ids) < self.config.m_len:
+                next_token_id = self.sample_next_token(ids, temperature, top_k=top_k, top_p=top_p)
+                if next_token_id in self.tokenizer.stop_ids:
+                    break
+                ids.append(next_token_id)
+            
+        response = self.tokenizer.decode(ids[start_id_pos:])
+        history.append((query, response))
+        
+        return response
     
 
-    def stream_generate(
+class StreamGenerator(GeneratorCore):
+    def __init__(self, parameter: ModelParameter):
+        super().__init__(parameter)
+    
+    def generate(
             self, 
             query: str, 
             history: List[Tuple[str, str]]=None,
@@ -120,8 +146,7 @@ class Khaosz:
             top_p: float=1.0,
         ):
         
-        assert temperature >= 0.0
-        assert top_k >= 0
+        assert temperature >= 0.0 and top_k >= 0
         assert top_p >= 0.0 and top_p <= 1.0
         
         if history is None:
@@ -135,10 +160,7 @@ class Khaosz:
         self.model.eval()
         with torch.no_grad():
             while len(ids) < self.config.m_len:
-                next_token_id = self.sample_next_token(
-                    ids, temperature, 
-                    top_k=top_k, top_p=top_p
-                )
+                next_token_id = self.sample_next_token(ids, temperature, top_k=top_k, top_p=top_p)
                 if next_token_id in self.tokenizer.stop_ids:
                     break
                 ids.append(next_token_id)
@@ -149,45 +171,13 @@ class Khaosz:
         yield response, history
         
         history.append((query, response))
-
-    def generate(
-            self, 
-            query: str, 
-            history: List[Tuple[str, str]]=None,
-            temperature: float=0.8,
-            top_k: int=0,
-            top_p: float=0.8,
-        ):
-        
-        assert temperature >= 0.0
-        assert top_k >= 0
-        assert top_p >= 0.0 and top_p <= 1.0
-        
-        if history is None:
-            history = list()
-        
-        tokens = build_prompt(query, history)
-        ids = self.tokenizer.encode(tokens)
-        start_id_pos = len(ids)
-        response = str()
-        
-        self.model.eval()
-        with torch.no_grad():
-            while len(ids) < self.config.m_len:
-                next_token_id = self.sample_next_token(
-                    ids, temperature, 
-                    top_k=top_k, top_p=top_p
-                )
-                if next_token_id in self.tokenizer.stop_ids:
-                    break
-                ids.append(next_token_id)
-            
-        response = self.tokenizer.decode(ids[start_id_pos:])
-        history.append((query, response))
-        
-        return response
     
-    def batch_generate(
+
+class BatchGenerator(GeneratorCore):
+    def __init__(self, parameter: ModelParameter):
+        super().__init__(parameter)
+    
+    def generate(
         self, 
         queries: List[str],
         histories: List[List[Tuple[str, str]]]=None,
@@ -246,8 +236,13 @@ class Khaosz:
             histories[i].append((queries[i], responses[i]))
             
         return responses
+        
+class RetrievalGenerator(GeneratorCore):
+    def __init__(self, retriever_parameter: RetrieverParameter):
+        super().__init__(retriever_parameter)
+        self.retriever = retriever_parameter.retriver
     
-    def retrieve_generate(
+    def generate(
         self,
         query: str, 
         history: List[Tuple[str, str]] = None,
@@ -290,7 +285,3 @@ class Khaosz:
             history.append((query, response))
         
         return response
-    
-    def chunk(self, text: str, threshold: float = 0.5, window_size: int = 1) -> List[str]:
-        splitter = TextSplitter(self.sentence_embedding)
-        return splitter.chunk(text, threshold, window_size)

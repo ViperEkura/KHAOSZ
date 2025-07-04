@@ -1,5 +1,5 @@
 import torch
-from khaosz.module import Khaosz
+from khaosz import Khaosz
 
 
 def batch_generate():
