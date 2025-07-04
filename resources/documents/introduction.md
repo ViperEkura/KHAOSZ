@@ -6,8 +6,7 @@
 
 本模型采用Transformer架构， 使用GQA（q_head=16, kv_head=4） 机制，相较于传统的MHA可以节省KV cache 的显存占用（但是目前没有做KV cache），通过堆叠20层Transformer实现模型的搭建， 参数量为0.4b。Transformer 是自回归模型， 是通过计算前面所有的token的关系得到下一个token的概率分布
 
-![image-20250306182014120](/resources/images/structure.jpg)
-
+![structure](../images/structure.jpg)
 
 什么是自回归模型呢， 在把句子拆分成token之后, 模型会预测下一个token的概率分布。这意味着模型会根据给定的上下文（即已经出现的tokens序列），计算出下一个可能的token及其对应的概率。
 
@@ -87,7 +86,7 @@ $$ q_i = R_i W_q x_i $$
 $$ k_j = R_j W_k x_j $$
 $$ q_i^T k_j = (R_i W_q x_i)^T( R_j W_k x_j) = x_i^T W_q^T R_{i-j} W_k x_j $$
 
-其中的 $` R_{i-j} `$ 控制了模型的不同token 在不同相对距离上注意力的衰减，在 $` i - j `$ 绝对值越大的时候， 衰减的程度越强， 通过这种方式能让模型学习到相对位置关系， 从而使得模型可以扩展和适应长序列
+其中的 $R_{i-j}$ 控制了模型的不同token 在不同相对距离上注意力的衰减，在 $i - j$ 绝对值越大的时候， 衰减的程度越强， 通过这种方式能让模型学习到相对位置关系， 从而使得模型可以扩展和适应长序列
 
 
 
