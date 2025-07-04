@@ -35,7 +35,7 @@ class Khaosz:
     def batch_generate(
             self, 
             queries: List[str],
-            history: List[Tuple[str, str]]=None,
+            histories: List[Tuple[str, str]]=None,
             temperature: float=0.8,
             top_k: int=0,
             top_p: float=0.8,
@@ -43,7 +43,7 @@ class Khaosz:
             generator = BatchGenerator(self.parameter)
             return generator.generate(
                 queries, 
-                history=history,
+                histories=histories,
                 temperature=temperature, 
                 top_k=top_k, 
                 top_p=top_p,
