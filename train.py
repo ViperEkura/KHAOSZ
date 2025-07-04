@@ -5,7 +5,7 @@ import safetensors.torch as st
 
 from typing import Callable, Dict
 from torch.optim import AdamW
-from khaosz.module import Transformer, Config, BpeTokenizer
+from khaosz.module import ParameterLoader
 from khaosz.trainer import Trainer, SeqDataset, SftDataset, DpoDataset, BaseDataset
 
 dirname = os.path.dirname(__file__)
@@ -39,16 +39,11 @@ def train(
     if train_type in ["sft", "dpo"]:
         assert resume_dir is not None
     
-    if resume_dir is None:
-        config_path = os.path.join(dirname, "params", "config.json")
-        tokenizer_path = os.path.join(dirname, "params", "tokenizer.json")
-    else:
-        config_path = os.path.join(resume_dir, "config.json")
-        tokenizer_path = os.path.join(resume_dir, "tokenizer.json")
-
-    config = Config(config_path)
-    model = Transformer(config)
-    tokenizer = BpeTokenizer(tokenizer_path)
+    load_path = resume_dir if resume_dir is not None else "params"
+    parameter = ParameterLoader.load(load_path)
+    model = parameter.model
+    tokenizer = parameter.tokenizer
+    config = parameter.config
     
     if resume_dir is not None:
         weight_path = os.path.join(resume_dir, "model.safetensors")
