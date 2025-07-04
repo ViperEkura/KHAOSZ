@@ -3,7 +3,7 @@ import json
 import torch
 import argparse
 
-from module import Khaosz
+from khaosz.module import Khaosz
 from typing import List
 from tqdm import tqdm
 

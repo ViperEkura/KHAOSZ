@@ -1,6 +1,6 @@
 import os
 import torch
-from module import Khaosz
+from khaosz.module import Khaosz
 
 
 def chat():

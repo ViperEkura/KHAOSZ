@@ -1,4 +1,4 @@
-![image-20250306182014120](png.assets/image-20250306182014120.png)
+![image-20250306182014120](assets/png/image-20250306182014120.png)
 
 # KHAOSZ
 

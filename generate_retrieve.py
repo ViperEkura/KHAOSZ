@@ -1,6 +1,6 @@
 import os
 import torch
-from module import Khaosz
+from khaosz.module import Khaosz
 
 script_dir = os.path.dirname(__file__)
 model_dir = os.path.join(script_dir, "params")

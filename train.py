@@ -5,9 +5,8 @@ import safetensors.torch as st
 
 from typing import Callable, Dict
 from torch.optim import AdamW
-from torch.utils.data import DataLoader
-from module import Transformer, Config, BpeTokenizer
-from trainer import Trainer, SeqDataset, SftDataset, DpoDataset, BaseDataset
+from khaosz.module import Transformer, Config, BpeTokenizer
+from khaosz.trainer import Trainer, SeqDataset, SftDataset, DpoDataset, BaseDataset
 
 dirname = os.path.dirname(__file__)
 
