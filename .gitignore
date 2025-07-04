@@ -8,7 +8,6 @@ __pycache__
 # params
 *.json
 *.pkl
-*.png
 *.db
 
 # train_log / test
