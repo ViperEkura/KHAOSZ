@@ -1,6 +1,6 @@
 import torch
 from torch import Tensor 
-from typing import List, Tuple, Union, Optional
+from typing import List, Tuple, Union, Optional, Generator
 from .retriever import TextSplitter
 from .parameter import ModelParameter, RetrieverParameter
 
@@ -95,7 +95,7 @@ class GeneratorCore:
         return self
 
 
-class Generator(GeneratorCore):
+class ChatGenerator(GeneratorCore):
     def __init__(self, parameter: ModelParameter):
         super().__init__(parameter)
         
@@ -106,7 +106,7 @@ class Generator(GeneratorCore):
             temperature: float=0.8,
             top_k: int=0,
             top_p: float=0.8,
-        ):
+        ) -> str:
         
         assert temperature >= 0.0 and top_k >= 0
         assert top_p >= 0.0 and top_p <= 1.0
@@ -144,7 +144,7 @@ class StreamGenerator(GeneratorCore):
             temperature: float=1.0,
             top_k: int=0,
             top_p: float=1.0,
-        ):
+        ) -> Generator[Tuple[str, List[Tuple[str, str]]], None, None]:
         
         assert temperature >= 0.0 and top_k >= 0
         assert top_p >= 0.0 and top_p <= 1.0
@@ -184,7 +184,7 @@ class BatchGenerator(GeneratorCore):
         temperature: float=0.95, 
         top_k: int=0, 
         top_p: float=0.8 
-    ):
+    ) -> List[str]:
         assert temperature >= 0.0
         assert top_k >= 0
         assert top_p >= 0.0 and top_p <= 1.0
@@ -250,7 +250,7 @@ class RetrievalGenerator(GeneratorCore):
         top_k: int = 0,
         top_p: float = 0.8,
         retrive_top_k: int = 5,
-    ):
+    ) -> str:
         if history is None:
             history = list()
             

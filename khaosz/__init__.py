@@ -3,8 +3,8 @@ __author__ = "ViperEkura"
 
 
 from khaosz.module.parameter import ParameterLoader
-from khaosz.module.generator import Generator, StreamGenerator, BatchGenerator, RetrievalGenerator
-from typing import List, Tuple
+from khaosz.module.generator import ChatGenerator, StreamGenerator, BatchGenerator, RetrievalGenerator
+from typing import List, Tuple, Generator
 
 
 class Khaosz:
@@ -22,8 +22,8 @@ class Khaosz:
             temperature: float=0.8,
             top_k: int=0,
             top_p: float=0.8,
-        ):
-            generator = Generator(self.parameter)
+        ) -> str:
+            generator = ChatGenerator(self.parameter)
             return generator.generate(
                 query, 
                 history=history,
@@ -39,7 +39,7 @@ class Khaosz:
             temperature: float=0.8,
             top_k: int=0,
             top_p: float=0.8,
-        ):
+        ) -> List[str]:
             generator = BatchGenerator(self.parameter)
             return generator.generate(
                 queries, 
@@ -57,7 +57,7 @@ class Khaosz:
             temperature: float=0.8,
             top_k: int=0,
             top_p: float=0.8,
-        ):
+        ) -> Generator[Tuple[str, List[Tuple[str, str]]], None, None]:
             stream_generator = StreamGenerator(self.parameter)
             yield stream_generator.generate(
                     query, 
@@ -75,7 +75,7 @@ class Khaosz:
             top_k: int = 0,
             top_p: float = 0.8,
             retrive_top_k: int = 5,
-        ):
+        ) -> str:
             generator = RetrievalGenerator(self.parameter)
             return generator.generate(
                 query,
