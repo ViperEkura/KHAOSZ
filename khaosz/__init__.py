@@ -1,10 +1,17 @@
-__version__ = "1.1.0"
+__version__ = "1..0"
 __author__ = "ViperEkura"
 
 
+from torch import Tensor
 from khaosz.module.parameter import ParameterLoader
-from khaosz.module.generator import ChatGenerator, StreamGenerator, BatchGenerator, RetrievalGenerator
-from typing import List, Tuple, Generator
+from khaosz.module.generator import (
+    ChatGenerator, 
+    StreamGenerator, 
+    BatchGenerator, 
+    RetrievalGenerator, 
+    EmbeddingEncoder,
+)
+from typing import List, Tuple, Generator, Union
 
 
 class Khaosz:
@@ -86,3 +93,6 @@ class Khaosz:
                 retrive_top_k=retrive_top_k
             )
     
+    def encode(self, sentence: Union[str, List[str]]) -> Union[Tensor, List[Tensor]]:
+        encoder = EmbeddingEncoder(self.parameter)
+        return encoder.encode(sentence)
