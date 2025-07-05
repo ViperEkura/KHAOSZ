@@ -78,12 +78,17 @@ class ParameterLoader:
         tokenizer_path = os.path.join(load_dir, "tokenizer.json")
         
         has_retriever = os.path.exists(retriever_path)
+        has_model_state_dict = os.path.exists(model_path)
+        has_config = os.path.exists(config_path)
+        assert has_config, "No config.json found in the load directory"
         
         config = Config(config_path)
         tokenizer = BpeTokenizer(tokenizer_path)
         model = Transformer(config)
-        state_dict = st.load_file(model_path)
-        model.load_state_dict(state_dict)
+        
+        if has_model_state_dict:
+            state_dict = st.load_file(model_path)
+            model.load_state_dict(state_dict)
         
         if has_retriever:
             retriever = Retriever(retriever_path)
