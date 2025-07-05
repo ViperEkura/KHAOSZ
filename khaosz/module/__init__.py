@@ -7,7 +7,7 @@ from .retriever import Retriever, TextSplitter
 
 __all__ = [
     "Transformer",
-    "TransformerConfig"
+    "TransformerConfig",
     "BpeTokenizer",
     "ParameterLoader",
     "ModelParameter",

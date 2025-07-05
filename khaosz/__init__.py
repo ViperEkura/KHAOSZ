@@ -3,15 +3,9 @@ __author__ = "ViperEkura"
 
 
 from torch import Tensor
-from khaosz.module.parameter import ParameterLoader
-from khaosz.module.generator import (
-    ChatGenerator, 
-    StreamGenerator, 
-    BatchGenerator, 
-    RetrievalGenerator, 
-    EmbeddingEncoder,
-)
 from typing import List, Tuple, Generator, Union
+
+from khaosz.module import *
 
 
 class Khaosz:
@@ -76,21 +70,21 @@ class Khaosz:
     
     def retrieve_generate(
             self,
+            retrieved,
             query: str, 
             history: List[Tuple[str, str]] = None,
             temperature: float = 0.8,
             top_k: int = 0,
             top_p: float = 0.8,
-            retrive_top_k: int = 5,
         ) -> str:
             generator = RetrievalGenerator(self.parameter)
             return generator.generate(
+                retrieved,
                 query,
                 history=history,
                 temperature=temperature, 
                 top_k=top_k, 
                 top_p=top_p,
-                retrive_top_k=retrive_top_k
             )
     
     def encode(self, sentence: Union[str, List[str]]) -> Union[Tensor, List[Tensor]]:
