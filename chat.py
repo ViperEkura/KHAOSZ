@@ -4,9 +4,10 @@ from khaosz import Khaosz
 
 
 def chat():
-    model_dir = os.path.join(os.path.dirname(__file__), "params")
-    model = Khaosz(model_dir)
-    model = model.to(device='cuda', dtype=torch.bfloat16)
+    script_dir = os.path.dirname(__file__)
+    model_dir = os.path.join(script_dir, "params")
+    model = Khaosz(model_dir).to(device='cuda', dtype=torch.bfloat16)
+
     histroy = []
     while True:
         query = input(">> ")
