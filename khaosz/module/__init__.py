@@ -1,7 +1,7 @@
 from .transformer import Transformer
 from .tokenizer import BpeTokenizer
 from .parameter import ParameterLoader, ModelParameter, RetrieverParameter
-from .generator import ChatGenerator, StreamGenerator, BatchGenerator, RetrievalGenerator
+from .generator import ChatGenerator, StreamGenerator, BatchGenerator, RetrievalGenerator, EmbeddingEncoder
 from .retriever import Retriever, TextSplitter
 
 
@@ -17,4 +17,5 @@ __all__ = [
     "RetrievalGenerator",
     "Retriever",
     "TextSplitter",
+    "EmbeddingEncoder"
 ]

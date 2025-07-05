@@ -21,7 +21,7 @@ class TrainCheckPoint(ModelParameter):
             self.loss_list = loss_list
             self.n_iter = n_iter
 
-    def save_ckpt(self, save_dir):
+    def save_ckpt(self, save_dir: str):
         super().save(save_dir)
         paths = {
             "loss_list": os.path.join(save_dir, "loss.pkl"),
