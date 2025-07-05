@@ -42,8 +42,7 @@ def train(
     
     parameter = ParameterLoader.load(load_path)
     model = parameter.model
-    tokenizer = parameter.tokenizer
-    config = parameter.config
+    
     device = torch.device("cuda")
     model = model.to(device=device, dtype=torch.bfloat16)
     
@@ -54,7 +53,7 @@ def train(
     }
 
     dataset_generator = dataset_router[train_type]
-    dataset = dataset_generator(config.m_len, device)
+    dataset = dataset_generator(parameter.config.m_len, device)
     
     cache_files = get_files(data_root_path)
     dataset.load(cache_files)
@@ -71,7 +70,7 @@ def train(
         weight_decay=adamw_weight_decay
     )
     
-    trainer = Trainer(model, tokenizer, config)
+    trainer = Trainer(parameter)
     trainer.train(
         train_type=train_type,
         dataset=dataset,

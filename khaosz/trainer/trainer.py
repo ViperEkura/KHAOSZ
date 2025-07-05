@@ -14,8 +14,7 @@ from torch.utils.data import Dataset, DataLoader, RandomSampler
 from tqdm import tqdm
 from typing import Tuple
 
-from module.transformer import Config
-from module.tokenizer import BpeTokenizer
+from khaosz.module import ModelParameter
 from .checkpoint import TrainCheckPoint
 
 def get_lambda_lr(warning_step, lr_decay_iters, min_rate=0.1):
@@ -120,9 +119,7 @@ def ppo_block(
 class Trainer:
     def __init__(
         self,
-        model: nn.Module, 
-        tokenizer: BpeTokenizer,  
-        config: Config,
+        parameter: ModelParameter,
         log_path: str="./train_log.log"
     ):
         logger = logging.getLogger()
@@ -134,9 +131,9 @@ class Trainer:
         logger.info("initializing trainer ...")
         
         self.logger = logger
-        self.model = model
-        self.tokenizer = tokenizer
-        self.config = config
+        self.model = parameter.model
+        self.tokenizer = parameter.tokenizer
+        self.config = parameter.config
         
     def train(
         self,

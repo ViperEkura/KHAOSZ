@@ -5,14 +5,14 @@ import safetensors.torch as st
 from typing import Union
 from .retriever import Retriever
 from .tokenizer import BpeTokenizer
-from .transformer import Config, Transformer
+from .transformer import TransformerConfig, Transformer
 
 class ModelParameter:
     def __init__(
         self, 
         model: nn.Module, 
         tokenizer: BpeTokenizer, 
-        config: Config
+        config: TransformerConfig
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -51,7 +51,7 @@ class RetrieverParameter(ModelParameter):
         self, 
         model: nn.Module, 
         tokenizer: BpeTokenizer, 
-        config: Config,
+        config: TransformerConfig,
         retriver: Retriever
     ):
         super().__init__(model, tokenizer, config)
@@ -82,7 +82,7 @@ class ParameterLoader:
         has_config = os.path.exists(config_path)
         assert has_config, "No config.json found in the load directory"
         
-        config = Config(config_path)
+        config = TransformerConfig(config_path)
         tokenizer = BpeTokenizer(tokenizer_path)
         model = Transformer(config)
         

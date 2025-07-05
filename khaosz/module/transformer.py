@@ -89,27 +89,27 @@ def create_seq_mask(batch_attn_mask: Tensor, device: torch.device, dtype: torch.
     return attention_mask
 
 
-class Config:
+class TransformerConfig:
     def __init__(self, cfg_path=None):
-            self.vocab_size = None
-            self.n_dim = None
-            self.n_head = None
-            self.n_kvhead = None
-            self.d_ffn = None
-            self.m_len = None
-            self.n_layer = None
-            self.norm_eps = None
-            self.flash_attn = None
+        self.vocab_size = None
+        self.n_dim = None
+        self.n_head = None
+        self.n_kvhead = None
+        self.d_ffn = None
+        self.m_len = None
+        self.n_layer = None
+        self.norm_eps = None
+        self.flash_attn = None
 
-            if cfg_path is not None:
-                self.load(cfg_path)
+        if cfg_path is not None:
+            self.load(cfg_path)
     
     def load(self, config_path):
         with open(config_path, 'r') as f:
             config: dict = json.load(f)
-            for key, value in config.items():
-                if hasattr(self, key):
-                    setattr(self, key, value)
+        for key, value in config.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
                     
     def save(self, config_path):
         config_dict ={
@@ -228,7 +228,7 @@ class DecoderBlock(nn.Module):
     
   
 class Transformer(nn.Module):
-    def __init__(self, config: Config):
+    def __init__(self, config: TransformerConfig):
         super().__init__()
         self.head_dim = config.n_dim // config.n_head
         self.embedding = nn.Parameter(torch.empty(config.vocab_size, config.n_dim))

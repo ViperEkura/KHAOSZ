@@ -2,10 +2,7 @@ import os
 import pickle as pkl
 import torch.nn as nn
 import matplotlib.pyplot as plt
-
-from module.parameter import ModelParameter
-from module.tokenizer import BpeTokenizer
-from module.transformer import Config
+from khaosz.module import ModelParameter, BpeTokenizer, TransformerConfig
 
     
 class TrainCheckPoint(ModelParameter):
@@ -13,7 +10,7 @@ class TrainCheckPoint(ModelParameter):
             self, 
             model: nn.Module, 
             tokenizer: BpeTokenizer, 
-            config: Config, 
+            config: TransformerConfig, 
             loss_list: list, 
             n_iter: int
         ):
