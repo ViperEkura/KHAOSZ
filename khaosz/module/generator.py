@@ -60,31 +60,6 @@ class GeneratorCore:
         
         return next_token_ids.item() if not with_batch else next_token_ids.flatten().tolist()
 
-
-    def sentence_embedding(self, sentence: Union[str, List[str]]) -> Union[Tensor, List[Tensor]]:
-        with_batch = isinstance(sentence, list)
-        encode_fn = self.tokenizer.encode
-        ids = encode_fn(sentence) if not with_batch else [encode_fn(s) for s in sentence]
-        
-        torch.cuda.empty_cache()
-        device = next(self.model.parameters()).device
-        if not with_batch:
-            input_tensor = torch.as_tensor(ids, device=device)
-            input_tensor = input_tensor.unsqueeze(0)
-            seq_mask = torch.ones_like(input_tensor, dtype=torch.bool, device=device)
-        else:
-            max_len = max(len(seq) for seq in ids)
-            padded_ids = [[self.tokenizer.pad_id] * (max_len - len(seq)) + seq for seq in ids]
-            masks = [[token != self.tokenizer.pad_id for token in seq] for seq in padded_ids]
-            input_tensor = torch.as_tensor(padded_ids, device=device)
-            seq_mask = torch.as_tensor(masks, device=device, dtype=torch.bool)
-
-        with torch.no_grad():
-            output_seg = self.model(input_tensor, seq_mask, return_hidden=True)
-            emb_sentence = torch.mean(output_seg, dim=1)
-
-        return emb_sentence.flatten() if not with_batch else [e.flatten() for e in emb_sentence.split(1, dim=0)]
-
     def to(self, *args, **kargs):
         self.model.to(*args, **kargs)
         return self
@@ -97,7 +72,7 @@ class EmbeddingEncoderCore:
         self.config = parameter.config
     
 
-    def sentence_embedding(self, sentence: Union[str, List[str]]) -> Union[Tensor, List[Tensor]]:
+    def encode(self, sentence: Union[str, List[str]]) -> Union[Tensor, List[Tensor]]:
         with_batch = isinstance(sentence, list)
         encode_fn = self.tokenizer.encode
         ids = encode_fn(sentence) if not with_batch else [encode_fn(s) for s in sentence]
@@ -302,3 +277,11 @@ class RetrievalGenerator(GeneratorCore):
             top_k=top_k,
             top_p=top_p,
         )
+
+class EmbeddingEncoder(EmbeddingEncoderCore):
+    def __init__(self, parameter: ModelParameter):
+        super().__init__(parameter)
+        
+    def encode(self, sentence: Union[str, List[str]]) -> Union[Tensor, List[Tensor]]:
+        return super().encode(sentence)
+        
