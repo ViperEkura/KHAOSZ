@@ -75,12 +75,19 @@ class Retriever:
         
         
 class TextSplitter:
-    def __init__(self, emb_func: Callable[[List[str]], List[Tensor]]):
+    def __init__(
+        self, 
+        emb_func: Callable[[List[str]], List[Tensor]],
+        pattern: str = None
+    ):
+        base_pattern =  r'(?<=[。！？!?])(?=(?:[^"\'‘’“”]*["\'‘’“”][^"\'‘’“”]*["\'‘’“”])*[^"\'‘’“”]*$)'
         self.emb_func = emb_func
+        self.pattern = pattern
+        if pattern is None:
+            self.pattern = base_pattern
     
     def chunk(self, text: str, threshold: float = 0.5, window_size: int = 1) -> List[str]:
-        pattern = r'(?<=[。！？!?])(?=(?:[^"\'‘’“”]*["\'‘’“”][^"\'‘’“”]*["\'‘’“”])*[^"\'‘’“”]*$)'
-        sentences = [s.strip() for s in re.split(pattern, text.strip()) if s.strip()]
+        sentences = [s.strip() for s in re.split(self.pattern, text.strip()) if s.strip()]
         
         if len(sentences) <= 1:
             return sentences
