@@ -105,7 +105,6 @@ def dpo_processor(
         json.dump(output_dict, f, indent=4, ensure_ascii=False)
 
 if __name__ == "__main__":
-    # 设置 argparse
     parser = argparse.ArgumentParser(description="Run DPO (Direct Preference Optimization) with a Khaosz model.")
     parser.add_argument("--input_json_file", type=str, required=True, help="Path to the input JSON file.")
     parser.add_argument("--output_json_file", type=str, required=True, help="Path to the output JSON file.")
@@ -118,12 +117,10 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # 加载模型
-    model_dir = os.path.join(os.path.dirname(__file__), "params")
-    model = Khaosz(model_dir)
-    model = model.to(device='cuda', dtype=torch.float16)
+    script_dir = os.path.dirname(__file__)
+    model_dir = os.path.join(script_dir, "params")
+    model = Khaosz(model_dir).to(device='cuda', dtype=torch.bfloat16)
     
-    # 运行 DPO
     dpo_processor(
         model,
         input_json_file=args.input_json_file,
