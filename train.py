@@ -1,7 +1,6 @@
 import os
 import argparse
 import torch
-import safetensors.torch as st
 
 from typing import Callable, Dict
 from torch.optim import AdamW
