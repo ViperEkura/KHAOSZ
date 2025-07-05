@@ -79,10 +79,11 @@ python train.py \
 或者， 您可以使用流式输出接口/对话生成接口完成对话
 
 ```python
+import torch
 from khaosz import Khaosz
 
-model = Khaosz("params")
-model = model.to(device='cuda', dtype=torch.bfloat16)
+model_dir = "your_model_parameter_dir"
+model = Khaosz(model_dir).to(device='cuda', dtype=torch.bfloat16)
 histroy = []
 
 while True:
@@ -106,10 +107,11 @@ while True:
 或者您可以使用非流式输出的方式完成对话
 
 ```python
+import torch
 from khaosz import Khaosz
 
-model = Khaosz("params")
-model = model.to(device='cuda', dtype=torch.bfloat16)
+model_dir = "your_model_parameter_dir"
+model = Khaosz(model_dir).to(device='cuda', dtype=torch.bfloat16)
 histroy = []
 
 while True:
@@ -134,10 +136,11 @@ while True:
 如果您想在文本分段之后进行检索
 
 ```python
+import torch
 from khaosz import Khaosz
 
-model = Khaosz("params")
-model = model.to(device='cuda', dtype=torch.bfloat16)
+model_dir = "your_model_parameter_dir"
+model = Khaosz(model_dir).to(device='cuda', dtype=torch.bfloat16)
 
 # after init database
 
