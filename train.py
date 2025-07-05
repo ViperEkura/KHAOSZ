@@ -8,7 +8,6 @@ from torch.optim import AdamW
 from khaosz.module import ParameterLoader
 from khaosz.trainer import Trainer, SeqDataset, SftDataset, DpoDataset, BaseDataset
 
-dirname = os.path.dirname(__file__)
 
 def get_files(root_path: str) -> list[str]:
     paths = []
@@ -38,27 +37,24 @@ def train(
     assert train_type in ["seq", "sft", "dpo"]
     if train_type in ["sft", "dpo"]:
         assert resume_dir is not None
+        
+    script_dir = os.path.dirname(__file__)
+    load_path = resume_dir if resume_dir is not None else os.path.join(script_dir, "params")
     
-    load_path = resume_dir if resume_dir is not None else "params"
     parameter = ParameterLoader.load(load_path)
     model = parameter.model
     tokenizer = parameter.tokenizer
     config = parameter.config
-    
-    if resume_dir is not None:
-        weight_path = os.path.join(resume_dir, "model.safetensors")
-        model.load_state_dict(st.load_file(weight_path))
-        
     device = torch.device("cuda")
     model = model.to(device=device, dtype=torch.bfloat16)
     
-    dataset_factories: Dict[str, Callable[[int, torch.device], BaseDataset]] = {
+    dataset_router: Dict[str, Callable[[int, torch.device], BaseDataset]] = {
         "seq": lambda m_len, device: SeqDataset(m_len, device=device),
         "sft": lambda m_len, device: SftDataset(m_len, device=device),
         "dpo": lambda m_len, device: DpoDataset(m_len, device=device),
     }
 
-    dataset_generator = dataset_factories[train_type]
+    dataset_generator = dataset_router[train_type]
     dataset = dataset_generator(config.m_len, device)
     
     cache_files = get_files(data_root_path)
