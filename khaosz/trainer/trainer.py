@@ -8,11 +8,12 @@ import torch.nn.functional as F
 
 from torch import Tensor
 from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LambdaLR
+from abc import ABC, abstractmethod
 from torch.nn.utils import clip_grad_norm_
+from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import Dataset, DataLoader, RandomSampler
 from tqdm import tqdm
-from typing import Tuple
+from typing import Tuple, Dict,  Callable
 
 from khaosz.module import ModelParameter
 from .checkpoint import TrainCheckPoint
@@ -26,36 +27,6 @@ def get_lambda_lr(warning_step, lr_decay_iters, min_rate=0.1):
             return max(min_rate, 0.5 * (1.0 + math.cos(math.pi * rate)))
     
     return get_lr
-
-def seq_train_block(in_args: Tuple[Tensor, Tensor], model: nn.Module):
-    x, y = in_args
-    B, L = x.size()
-    logits: Tensor = model(x)
-    
-    loss = F.cross_entropy(
-        logits.view(B * L, -1), 
-        y.flatten()
-    )
-    return loss
-
-def sft_train_block(
-    in_args: Tuple[Tensor, Tensor, Tensor, Tensor], 
-    model: nn.Module
-):
-    x, y, loss_mask = in_args
-    B, L = x.size()
-    ignore_idx = -1
-    
-    logits: Tensor = model(x)
-    masked_y = y.masked_fill(loss_mask == 0, ignore_idx)
-    
-    loss = F.cross_entropy(
-        logits.view(B * L, -1),
-        masked_y.flatten(), 
-        ignore_index=ignore_idx
-    )
-
-    return loss
 
 def get_logprobs(model:nn.Module, input_ids: Tensor, mask: Tensor, pad_token_id):
     input_mask =  input_ids.ne(pad_token_id)
@@ -77,43 +48,78 @@ def get_logprobs(model:nn.Module, input_ids: Tensor, mask: Tensor, pad_token_id)
     
     return (token_logprobs * valid_mask).sum(dim=-1)
 
-def dpo_train_block(
-    in_args: Tuple[Tensor, Tensor, Tensor, Tensor],
-    pi_model: nn.Module, 
-    ref_model: nn.Module,
-    pad_token_id: int,
-    beta: float,
-):
-    # 输入应包含：good_ids, good_mask, bad_ids, bad_mask
-    good_ids, bad_ids, good_mask, bad_mask = in_args
-    
-    log_pi_good = get_logprobs(pi_model, good_ids, good_mask, pad_token_id)
-    log_pi_bad = get_logprobs(pi_model, bad_ids, bad_mask, pad_token_id)
-    
-    with torch.no_grad():
-        log_ref_good = get_logprobs(ref_model, good_ids, good_mask, pad_token_id)
-        log_ref_bad = get_logprobs(ref_model, bad_ids, bad_mask, pad_token_id)
-    
-    pi_log_ratio = log_pi_good - log_pi_bad
-    ref_log_ratio = log_ref_good - log_ref_bad
 
-    ratio_diff = pi_log_ratio - ref_log_ratio
+class BaseStrategy(ABC):
+    def __init__(self, model: nn.Module):
+        self.model = model
     
-    dpo_loss = -F.logsigmoid(beta * ratio_diff).mean()
-    return dpo_loss
+    @abstractmethod
+    def compute_loss(self, batch: Tuple[Tensor, ...]) -> Tensor:
+        raise NotImplementedError
+    
+    def __call__(self, batch: Tuple[Tensor, ...]) -> Tensor:
+        return self.compute_loss(batch)
 
-def ppo_block(
-    in_args: Tuple[Tensor, Tensor, Tensor, Tensor],
-    pi_model: nn.Module, 
-    ref_model: nn.Module, 
-    pad_token_id: int,
-    epslion:float = 0.1
-):
-    # 输入应包含：good_ids, good_mask, bad_ids, bad_mask
-    good_ids, bad_ids, good_mask, bad_mask = in_args
-    pi_log_probs = get_logprobs(pi_model, good_ids, good_mask,pad_token_id)
-    ref_log_probs = get_logprobs(ref_model, good_ids, good_mask, pad_token_id)
-    pass
+
+class SeqStrategy(BaseStrategy):
+    def __init__(self, model):
+        super().__init__(model)
+    
+    def compute_loss(self, batch: Tuple[Tensor, ...]) -> Tensor:
+        x, y = batch
+        B, L = x.size()
+        logits: Tensor = self.model(x)
+        
+        loss = F.cross_entropy(
+            logits.view(B * L, -1), y.flatten()
+        )
+        return loss
+    
+
+class SftStrategy(BaseStrategy):
+    def __init__(self, model):
+        super().__init__(model)
+    
+    def compute_loss(self, batch: Tuple[Tensor, ...]) -> Tensor:
+        x, y, loss_mask = batch
+        B, L = x.size()
+        ignore_idx = -1
+        
+        logits: Tensor = self.model(x)
+        masked_y = y.masked_fill(loss_mask == 0, ignore_idx)
+        
+        loss = F.cross_entropy(
+            logits.view(B * L, -1),
+            masked_y.flatten(), 
+            ignore_index=ignore_idx
+        )
+
+        return loss
+
+class DpoStrategy(BaseStrategy):
+    def __init__(self, model, ref_model, pad_token_id, beta):
+        super().__init__(model)
+        self.ref_model = ref_model
+        self.pad_token_id = pad_token_id
+        self.beta = beta
+        
+    def compute_loss(self, batch: Tuple[Tensor, ...]) -> Tensor:
+        good_ids, bad_ids, good_mask, bad_mask = batch
+        
+        log_pi_good = get_logprobs(self.model, good_ids, good_mask, self.pad_token_id)
+        log_pi_bad = get_logprobs(self.model, bad_ids, bad_mask, self.pad_token_id)
+        
+        with torch.no_grad():
+            log_ref_good = get_logprobs(self.ref_model, good_ids, good_mask, self.pad_token_id)
+            log_ref_bad = get_logprobs(self.ref_model, bad_ids, bad_mask, self.pad_token_id)
+        
+        pi_log_ratio = log_pi_good - log_pi_bad
+        ref_log_ratio = log_ref_good - log_ref_bad
+
+        ratio_diff = pi_log_ratio - ref_log_ratio
+        
+        dpo_loss = -F.logsigmoid(self.beta * ratio_diff).mean()
+        return dpo_loss
 
 
 class Trainer:
@@ -134,7 +140,7 @@ class Trainer:
         self.model = parameter.model
         self.tokenizer = parameter.tokenizer
         self.config = parameter.config
-        
+
     def train(
         self,
         train_type: str,
@@ -158,25 +164,25 @@ class Trainer:
         last_ckpt_iter = 0
         
         total_iters = len(dataset) // batch_size * n_epoch
-        labmbda_scheduler_fn = get_lambda_lr(warning_step, total_iters, min_rate)
-        ref_model = None
+        lambda_scheduler_fn = get_lambda_lr(warning_step, total_iters, min_rate)
         pad_token_id = self.tokenizer.pad_id
         
-        scheduler = LambdaLR(optimizer, labmbda_scheduler_fn)
-        generator = torch.Generator().manual_seed(random_seed)
-        sampler = RandomSampler(dataset, generator=generator)
-        
+        ref_model = None
         if train_type == "dpo":
             ref_model = copy.deepcopy(self.model)
-            ref_model.eval()
             ref_model.requires_grad_(False)
-
-        train_block = {
-            "seq": lambda x: seq_train_block(x, self.model),
-            "sft": lambda x: sft_train_block(x, self.model),
-            "dpo": lambda x: dpo_train_block(x, self.model, ref_model, pad_token_id, dpo_beta)
-        }[train_type]
+            ref_model.eval()
+            
+        train_strategy: Dict[str, Callable[[], BaseStrategy]] = {
+            "seq": lambda: SeqStrategy(self.model),
+            "sft": lambda: SftStrategy(self.model),
+            "dpo": lambda: DpoStrategy(self.model, pad_token_id, dpo_beta)
+        }
+        strategy = train_strategy[train_type]()
         
+        scheduler = LambdaLR(optimizer, lambda_scheduler_fn)
+        sampler = RandomSampler(dataset, generator=torch.Generator().manual_seed(random_seed))
+
         ckpt_saver = lambda current_iter: TrainCheckPoint(
             self.model, self.tokenizer, self.config, loss_list, current_iter
         ).save_ckpt(os.path.join(ckpt_dir, f"iter_{current_iter}"))
@@ -191,7 +197,7 @@ class Trainer:
 
             for batch in progress_bar:
                 #forward
-                loss = train_block(batch)
+                loss = strategy(batch)
                 loss_list.append(loss.item())
                 #backward
                 loss.backward()
