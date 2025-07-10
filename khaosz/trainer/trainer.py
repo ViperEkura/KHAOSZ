@@ -13,7 +13,7 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import Dataset, DataLoader, RandomSampler
 from tqdm import tqdm
-from typing import Tuple, Dict,  Callable
+from typing import Literal, Tuple, Dict,  Callable
 
 from khaosz.module import ModelParameter
 from .checkpoint import TrainCheckPoint
@@ -143,7 +143,7 @@ class Trainer:
 
     def train(
         self,
-        train_type: str,
+        train_type: Literal["seq", "sft", "dpo"],
         dataset: Dataset,
         optimizer: Optimizer,
         ckpt_dir: str,
