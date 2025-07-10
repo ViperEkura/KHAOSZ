@@ -21,8 +21,8 @@ class Khaosz:
             query: str, 
             history: List[Tuple[str, str]]=None,
             temperature: float=0.8,
-            top_k: int=0,
-            top_p: float=0.8,
+            top_k: int=50,
+            top_p: float=0.95,
         ) -> str:
             generator = ChatGenerator(self.parameter)
             return generator.generate(
@@ -38,8 +38,8 @@ class Khaosz:
             queries: List[str],
             histories: List[Tuple[str, str]]=None,
             temperature: float=0.8,
-            top_k: int=0,
-            top_p: float=0.8,
+            top_k: int=50,
+            top_p: float=0.95,
         ) -> List[str]:
             generator = BatchGenerator(self.parameter)
             return generator.generate(
@@ -56,11 +56,11 @@ class Khaosz:
             query: str, 
             history: List[Tuple[str, str]]=None,
             temperature: float=0.8,
-            top_k: int=0,
-            top_p: float=0.8,
+            top_k: int=50,
+            top_p: float=0.95,
         ) -> Generator[Tuple[str, List[Tuple[str, str]]], None, None]:
             stream_generator = StreamGenerator(self.parameter)
-            yield stream_generator.generate(
+            return stream_generator.generate(
                     query, 
                     history=history,
                     temperature=temperature, 
@@ -73,9 +73,9 @@ class Khaosz:
             retrieved,
             query: str, 
             history: List[Tuple[str, str]] = None,
-            temperature: float = 0.8,
-            top_k: int = 0,
-            top_p: float = 0.8,
+            temperature: float=0.8,
+            top_k: int=50,
+            top_p: float=0.95,
         ) -> str:
             generator = RetrievalGenerator(self.parameter)
             return generator.generate(
