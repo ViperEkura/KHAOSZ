@@ -1,17 +1,16 @@
 # cache
 __pycache__
 
-# model
-*.pt
-*.safetensors
-
 # params
+*.safetensors
 *.json
 *.pkl
 *.db
 
-# train_log / test
+# train_log
 *.log
+
+# test unit
 test*
 
 # debug file
