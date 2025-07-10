@@ -87,6 +87,22 @@ class Khaosz:
                 top_p=top_p,
             )
     
+    def text_generate(            
+            self, 
+            query: str, 
+            temperature: float=0.8,
+            top_k: int=50,
+            top_p: float=0.95,
+        ) -> str:
+        generator = TextGenerator(self.parameter)
+        
+        return generator.generate(
+                query,
+                temperature=temperature, 
+                top_k=top_k, 
+                top_p=top_p,
+            )
+    
     def encode(self, sentence: Union[str, List[str]]) -> Union[Tensor, List[Tensor]]:
         encoder = EmbeddingEncoder(self.parameter)
         return encoder.encode(sentence)

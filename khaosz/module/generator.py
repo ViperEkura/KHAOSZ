@@ -100,6 +100,43 @@ class EmbeddingEncoderCore:
         self.model.to(*args, **kargs)
         return self
 
+class TextGenerator(GeneratorCore):
+    def __init__(self, parameter: ModelParameter):
+        super().__init__(parameter)
+    
+    def generate(
+            self, 
+            query: str, 
+            temperature: float,
+            top_k: int,
+            top_p: float,
+        ) -> str:
+        
+        assert temperature >= 0.0
+        assert top_k >= 0
+        assert top_p >= 0.0 and top_p <= 1.0
+        
+        if history is None:
+            history = []
+        
+        ids = self.tokenizer.encode(query)
+        start_id_pos = len(ids)
+        response = str()
+        
+        self.model.eval()
+        with torch.no_grad():
+            while len(ids) < self.config.m_len:
+                next_token_id = self.sample_next_token(ids, temperature, top_k=top_k, top_p=top_p)
+                if next_token_id in self.tokenizer.stop_ids:
+                    break
+                ids.append(next_token_id)
+            
+        response = self.tokenizer.decode(ids[start_id_pos:])
+        history.append((query, response))
+        
+        return response
+
+
 
 class ChatGenerator(GeneratorCore):
     def __init__(self, parameter: ModelParameter):
