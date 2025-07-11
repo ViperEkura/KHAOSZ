@@ -116,8 +116,6 @@ class TextGenerator(GeneratorCore):
         assert top_k >= 0
         assert top_p >= 0.0 and top_p <= 1.0
         
-        if history is None:
-            history = []
         
         ids = self.tokenizer.encode(query)
         start_id_pos = len(ids)
@@ -132,7 +130,6 @@ class TextGenerator(GeneratorCore):
                 ids.append(next_token_id)
             
         response = self.tokenizer.decode(ids[start_id_pos:])
-        history.append((query, response))
         
         return response
 
