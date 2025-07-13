@@ -1,6 +1,5 @@
 import os
 import copy
-import math
 import torch
 import logging
 
@@ -13,18 +12,8 @@ from typing import Literal, Dict,  Callable
 
 from khaosz.module import ModelParameter
 from .checkpoint import TrainCheckPoint
-from .strategy import SeqStrategy, SftStrategy, DpoStrategy, BaseStrategy
+from .strategy import SeqStrategy, SftStrategy, DpoStrategy, BaseStrategy, SchedulerFactory
 
-
-def get_lambda_lr(warning_step, lr_decay_iters, min_rate=0.1):
-    def get_lr(now_iter):
-        if now_iter <= warning_step:
-            return max(min_rate, now_iter / warning_step)
-        else:
-            rate = (now_iter - warning_step) / (lr_decay_iters - warning_step)
-            return max(min_rate, 0.5 * (1.0 + math.cos(math.pi * rate)))
-    
-    return get_lr
 
 class Trainer:
     def __init__(
@@ -68,7 +57,8 @@ class Trainer:
         last_ckpt_iter = 0
         
         total_iters = len(dataset) // batch_size * n_epoch
-        lambda_scheduler_fn = get_lambda_lr(warning_step, total_iters, min_rate)
+        get_lambda_scheduler_fn = SchedulerFactory.get_sgdr_schedule
+        lambda_scheduler_fn = get_lambda_scheduler_fn(warning_step, total_iters, min_rate)
         pad_token_id = self.tokenizer.pad_id
         
         ref_model = None
