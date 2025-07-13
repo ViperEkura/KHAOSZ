@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from typing import Tuple
 from abc import ABC, abstractmethod
+
 def get_logprobs(model:nn.Module, input_ids: Tensor, mask: Tensor, pad_token_id):
     input_mask =  input_ids.ne(pad_token_id)
     logits = model(input_ids, input_mask)
