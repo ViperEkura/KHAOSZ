@@ -71,30 +71,62 @@ class EmbeddingEncoderCore:
         self.tokenizer = parameter.tokenizer
         self.config = parameter.config
     
-
     def encode(self, sentence: Union[str, List[str]]) -> Union[Tensor, List[Tensor]]:
         with_batch = isinstance(sentence, list)
-        encode_fn = self.tokenizer.encode
-        ids = encode_fn(sentence) if not with_batch else [encode_fn(s) for s in sentence]
+        ids = self.tokenizer.encode(sentence)
+        batch_ids = ids if with_batch else [ids]
+        max_model_len = self.config.m_len
         
-        torch.cuda.empty_cache()
+        all_fragments = []
+        fragment_origin_idx = []
+        
+        for i, seq in enumerate(batch_ids):
+            if len(seq) > max_model_len:
+                fragments = [seq[j:j+max_model_len] for j in range(0, len(seq), max_model_len)]
+                all_fragments.extend(fragments)
+                fragment_origin_idx.extend([i] * len(fragments))
+            else:
+                all_fragments.append(seq)
+                fragment_origin_idx.append(i)
+        
+        #if empty fragments
+        if not all_fragments:
+            return [] if with_batch else torch.tensor([])
+        
         device = next(self.model.parameters()).device
-        if not with_batch:
-            input_tensor = torch.as_tensor(ids, device=device)
-            input_tensor = input_tensor.unsqueeze(0)
-            seq_mask = torch.ones_like(input_tensor, dtype=torch.bool, device=device)
-        else:
-            max_len = max(len(seq) for seq in ids)
-            padded_ids = [[self.tokenizer.pad_id] * (max_len - len(seq)) + seq for seq in ids]
-            masks = [[token != self.tokenizer.pad_id for token in seq] for seq in padded_ids]
-            input_tensor = torch.as_tensor(padded_ids, device=device)
-            seq_mask = torch.as_tensor(masks, device=device, dtype=torch.bool)
-
+        max_len = min(max(len(seq) for seq in all_fragments), max_model_len)
+        
+        padded_ids = []
+        masks = []
+        for seq in all_fragments:
+            pad_len = max_len - len(seq)
+            padded_seq = seq + [self.tokenizer.pad_id] * pad_len
+            mask = [token_id != self.tokenizer.pad_id for token_id in padded_seq]
+            padded_ids.append(padded_seq)
+            masks.append(mask)
+        
+        input_tensor = torch.tensor(padded_ids, device=device)
+        seq_mask = torch.tensor(masks, device=device, dtype=torch.bool)
+        
         with torch.no_grad():
-            output_seg = self.model(input_tensor, seq_mask, return_hidden=True)
-            emb_sentence = torch.mean(output_seg, dim=1)
-
-        return emb_sentence.flatten() if not with_batch else [e.flatten() for e in emb_sentence.split(1, dim=0)]
+            outputs = self.model(input_tensor, seq_mask, return_hidden=True)
+            # [num_fragments, seq_len, hidden_size]
+            fragment_embs = torch.mul(outputs, seq_mask.unsqueeze(-1))  
+        
+        sentence_embs: List[Tensor] = []
+        for i in range(len(batch_ids)):
+            indices = [idx for idx, orig_idx in enumerate(fragment_origin_idx) if orig_idx == i]
+            if indices is not None:
+                sum_frags = torch.sum(fragment_embs[indices, :, :], dim=1)      # [frags, hidden_size]
+                length = torch.sum(seq_mask[indices, :], dim=1).unsqueeze(1)    # [frags, 1]
+                emb = torch.sum(sum_frags / length, dim=0)                      # [frags, hidden_size]
+                assert emb.numel() == 1024
+                sentence_embs.append(emb.flatten())
+        
+        if with_batch:
+            return [emb.flatten() for emb in sentence_embs]
+        else:
+            return sentence_embs[0].flatten()
 
     def to(self, *args, **kargs):
         self.model.to(*args, **kargs)
