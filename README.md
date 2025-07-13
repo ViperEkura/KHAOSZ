@@ -4,13 +4,16 @@
 
 这是一个支持中文和英文双语言的Transfomer模型，包含模型设置和训练流程， 通过加载`params/config.json` 中的设定的参数完成训练， 使用`train.py`解析命令行参数，包括数据集根目录、训练轮数、批处理大小、保存检查点的间隔轮数以及检查点保存目录。
 
-模型的参数下载链接：https://huggingface.co/ViperEk/KHAOSZ
+模型下载方法(二选一)：
 
-演示视频链接：https://www.bilibili.com/video/BV1z5RPYHEkd
+1. 前往 https://huggingface.co/ViperEk/KHAOSZ 查找**Files and versions**
+2. 运行 **params/download.py** 下载参数
 
-训练数据集来源在模型的参数下载链接中注明，若要使用模型请下载后将参数放置于 params 目录
+演示视频：https://www.bilibili.com/video/BV1z5RPYHEkd
 
-代码遵循 http://www.apache.org/licenses/LICENSE-2.0 协议， 使用时请注明代码来源
+训练数据集来源在huggingface下载链接中的**Model Card**界面查找
+
+代码遵循 Apache-2.0 协议， 使用时请注明代码来源
 
 - **📊设备选择**：当前代码默认使用CUDA进行训练
 - **🌐性能优化**：代码中设置了`dtype=torch.bfloat16`来启用训练，这有助于提高训练速度和降低显存消耗，但需确保硬件支持此特性。
