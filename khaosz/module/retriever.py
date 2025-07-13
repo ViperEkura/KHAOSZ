@@ -9,7 +9,9 @@ from typing import Callable, Dict, List, Tuple
 
 class Retriever:
     def __init__(self, db_path=None):
-        self.data: Dict[str, Tensor] = {} 
+        self.data: Dict[str, Tensor] = {}
+        self.embedding_cache: Tensor = None
+        self.is_caculated: bool = False
         
         if db_path is not None:
             self.load(db_path)
@@ -17,10 +19,10 @@ class Retriever:
     def retrieve(self, query: Tensor, top_k: int) -> List[Tuple[str, float]]:
         if not self.data:
             return []
-        query = query.flatten().unsqueeze(1)  # [dim, 1]
-        embeddings = torch.stack(list(self.data.values())).to(device=query.device,dtype=query.dtype)   # [n_vectors, dim]
-        embeddings = embeddings / torch.norm(embeddings, dim=-1, keepdim=True)
-        sim_scores = torch.matmul(embeddings, query).squeeze() # [n_vectors]
+        
+        query = query.flatten().unsqueeze(1)                        # [dim, 1]
+        norm_embeddings = self._cacu_embeddings()                   # [n_vectors, dim]
+        sim_scores = torch.matmul(norm_embeddings, query).squeeze() # [n_vectors]
         
         top_k = min(top_k, len(self.data))
         indices = sim_scores.topk(top_k).indices
@@ -29,15 +31,17 @@ class Retriever:
         return [(keys[i], sim_scores[i].item()) for i in indices]
     
     def add_vector(self, key: str, vector_data: Tensor):
+        self.is_caculated = False
         self.data[key] = vector_data.flatten().float().cpu()
         
     def delete_vector(self, key: str):
+        self.is_caculated = False
         self.data.pop(key, None)
     
     def save(self, db_path):
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-        self.__init_db__(cursor)
+        self._init_db(cursor)
         cursor.execute('DELETE FROM vectors')
         
         for item, vec in self.data.items():
@@ -51,7 +55,7 @@ class Retriever:
     def load(self, db_path):
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-        self.__init_db__(cursor)
+        self._init_db(cursor)
         cursor.execute('SELECT key, vector FROM vectors')
         rows = cursor.fetchall()
         self.data = {}
@@ -64,7 +68,7 @@ class Retriever:
         
         conn.close()
         
-    def __init_db__(self,cursor: sqlite3.Cursor):
+    def _init_db(self,cursor: sqlite3.Cursor):
         # Create table if not exists (in case loading from a new database)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS vectors (
@@ -72,6 +76,14 @@ class Retriever:
                 key TEXT UNIQUE NOT NULL,
                 vector BLOB NOT NULL
             )''')
+    
+    def _cacu_embeddings(self) -> Tensor:
+        if not self.is_caculated:
+            embeddings = torch.stack(list(self.data.values())) 
+            norm_embeddings = embeddings / torch.norm(embeddings, dim=-1, keepdim=True)
+            self.embedding_cache = norm_embeddings
+        
+        return self.embedding_cache
         
         
 class TextSplitter:
