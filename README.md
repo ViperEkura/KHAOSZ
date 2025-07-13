@@ -1,4 +1,4 @@
-![image-20250306182014120](/resources/images/image-20250306182014120.png)
+![image-20250306182014120](/resources/images/project_logo.png)
 
 # KHAOSZ
 
