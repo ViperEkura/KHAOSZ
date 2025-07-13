@@ -32,32 +32,30 @@ class BpeTokenizer:
         
         if path is not None:
             self._tokenizer = Tokenizer.from_file(path)
-    
-    def __init_trainer(self, vocab_size, min_freq):
+        
+    def _prepare_trainer(self, vocab_size: int, min_freq: int, reserved_token_size: int) -> tuple:
+        assert reserved_token_size > len(self._special_tokens)
+        reserved_tokens = [f"<|rsv{i:02d}|>" for i in range(reserved_token_size - len(self._special_tokens))]
+        detail_vocab_size = vocab_size - (len(reserved_tokens) + len(self._special_tokens))
+        
         alphabet = pre_tokenizers.ByteLevel.alphabet()
-        min_size  = len(alphabet) + len(self._control_tokens)
-        assert vocab_size > min_size
+        min_size = len(alphabet) + len(self._control_tokens)
+        assert detail_vocab_size > min_size
         
         trainer = BpeTrainer(
-            vocab_size=vocab_size,
-            min_frequency=min_freq, 
-            limit_alphabet= vocab_size // 4,
+            vocab_size=detail_vocab_size,
+            min_frequency=min_freq,
+            limit_alphabet=detail_vocab_size // 4,
             max_token_length=18,
             special_tokens=self._control_tokens,
             show_progress=True,
             initial_alphabet=alphabet,
         )
-        return trainer
         
-    def __prepare_trainer(self, vocab_size: int, min_freq: int, reserved_token_size: int) -> tuple:
-        assert reserved_token_size > len(self._special_tokens)
-        reserved_tokens = [f"<|rsv{i:02d}|>" for i in range(reserved_token_size - len(self._special_tokens))]
-        detail_vocab_size = vocab_size - (len(reserved_tokens) + len(self._special_tokens))
-        trainer = self.__init_trainer(docab_size=detail_vocab_size, min_freq=min_freq)
         return trainer, detail_vocab_size, reserved_tokens
 
     def train(self, files, vocab_size, min_freq, reserved_token_size=100):
-        trainer, _, reserved_tokens = self.__prepare_trainer(
+        trainer, _, reserved_tokens = self._prepare_trainer(
             vocab_size=vocab_size,
             min_freq=min_freq,
             reserved_token_size=reserved_token_size
@@ -66,7 +64,7 @@ class BpeTokenizer:
         self._tokenizer.add_special_tokens(self._special_tokens + reserved_tokens)
             
     def train_from_iterator(self, iterator, vocab_size, min_freq, reserved_token_size=100):
-        trainer, _, reserved_tokens = self.__prepare_trainer(
+        trainer, _, reserved_tokens = self._prepare_trainer(
             vocab_size=vocab_size,
             min_freq=min_freq,
             reserved_token_size=reserved_token_size
