@@ -24,7 +24,6 @@ def load_pkl_files(paths: List[str]):
     return segments, total_samples
 
 
-
 class BaseSegmentFetcher:
     def __init__(self, segments: List[Tensor]):
         self.segments = segments
@@ -135,6 +134,7 @@ class SftDataset(BaseDataset):
     
     def _fetch_data(self, begin_idx: int, end_idx: int, key: str) -> Tensor:
         return self.fetcher.key_fetch(begin_idx, end_idx, key)
+    
     def __getitem__(self, index):
         begin_idx = index * self.chunk_size 
         end_idx = min(begin_idx + self.chunk_size, self.total_samples - 1)
@@ -164,3 +164,26 @@ class DpoDataset(BaseDataset):
         rejected_mask = self._fetch_data(start_idx, end_idx, "rejected_mask").to(device=self.device, dtype=torch.bool)
 
         return chosen, rejected, chosen_mask, rejected_mask
+
+
+class PpoDataset(BaseDataset):
+    def __init__(self, chunk_size: int, device="cuda"):
+        super().__init__(chunk_size, device)
+        self.fetcher = MutiSegmentFetcher(self.segments)
+
+    def _fetch_data(self, begin_idx: int, end_idx: int, key: str) -> Tensor:
+        return self.fetcher.key_fetch(begin_idx, end_idx, key)
+    
+    def __getitem__(self, index: int) -> Dict[str, Tensor]:
+
+        begin_idx = index * self.chunk_size
+        end_idx = min(begin_idx + self.chunk_size, self.total_samples - 1)
+        
+
+        input_ids =  self._fetch_data(begin_idx, end_idx, "input_ids").to(self.device),
+        actions = self._fetch_data(begin_idx, end_idx, "actions").to(self.device),
+        logprobs = self._fetch_data(begin_idx, end_idx, "logprobs").to(self.device),
+        rewards =  self._fetch_data(begin_idx, end_idx, "rewards").to(self.device)
+        
+        return input_ids, actions, logprobs, rewards
+        
