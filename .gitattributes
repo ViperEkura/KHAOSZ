@@ -2,13 +2,7 @@
 
 *.bat eol=crlf
 *.cmd eol=crlf
-
 *.sh eol=lf
-*.py eol=lf
-*.js eol=lf
-*.json eol=lf
-*.md eol=lf
-*.txt eol=lf
 
 *.png binary
 *.safetensors binary

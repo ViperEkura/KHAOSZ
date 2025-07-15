@@ -48,7 +48,8 @@ class Trainer:
         warning_step: int = 1000,
         min_rate: float = 0.1,
         dpo_beta: float = 0.1,
-        random_seed: int = 3306
+        random_seed: int = 3306,
+        strategy: Literal["cosine", "sgdr"]="cosine"
     ):
         assert train_type in ["seq", "sft", "dpo"]
         

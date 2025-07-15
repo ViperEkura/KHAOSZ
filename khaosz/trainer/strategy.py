@@ -145,3 +145,9 @@ class SchedulerFactory:
                 return max(min_rate, 0.5 * (1.0 + math.cos(math.pi * rate)))
         
         return cosine_warmup_schedule
+    
+    def load_schedule_fn(self, strategy: str, *kargs):
+        if strategy == "cosine":
+            return self.get_cosine_warmup_schedule(*kargs)
+        elif strategy == "sgdr":
+            return self.get_sgdr_schedule(*kargs)
