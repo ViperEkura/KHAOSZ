@@ -120,7 +120,6 @@ class EmbeddingEncoderCore:
                 sum_frags = torch.sum(fragment_embs[indices, :, :], dim=1)      # [frags, hidden_size]
                 length = torch.sum(seq_mask[indices, :], dim=1).unsqueeze(1)    # [frags, 1]
                 emb = torch.sum(sum_frags / length, dim=0)                      # [frags, hidden_size]
-                assert emb.numel() == 1024
                 sentence_embs.append(emb.flatten())
         
         if with_batch:
