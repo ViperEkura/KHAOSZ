@@ -1,3 +1,4 @@
+
 import math
 import json
 import torch
@@ -6,7 +7,8 @@ import torch.nn.functional as F
 
 from torch import Tensor
 from torch.nn import init
-from typing import Tuple
+from typing import Tuple, Optional
+from dataclasses import asdict, dataclass
 
 def create_mask(L: int, device) -> Tensor:
     return torch.ones(
@@ -76,9 +78,12 @@ def self_attention(
     output = torch.matmul(scores, v)
     return output
 
-def create_seq_mask(batch_attn_mask: Tensor, device: torch.device, dtype: torch.dtype) -> Tensor:
+def create_seq_mask(
+        batch_attn_mask: Tensor, 
+        device: torch.device, 
+        dtype: torch.dtype
+    ) -> Tensor:
     batch_size, seq_len = batch_attn_mask.shape
-    
     expanded_mask = batch_attn_mask.unsqueeze(1).expand(batch_size, seq_len, seq_len)
     bool_mask = expanded_mask & expanded_mask.transpose(1, 2)
 
@@ -88,40 +93,34 @@ def create_seq_mask(batch_attn_mask: Tensor, device: torch.device, dtype: torch.
 
     return attention_mask
 
-
+@dataclass
 class TransformerConfig:
-    def __init__(self, cfg_path=None):
-        self.vocab_size = None
-        self.n_dim = None
-        self.n_head = None
-        self.n_kvhead = None
-        self.d_ffn = None
-        self.m_len = None
-        self.n_layer = None
-        self.norm_eps = None
-        self.flash_attn = None
-
-        if cfg_path is not None:
-            self.load(cfg_path)
+    # config info
+    vocab_size: Optional[int] = None
+    n_dim: Optional[int] = None
+    n_head: Optional[int] = None
+    n_kvhead: Optional[int] = None
+    d_ffn: Optional[int] = None
+    m_len: Optional[int] = None
+    n_layer: Optional[int] = None
+    norm_eps: Optional[float] = None
+    flash_attn: Optional[bool] = None
     
-    def load(self, config_path):
+    def __init__(self, config_path: str):
+        if config_path is not None:
+            with open(config_path, "r") as f:
+                self.load(config_path)
+        
+    def load(self, config_path: str) -> None:
         with open(config_path, 'r') as f:
             config: dict = json.load(f)
         for key, value in config.items():
             if hasattr(self, key):
                 setattr(self, key, value)
                     
-    def save(self, config_path):
-        config_dict ={
-            "vocab_size": self.vocab_size,
-            "n_dim": self.n_dim,
-            "n_head": self.n_head,
-            "n_kvhead": self.n_kvhead,
-            "d_ffn": self.d_ffn,
-            "m_len": self.m_len,
-            "n_layer": self.n_layer,
-            "norm_eps": self.norm_eps,
-        }
+    def save(self, config_path: str) -> None:
+        config_dict = asdict(self)
+        config_dict = {k: v for k, v in config_dict.items() if v is not None}
         with open(config_path, 'w') as f:
             json.dump(config_dict, f, indent=4)
             
