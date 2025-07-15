@@ -49,17 +49,33 @@ class Trainer:
         min_rate: float = 0.1,
         dpo_beta: float = 0.1,
         random_seed: int = 3306,
-        strategy: Literal["cosine", "sgdr"]="cosine"
+        cycle_length: int = 5000,
+        T_mult: int = 2,
+        schedule_type: Literal["cosine", "sgdr"]="cosine"
     ):
         assert train_type in ["seq", "sft", "dpo"]
+        assert schedule_type in ["cosine", "sgdr"]
         
         n_iter = 0
         loss_list = []
         last_ckpt_iter = 0
-        
         total_iters = len(dataset) // batch_size * n_epoch
-        get_lambda_scheduler_fn = SchedulerFactory.get_sgdr_schedule
-        lambda_scheduler_fn = get_lambda_scheduler_fn(warning_step, total_iters, min_rate)
+        
+        if schedule_type == "cosine":
+            kargs = {
+                'warning_step': warning_step,
+                'lr_decay_iters': total_iters,
+                'min_rate': min_rate
+            }
+        else:  # sgdr
+            kargs = {
+                'warning_step': warning_step,
+                'cycle_length': cycle_length,
+                'min_rate': min_rate,
+                'T_mult': T_mult
+            }
+            
+        lambda_scheduler_fn  = SchedulerFactory.load_schedule_fn(schedule_type, *kargs)
         pad_token_id = self.tokenizer.pad_id
         
         ref_model = None
