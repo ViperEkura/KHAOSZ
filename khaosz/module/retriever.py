@@ -20,9 +20,12 @@ class Retriever:
         if not self.data:
             return []
         
-        query = query.flatten().unsqueeze(1)                        # [dim, 1]
-        norm_embeddings = self._cacu_embeddings()                   # [n_vectors, dim]
-        sim_scores = torch.matmul(norm_embeddings, query).squeeze() # [n_vectors]
+        query = query.flatten().unsqueeze(1)                            # [dim, 1]
+        norm_embeddings = self._embeddings.to(
+            device=query.device,
+            dtype=query.dtype
+        )                                                               # [n_vectors, dim]
+        sim_scores = torch.matmul(norm_embeddings, query).squeeze()     # [n_vectors]
         
         top_k = min(top_k, len(self.data))
         indices = sim_scores.topk(top_k).indices
@@ -77,7 +80,8 @@ class Retriever:
                 vector BLOB NOT NULL
             )''')
     
-    def _cacu_embeddings(self) -> Tensor:
+    @property
+    def _embeddings(self) -> Tensor:
         if not self.is_caculated:
             embeddings = torch.stack(list(self.data.values())) 
             norm_embeddings = embeddings / torch.norm(embeddings, dim=-1, keepdim=True)
