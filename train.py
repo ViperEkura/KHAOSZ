@@ -4,7 +4,7 @@ import torch
 
 from torch.optim import AdamW
 from khaosz.module import ParameterLoader
-from khaosz.trainer import Trainer, DatasetLoader
+from khaosz.trainer import Trainer, DatasetLoader, CosineSchedule
 
 
 def get_files(root_path: str) -> list[str]:
@@ -64,9 +64,9 @@ def train(
         betas=adamw_betas,
         weight_decay=adamw_weight_decay
     )
-    
+    total_iters = len(dataset) // batch_size * n_epoch
     trainer = Trainer(parameter)
-    trainer.train(
+    schedule = CosineSchedule(
         train_type=train_type,
         dataset=dataset,
         optimizer=optim,
@@ -75,11 +75,17 @@ def train(
         batch_size=batch_size,
         n_iter_ckpt=n_iter_ckpt,
         n_iter_step=n_iter_step,
-        warning_step=warning_step,
-        dpo_beta=dpo_beta,
         max_grad_norm=max_grad_norm,
-        random_seed=random_seed
+        warning_step=warning_step,
+        random_seed=random_seed,
+        total_iters=total_iters,
     )
+    
+    train_kwargs = schedule.get_kargs()
+    if train_type == "dpo":
+        train_kwargs["dpo_beta"] = dpo_beta
+    
+    trainer.train(**train_kwargs)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the Transformer model.")
