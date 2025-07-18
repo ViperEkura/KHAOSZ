@@ -46,12 +46,13 @@ class Trainer:
         n_iter_step: int = 1,
         max_grad_norm: float = 1.0,
         warning_step: int = 1000,
+        random_seed: int = 3306,
+        schedule_type: Literal["cosine", "sgdr"]="cosine",
         min_rate: float = 0.1,
         dpo_beta: float = 0.1,
-        random_seed: int = 3306,
         cycle_length: int = 5000,
         T_mult: int = 2,
-        schedule_type: Literal["cosine", "sgdr"]="cosine"
+        
     ):
         assert train_type in ["seq", "sft", "dpo"]
         assert schedule_type in ["cosine", "sgdr"]

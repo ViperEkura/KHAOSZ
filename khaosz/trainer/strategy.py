@@ -4,9 +4,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from torch import Tensor
-from typing import Tuple, Callable
+from torch.optim import Optimizer
+from torch.utils.data import Dataset
+from typing import Any, Literal, Tuple, Callable, Dict
 from abc import ABC, abstractmethod
-
+from dataclasses import asdict, dataclass
 
 def get_logprobs(model:nn.Module, input_ids: Tensor, mask: Tensor, pad_token_id):
     input_mask =  input_ids.ne(pad_token_id)
@@ -101,6 +103,70 @@ class DpoStrategy(BaseStrategy):
         dpo_loss = -F.logsigmoid(self.beta * ratio_diff).mean()
         return dpo_loss
     
+
+class StrategyFactory:
+    
+    def load(model, train_type, pad_token_id, dpo_beta):
+        train_strategy: Dict[str, Callable[[], BaseStrategy]] = {
+            "seq": lambda: SeqStrategy(model),
+            "sft": lambda: SftStrategy(model),
+            "dpo": lambda: DpoStrategy(model, pad_token_id, dpo_beta)
+        }
+        strategy = train_strategy[train_type]()
+        return strategy
+    
+
+@dataclass
+class BaseSchedule:
+    train_type: Literal["seq", "sft", "dpo"]
+    dataset: Dataset
+    optimizer: Optimizer
+    ckpt_dir: str
+    n_epoch: int = 1
+    batch_size: int = 4
+    n_iter_ckpt: int = 5000
+    n_iter_step: int = 1
+    max_grad_norm: float = 1.0
+    warning_step: int = 1000
+    random_seed: int = 3306
+
+    def get_kargs(self)-> Dict[str, Any]:
+        config_dict = asdict(self)
+        return {k: v for k, v in config_dict.items() if v is not None}
+    
+
+@dataclass   
+class CosineSchedule(BaseSchedule):
+    total_iters: int
+    min_rate: float = 0.1
+    schedule_type: Literal["cosine"] = "cosine"
+    
+    def get_kargs(self) -> Dict[str, Any]:
+        base_args = super().get_kargs()
+        return {
+            **base_args,
+            "schedule_type": self.schedule_type,
+            "total_iters": self.total_iters,
+            "min_rate": self.min_rate
+        }
+
+@dataclass
+class SgdrSchedule(BaseSchedule):
+    cycle_length: int
+    min_rate: float = 0.1
+    T_mult: int = 2
+    schedule_type: Literal["sgdr"] = "sgdr"
+    
+    def get_kargs(self) -> Dict[str, Any]:
+        base_args = super().get_kargs()
+        return {
+            **base_args,
+            "schedule_type": self.schedule_type,
+            "cycle_length": self.cycle_length,
+            "min_rate": self.min_rate,
+            "T_mult": self.T_mult
+        }
+
 
 class SchedulerFactory:
 
