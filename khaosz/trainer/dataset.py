@@ -4,7 +4,7 @@ import pickle as pkl
 from abc import ABC, abstractmethod
 from torch import Tensor
 from torch.utils.data import Dataset
-from typing import List, Dict, Union
+from typing import Callable, List, Dict, Literal, Union
 
 MutiSeg = Dict[str, List[Tensor]]
 Seg = Dict[str, Tensor]
@@ -186,4 +186,23 @@ class PpoDataset(BaseDataset):
         rewards =  self._fetch_data(begin_idx, end_idx, "rewards").to(self.device)
         
         return input_ids, actions, logprobs, rewards
+    
+
+class DatasetLoader:
+    @staticmethod       
+    def load(
+        train_type: Literal["seq", "sft", "dpo"],
+        load_path: Union[str, List[str]],
+        max_len: int, 
+        device: str
+        ) -> BaseDataset:
         
+        dataset_router: Dict[str, Callable[[int, torch.device], BaseDataset]] = {
+            "seq": lambda m_len, device: SeqDataset(m_len, device=device),
+            "sft": lambda m_len, device: SftDataset(m_len, device=device),
+            "dpo": lambda m_len, device: DpoDataset(m_len, device=device),
+        }
+        dataset = dataset_router[train_type](max_len, device)
+        dataset.load(load_path)
+        
+        return dataset

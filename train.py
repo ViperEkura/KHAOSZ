@@ -2,10 +2,9 @@ import os
 import argparse
 import torch
 
-from typing import Callable, Dict
 from torch.optim import AdamW
 from khaosz.module import ParameterLoader
-from khaosz.trainer import Trainer, SeqDataset, SftDataset, DpoDataset, BaseDataset
+from khaosz.trainer import Trainer, DatasetLoader
 
 
 def get_files(root_path: str) -> list[str]:
@@ -46,17 +45,13 @@ def train(
     device = torch.device("cuda")
     model = model.to(device=device, dtype=torch.bfloat16)
     
-    dataset_router: Dict[str, Callable[[int, torch.device], BaseDataset]] = {
-        "seq": lambda m_len, device: SeqDataset(m_len, device=device),
-        "sft": lambda m_len, device: SftDataset(m_len, device=device),
-        "dpo": lambda m_len, device: DpoDataset(m_len, device=device),
-    }
-
-    dataset_generator = dataset_router[train_type]
-    dataset = dataset_generator(parameter.config.m_len, device)
-    
     cache_files = get_files(data_root_path)
-    dataset.load(cache_files)
+    dataset = DatasetLoader.load(
+        train_type=train_type,
+        load_path=cache_files,
+        max_len=parameter.config.m_len,
+        device=device
+    )
 
     if freeze_embedding:
         for name, param in model.named_parameters():
