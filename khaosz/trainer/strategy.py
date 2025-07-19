@@ -102,7 +102,34 @@ class DpoStrategy(BaseStrategy):
         
         dpo_loss = -F.logsigmoid(self.beta * ratio_diff).mean()
         return dpo_loss
-    
+
+
+class PpoStrategy(BaseStrategy):
+    def __init__(self, model, ref_model, pad_token_id, epsilon):
+        super().__init__(model)
+        self.ref_model = ref_model
+        self.pad_token_id = pad_token_id
+        self.epsilon = epsilon
+        
+    def ppo_clip_loss_masked(
+        self,
+        log_probs, old_log_probs, advantages, values, returns,
+        mask: torch.BoolTensor, 
+        clip_eps=0.2, vf_coef=0.5, entropy_coef=0.01,
+    ):
+        ratio = torch.exp(log_probs - old_log_probs)
+        surr1 = ratio * advantages
+        surr2 = torch.clamp(ratio, 1 - clip_eps, 1 + clip_eps) * advantages
+        policy_loss = -torch.min(surr1, surr2).masked_select(mask).mean()
+
+        value_loss = F.mse_loss(values.masked_select(mask),
+                                returns.masked_select(mask))
+
+        entropy = -(log_probs.exp() * log_probs).masked_select(mask).mean()
+        entropy_loss = -entropy
+        return policy_loss, value_loss, entropy_loss
+
+
 
 class StrategyFactory:
     
@@ -117,7 +144,7 @@ class StrategyFactory:
     
 
 @dataclass
-class BaseSchedule:
+class TrainConfig:
     train_type: Literal["seq", "sft", "dpo"]
     dataset: Dataset
     optimizer: Optimizer
@@ -129,38 +156,44 @@ class BaseSchedule:
     max_grad_norm: float = 1.0
     warning_step: int = 1000
     random_seed: int = 3306
+    dpo_beta: float = 0.1
 
     def get_kargs(self)-> Dict[str, Any]:
         config_dict = asdict(self)
         return {k: v for k, v in config_dict.items() if v is not None}
     
 
+class ScheduleConfig:
+    schedule_type: str
+    schedule_kargs: dict
+    
+    @abstractmethod
+    def get_kargs(self)-> Dict[str, Any]:
+        raise NotImplementedError
+
+
 @dataclass   
-class CosineSchedule(BaseSchedule):
+class CosineScheduleConfig(ScheduleConfig):
     total_iters: int
-    min_rate: float = 0.1
+    min_rate: float = 0.05
     schedule_type: Literal["cosine"] = "cosine"
     
     def get_kargs(self) -> Dict[str, Any]:
-        base_args = super().get_kargs()
         return {
-            **base_args,
             "schedule_type": self.schedule_type,
             "total_iters": self.total_iters,
             "min_rate": self.min_rate
         }
 
 @dataclass
-class SgdrSchedule(BaseSchedule):
+class SgdrScheduleConfig(ScheduleConfig):
     cycle_length: int
-    min_rate: float = 0.1
+    min_rate: float = 0.05
     T_mult: int = 2
     schedule_type: Literal["sgdr"] = "sgdr"
     
     def get_kargs(self) -> Dict[str, Any]:
-        base_args = super().get_kargs()
         return {
-            **base_args,
             "schedule_type": self.schedule_type,
             "cycle_length": self.cycle_length,
             "min_rate": self.min_rate,
@@ -217,3 +250,4 @@ class SchedulerFactory:
             return self.get_cosine_warmup_schedule(*kargs)
         elif strategy == "sgdr":
             return self.get_sgdr_schedule(*kargs)
+        

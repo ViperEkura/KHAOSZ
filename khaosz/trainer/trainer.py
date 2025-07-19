@@ -3,17 +3,16 @@ import copy
 import torch
 import logging
 
-from torch.optim import Optimizer
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import LambdaLR
-from torch.utils.data import Dataset, DataLoader, RandomSampler
+from torch.utils.data import DataLoader, RandomSampler
 from tqdm import tqdm
-from typing import Literal, Dict,  Callable
+from typing import Dict,  Callable
 
 from khaosz.module import ModelParameter
 from .checkpoint import TrainCheckPoint
 from .strategy import SeqStrategy, SftStrategy, DpoStrategy, BaseStrategy, SchedulerFactory
-
+from .strategy import TrainConfig, ScheduleConfig
 
 class Trainer:
     def __init__(
@@ -36,51 +35,24 @@ class Trainer:
 
     def train(
         self,
-        train_type: Literal["seq", "sft", "dpo"],
-        dataset: Dataset,
-        optimizer: Optimizer,
-        ckpt_dir: str,
-        n_epoch: int = 1,
-        batch_size: int = 4,
-        n_iter_ckpt: int = 5000,
-        n_iter_step: int = 1,
-        max_grad_norm: float = 1.0,
-        warning_step: int = 1000,
-        random_seed: int = 3306,
-        schedule_type: Literal["cosine", "sgdr"]="cosine",
-        min_rate: float = 0.1,
-        dpo_beta: float = 0.1,
-        cycle_length: int = 5000,
-        T_mult: int = 2,
-        
+        train_config: TrainConfig,
+        schedule_config: ScheduleConfig,
     ):
-        assert train_type in ["seq", "sft", "dpo"]
-        assert schedule_type in ["cosine", "sgdr"]
+        assert schedule_config.schedule_type in ["cosine", "sgdr"]
+        assert train_config.train_type in ["seq", "sft", "dpo"]
         
         n_iter = 0
         loss_list = []
         last_ckpt_iter = 0
-        total_iters = len(dataset) // batch_size * n_epoch
-        
-        if schedule_type == "cosine":
-            kargs = {
-                'warning_step': warning_step,
-                'lr_decay_iters': total_iters,
-                'min_rate': min_rate
-            }
-        else:  # sgdr
-            kargs = {
-                'warning_step': warning_step,
-                'cycle_length': cycle_length,
-                'min_rate': min_rate,
-                'T_mult': T_mult
-            }
             
-        lambda_scheduler_fn  = SchedulerFactory.load_schedule_fn(schedule_type, *kargs)
+        lambda_scheduler_fn  = SchedulerFactory.load_schedule_fn(
+            strategy=schedule_config.schedule_type, 
+            kargs=schedule_config.get_kargs()
+        )
         pad_token_id = self.tokenizer.pad_id
         
         ref_model = None
-        if train_type == "dpo":
+        if train_config.train_type == "dpo":
             ref_model = copy.deepcopy(self.model)
             ref_model.requires_grad_(False)
             ref_model.eval()
@@ -88,25 +60,33 @@ class Trainer:
         train_strategy: Dict[str, Callable[[], BaseStrategy]] = {
             "seq": lambda: SeqStrategy(self.model),
             "sft": lambda: SftStrategy(self.model),
-            "dpo": lambda: DpoStrategy(self.model, pad_token_id, dpo_beta)
+            "dpo": lambda: DpoStrategy(self.model, pad_token_id, train_config.dpo_beta)
         }
-        strategy = train_strategy[train_type]()
+        strategy = train_strategy[train_config.train_type]()
         
-        scheduler = LambdaLR(optimizer, lambda_scheduler_fn)
-        sampler = RandomSampler(dataset, generator=torch.Generator().manual_seed(random_seed))
+        seed = train_config.random_seed
+        scheduler = LambdaLR(train_config.optimizer, lambda_scheduler_fn)
+        sampler = RandomSampler(train_config.dataset, generator=torch.Generator().manual_seed(seed=seed))
 
         ckpt_saver = lambda current_iter: TrainCheckPoint(
             self.model, self.tokenizer, self.config, loss_list, current_iter
-        ).save_ckpt(os.path.join(ckpt_dir, f"iter_{current_iter}"))
+        ).save_ckpt(os.path.join(train_config.ckpt_dir, f"iter_{current_iter}"))
 
-        self.logger.info(f"Starting {train_type.upper()} training for {n_epoch} epochs")
-        self.logger.info(f"Checkpoint interval: {n_iter_ckpt} iterations")
+        self.logger.info(f"Starting {train_config.train_type.upper()} training for {train_config.n_epoch} epochs")
+        self.logger.info(f"Checkpoint interval: {train_config.n_iter_ckpt} iterations")
 
-        for epoch in range(n_epoch):
+        for epoch in range(train_config.n_epoch):
             self.model.train()
-            dataloader = DataLoader(dataset, batch_size=batch_size, sampler=sampler)
-            progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{n_epoch}", dynamic_ncols=True)
-
+            dataloader = DataLoader(
+                train_config.dataset, 
+                batch_size=train_config.batch_size, 
+                sampler=sampler
+            )
+            progress_bar = tqdm(
+                dataloader, 
+                desc=f"Epoch {epoch+1}/{train_config.n_epoch}", 
+                dynamic_ncols=True
+            )
             for batch in progress_bar:
                 #forward
                 loss = strategy(batch)
@@ -114,19 +94,19 @@ class Trainer:
                 #backward
                 loss.backward()
                 #step
-                if n_iter % n_iter_step == 0:
-                    clip_grad_norm_(self.model.parameters(), max_grad_norm)
-                    optimizer.step()
-                    optimizer.zero_grad()
+                if n_iter % train_config.n_iter_step == 0:
+                    clip_grad_norm_(self.model.parameters(), train_config.max_grad_norm)
+                    train_config.optimizer.step()
+                    train_config.optimizer.zero_grad()
                     
                 n_iter += 1
                 scheduler.step()
                 progress_bar.set_postfix({
                     "loss": f"{loss.item():.4f}",
-                    "lr": f"{optimizer.param_groups[0]['lr']:.2e}"
+                    "lr": f"{train_config.optimizer.param_groups[0]['lr']:.2e}"
                 })
                 #save checkpotint
-                if n_iter - last_ckpt_iter >= n_iter_ckpt:
+                if n_iter - last_ckpt_iter >= train_config.n_iter_ckpt:
                     ckpt_saver(n_iter)
                     diff_iter = n_iter - last_ckpt_iter
                     avg_loss = sum(loss_list[last_ckpt_iter:n_iter]) / diff_iter

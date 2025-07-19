@@ -1,13 +1,12 @@
 from .trainer import Trainer
 from .dataset import DatasetLoader
-from .strategy import BaseSchedule, CosineSchedule, SgdrSchedule
+from .strategy import TrainConfig, CosineScheduleConfig
 from .checkpoint import TrainCheckPoint
 
 __all__ = [
     "Trainer",
-    "BaseSchedule",
-    "CosineSchedule",
-    "SgdrSchedule",
+    "TrainConfig",
+    "CosineScheduleConfig"
     "DatasetLoader",
     "TrainCheckPoint"
 ]
