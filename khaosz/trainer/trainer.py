@@ -2,15 +2,48 @@ import os
 import copy
 import torch
 import logging
+import pickle as pkl
+import torch.nn as nn
+import matplotlib.pyplot as plt
 
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader, RandomSampler
 from tqdm import tqdm
 
-from khaosz.module import ModelParameter
-from .checkpoint import TrainCheckPoint
+from khaosz.module import ModelParameter, BpeTokenizer, TransformerConfig
 from .strategy import SchedulerFactory, StrategyFactory, TrainConfig, ScheduleConfig
+
+
+class TrainCheckPoint(ModelParameter):
+    def __init__(
+            self, 
+            model: nn.Module, 
+            tokenizer: BpeTokenizer, 
+            config: TransformerConfig, 
+            loss_list: list, 
+            n_iter: int
+        ):
+            super().__init__(model, tokenizer, config)
+            self.loss_list = loss_list
+            self.n_iter = n_iter
+
+    def save_ckpt(self, save_dir: str):
+        super().save(save_dir)
+        paths = {
+            "loss_list": os.path.join(save_dir, "loss.pkl"),
+            "lossfig": os.path.join(save_dir, "loss.png")
+        }
+        
+        pkl.dump(self.loss_list, open(paths["loss_list"], "wb"))
+        plt.figure()
+        plt.plot(self.loss_list)
+        plt.title(f"Training Loss - iter {self.n_iter}")
+        plt.xlabel("Batch")
+        plt.ylabel("Loss")
+        plt.savefig(paths["lossfig"])
+        plt.close()
+
 
 class Trainer:
     def __init__(
@@ -30,6 +63,16 @@ class Trainer:
         self.model = parameter.model
         self.tokenizer = parameter.tokenizer
         self.config = parameter.config
+        
+    def save_checkpoint(self, loss_list: list, current_iter: int, ckpt_dir: str):
+        save_path = os.path.join(ckpt_dir, f"iter_{current_iter}")
+        TrainCheckPoint(
+            self.model, 
+            self.tokenizer, 
+            self.config, 
+            loss_list, 
+            current_iter
+        ).save_ckpt(save_path)
 
     def train(
         self,
@@ -63,12 +106,14 @@ class Trainer:
         )
         
         seed = train_config.random_seed
-        scheduler = LambdaLR(train_config.optimizer, lambda_scheduler_fn)
-        sampler = RandomSampler(train_config.dataset, generator=torch.Generator().manual_seed(seed=seed))
-
-        ckpt_saver = lambda current_iter: TrainCheckPoint(
-            self.model, self.tokenizer, self.config, loss_list, current_iter
-        ).save_ckpt(os.path.join(train_config.ckpt_dir, f"iter_{current_iter}"))
+        scheduler = LambdaLR(
+            train_config.optimizer, 
+            lambda_scheduler_fn
+        )
+        sampler = RandomSampler(
+            train_config.dataset, 
+            generator=torch.Generator().manual_seed(seed=seed)
+        )
 
         self.logger.info(f"Starting {train_config.train_type.upper()} training for {train_config.n_epoch} epochs")
         self.logger.info(f"Checkpoint interval: {train_config.n_iter_ckpt} iterations")
@@ -93,7 +138,10 @@ class Trainer:
                 loss.backward()
                 #step
                 if n_iter % train_config.n_iter_step == 0:
-                    clip_grad_norm_(self.model.parameters(), train_config.max_grad_norm)
+                    clip_grad_norm_(
+                        self.model.parameters(),
+                        train_config.max_grad_norm
+                    )
                     train_config.optimizer.step()
                     train_config.optimizer.zero_grad()
                     
@@ -105,14 +153,14 @@ class Trainer:
                 })
                 #save checkpotint
                 if n_iter - last_ckpt_iter >= train_config.n_iter_ckpt:
-                    ckpt_saver(n_iter)
+                    self.save_checkpoint(loss_list, n_iter, train_config.ckpt_dir)
                     diff_iter = n_iter - last_ckpt_iter
                     avg_loss = sum(loss_list[last_ckpt_iter:n_iter]) / diff_iter
                     self.logger.info(f"iter: {n_iter} loss: {avg_loss}")
                     last_ckpt_iter = n_iter
 
         if n_iter != last_ckpt_iter:
-            ckpt_saver(n_iter)
+            self.save_checkpoint(loss_list, n_iter, train_config.ckpt_dir)
             diff_iter = n_iter - last_ckpt_iter
             avg_loss = sum(loss_list[last_ckpt_iter:n_iter]) / diff_iter
             self.logger.info(f"iter: {n_iter} loss: {avg_loss}")
