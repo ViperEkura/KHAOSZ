@@ -10,7 +10,6 @@ from khaosz.module.generator import TextGenerator, ChatGenerator, StreamGenerato
 
 from khaosz.trainer.trainer import Trainer
 from khaosz.trainer.dataset import SeqDataset, SftDataset, DpoDataset, BaseDataset
-from khaosz.trainer.checkpoint import TrainCheckPoint
 
 
 __all__ = [
