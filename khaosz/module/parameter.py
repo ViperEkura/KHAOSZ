@@ -2,8 +2,6 @@ import os
 import torch.nn as nn
 import safetensors.torch as st
 
-from typing import Union
-from .retriever import Retriever
 from .tokenizer import BpeTokenizer
 from .transformer import TransformerConfig, Transformer
 
@@ -46,32 +44,9 @@ class ModelParameter:
         return self
 
 
-class RetrieverParameter(ModelParameter):
-    def __init__(
-        self, 
-        model: nn.Module, 
-        tokenizer: BpeTokenizer, 
-        config: TransformerConfig,
-        retriver: Retriever
-    ):
-        super().__init__(model, tokenizer, config)
-        self.retriver = retriver if retriver is not None else Retriever()
-    
-    def _get_path(self, save_dir: str):
-        return os.path.join(save_dir, "vectors.db")
-        
-    def load(self, load_dir):
-        super().load(load_dir)
-        self.retriver.load(self._get_path(load_dir))
-        
-    def save(self, save_dir):
-        super().save(save_dir)
-        self.retriver.save(self._get_path(save_dir))
-
-
 class ParameterLoader:
     @staticmethod
-    def load(load_dir: str) -> Union[ModelParameter, RetrieverParameter]:
+    def load(load_dir: str) -> ModelParameter:
         model_path = os.path.join(load_dir, "model.safetensors")
         retriever_path = os.path.join(load_dir, "vectors.db")
         config_path = os.path.join(load_dir, "config.json")
@@ -89,9 +64,5 @@ class ParameterLoader:
         if has_model_state_dict:
             state_dict = st.load_file(model_path)
             model.load_state_dict(state_dict)
-        
-        if has_retriever:
-            retriever = Retriever(retriever_path)
-            return RetrieverParameter(model, tokenizer, config, retriever)
-        else:
-            return ModelParameter(model, tokenizer, config)
+    
+        return ModelParameter(model, tokenizer, config)

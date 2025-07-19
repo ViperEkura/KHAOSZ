@@ -3,9 +3,9 @@ __author__ = "ViperEkura"
 
 from khaosz.model import Khaosz
 from khaosz.module.transformer import Transformer, TransformerConfig
-from khaosz.module.retriever import Retriever, TextSplitter
+from khaosz.retriever import Retriever, TextSplitter
 from khaosz.module.tokenizer import BpeTokenizer
-from khaosz.module.parameter import ParameterLoader, ModelParameter, RetrieverParameter
+from khaosz.module.parameter import ParameterLoader, ModelParameter
 from khaosz.module.generator import TextGenerator, ChatGenerator, StreamGenerator, BatchGenerator, RetrievalGenerator, EmbeddingEncoder
 
 from khaosz.trainer.trainer import Trainer
