@@ -7,12 +7,10 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader, RandomSampler
 from tqdm import tqdm
-from typing import Dict,  Callable
 
 from khaosz.module import ModelParameter
 from .checkpoint import TrainCheckPoint
-from .strategy import SeqStrategy, SftStrategy, DpoStrategy, BaseStrategy, SchedulerFactory
-from .strategy import TrainConfig, ScheduleConfig
+from .strategy import SchedulerFactory, StrategyFactory, TrainConfig, ScheduleConfig
 
 class Trainer:
     def __init__(
@@ -56,13 +54,13 @@ class Trainer:
             ref_model = copy.deepcopy(self.model)
             ref_model.requires_grad_(False)
             ref_model.eval()
-            
-        train_strategy: Dict[str, Callable[[], BaseStrategy]] = {
-            "seq": lambda: SeqStrategy(self.model),
-            "sft": lambda: SftStrategy(self.model),
-            "dpo": lambda: DpoStrategy(self.model, pad_token_id, train_config.dpo_beta)
-        }
-        strategy = train_strategy[train_config.train_type]()
+        
+        strategy = StrategyFactory.load(
+            self.model, 
+            train_config.train_type, 
+            pad_token_id, 
+            train_config.dpo_beta
+        )
         
         seed = train_config.random_seed
         scheduler = LambdaLR(train_config.optimizer, lambda_scheduler_fn)
