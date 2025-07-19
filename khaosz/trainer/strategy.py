@@ -113,9 +113,13 @@ class PpoStrategy(BaseStrategy):
         
     def ppo_clip_loss_masked(
         self,
-        log_probs, old_log_probs, advantages, values, returns,
-        mask: torch.BoolTensor, 
-        clip_eps=0.2, vf_coef=0.5, entropy_coef=0.01,
+        log_probs: Tensor, 
+        old_log_probs: Tensor, 
+        advantages: Tensor, 
+        values: Tensor, 
+        returns: Tensor,
+        mask: Tensor, 
+        clip_eps: float=0.2, 
     ):
         ratio = torch.exp(log_probs - old_log_probs)
         surr1 = ratio * advantages
