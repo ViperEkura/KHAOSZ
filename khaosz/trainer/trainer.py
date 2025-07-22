@@ -99,7 +99,7 @@ class Trainer:
             
         lambda_scheduler_fn  = SchedulerFactory.load_schedule_fn(
             strategy=schedule_config.schedule_type, 
-            kargs=schedule_config.get_kargs()
+            **schedule_config.get_kargs()
         )
         
         ref_model = None
@@ -115,15 +115,14 @@ class Trainer:
             train_config.dpo_beta
         )
         
-        seed = train_config.random_seed
         scheduler = LambdaLR(
             train_config.optimizer, 
             lambda_scheduler_fn
         )
-        sampler = RandomSampler(
-            train_config.dataset, 
-            generator=torch.Generator().manual_seed(seed=seed)
-        )
+        
+        seed = train_config.random_seed
+        generator = torch.Generator().manual_seed(seed)
+        sampler = RandomSampler(train_config.dataset, generator=generator)
 
         self.logger.info(f"Starting {train_config.train_type.upper()} training for {train_config.n_epoch} epochs")
         self.logger.info(f"Checkpoint interval: {train_config.n_iter_ckpt} iterations")

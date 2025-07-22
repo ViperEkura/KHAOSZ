@@ -158,7 +158,6 @@ class TrainConfig:
     n_iter_ckpt: int = 5000
     n_iter_step: int = 1
     max_grad_norm: float = 1.0
-    warning_step: int = 1000
     random_seed: int = 3306
     dpo_beta: float = 0.1
 
@@ -167,9 +166,10 @@ class TrainConfig:
         return {k: v for k, v in config_dict.items() if v is not None}
     
 
+@dataclass
 class ScheduleConfig:
     schedule_type: str
-    schedule_kargs: dict
+    warning_step: int = 1000
     
     @abstractmethod
     def get_kargs(self)-> Dict[str, Any]:
@@ -178,27 +178,27 @@ class ScheduleConfig:
 
 @dataclass   
 class CosineScheduleConfig(ScheduleConfig):
-    total_iters: int
+    total_iters: int = 0
     min_rate: float = 0.05
     schedule_type: Literal["cosine"] = "cosine"
     
     def get_kargs(self) -> Dict[str, Any]:
         return {
-            "schedule_type": self.schedule_type,
-            "total_iters": self.total_iters,
+            "warning_step": self.warning_step,
+            "lr_decay_iters": self.total_iters - self.warning_step,
             "min_rate": self.min_rate
         }
 
 @dataclass
 class SgdrScheduleConfig(ScheduleConfig):
-    cycle_length: int
+    cycle_length: int = 1000
     min_rate: float = 0.05
     T_mult: int = 2
     schedule_type: Literal["sgdr"] = "sgdr"
     
     def get_kargs(self) -> Dict[str, Any]:
         return {
-            "schedule_type": self.schedule_type,
+            "warning_step": self.warning_step,
             "cycle_length": self.cycle_length,
             "min_rate": self.min_rate,
             "T_mult": self.T_mult
@@ -249,9 +249,10 @@ class SchedulerFactory:
         
         return cosine_warmup_schedule
     
-    def load_schedule_fn(self, strategy: str, *kargs):
+    @staticmethod
+    def load_schedule_fn(strategy: str, **kwargs):
         if strategy == "cosine":
-            return self.get_cosine_warmup_schedule(*kargs)
+            return SchedulerFactory.get_cosine_warmup_schedule(**kwargs)
         elif strategy == "sgdr":
-            return self.get_sgdr_schedule(*kargs)
+            return SchedulerFactory.get_sgdr_schedule(**kwargs)
         

@@ -75,13 +75,13 @@ def train(
         n_iter_ckpt=n_iter_ckpt,
         n_iter_step=n_iter_step,
         max_grad_norm=max_grad_norm,
-        warning_step=warning_step,
         random_seed=random_seed,
         dpo_beta=dpo_beta
     )
     
     schedule_config = CosineScheduleConfig(
-        total_iters= len(dataset) * n_epoch // n_iter_step, 
+        warning_step=warning_step,
+        total_iters=len(dataset) * n_epoch // n_iter_step, 
     )
     
     trainer = Trainer(parameter)
