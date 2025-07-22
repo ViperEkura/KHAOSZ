@@ -22,11 +22,11 @@ class TrainCheckPoint(ModelParameter):
             tokenizer: BpeTokenizer, 
             config: TransformerConfig, 
             loss_list: list, 
-            n_iter: int
+            current_iter: int
         ):
             super().__init__(model, tokenizer, config)
             self.loss_list = loss_list
-            self.n_iter = n_iter
+            self.current_iter = current_iter
 
     def save_ckpt(self, save_dir: str):
         super().save(save_dir)
@@ -38,7 +38,7 @@ class TrainCheckPoint(ModelParameter):
         pkl.dump(self.loss_list, open(paths["loss_list"], "wb"))
         plt.figure()
         plt.plot(self.loss_list)
-        plt.title(f"Training Loss - iter {self.n_iter}")
+        plt.title(f"Training Loss - iter {self.current_iter}")
         plt.xlabel("Batch")
         plt.ylabel("Loss")
         plt.savefig(paths["lossfig"])
@@ -64,7 +64,16 @@ class Trainer:
         self.tokenizer = parameter.tokenizer
         self.config = parameter.config
         
-    def save_checkpoint(self, loss_list: list, current_iter: int, ckpt_dir: str):
+    def save_checkpoint(
+        self, 
+        loss_list: list, 
+        ckpt_dir: str, 
+        current_iter: int, 
+        last_ckpt_iter: int
+    ):
+        diff_iter = current_iter - last_ckpt_iter
+        avg_loss = sum(loss_list[last_ckpt_iter:current_iter]) / diff_iter
+        self.logger.info(f"iter: {current_iter} loss: {avg_loss}")
         save_path = os.path.join(ckpt_dir, f"iter_{current_iter}")
         TrainCheckPoint(
             self.model, 
@@ -73,6 +82,8 @@ class Trainer:
             loss_list, 
             current_iter
         ).save_ckpt(save_path)
+        
+        return current_iter
 
     def train(
         self,
@@ -82,15 +93,14 @@ class Trainer:
         assert schedule_config.schedule_type in ["cosine", "sgdr"]
         assert train_config.train_type in ["seq", "sft", "dpo"]
         
-        n_iter = 0
-        loss_list = []
+        current_iter = 0
         last_ckpt_iter = 0
+        loss_list = []
             
         lambda_scheduler_fn  = SchedulerFactory.load_schedule_fn(
             strategy=schedule_config.schedule_type, 
             kargs=schedule_config.get_kargs()
         )
-        pad_token_id = self.tokenizer.pad_id
         
         ref_model = None
         if train_config.train_type == "dpo":
@@ -101,7 +111,7 @@ class Trainer:
         strategy = StrategyFactory.load(
             self.model, 
             train_config.train_type, 
-            pad_token_id, 
+            self.tokenizer.pad_id, 
             train_config.dpo_beta
         )
         
@@ -137,7 +147,7 @@ class Trainer:
                 #backward
                 loss.backward()
                 #step
-                if n_iter % train_config.n_iter_step == 0:
+                if current_iter % train_config.n_iter_step == 0:
                     clip_grad_norm_(
                         self.model.parameters(),
                         train_config.max_grad_norm
@@ -145,24 +155,27 @@ class Trainer:
                     train_config.optimizer.step()
                     train_config.optimizer.zero_grad()
                     
-                n_iter += 1
+                current_iter += 1
                 scheduler.step()
                 progress_bar.set_postfix({
                     "loss": f"{loss.item():.4f}",
                     "lr": f"{train_config.optimizer.param_groups[0]['lr']:.2e}"
                 })
                 #save checkpotint
-                if n_iter - last_ckpt_iter >= train_config.n_iter_ckpt:
-                    self.save_checkpoint(loss_list, n_iter, train_config.ckpt_dir)
-                    diff_iter = n_iter - last_ckpt_iter
-                    avg_loss = sum(loss_list[last_ckpt_iter:n_iter]) / diff_iter
-                    self.logger.info(f"iter: {n_iter} loss: {avg_loss}")
-                    last_ckpt_iter = n_iter
+                if current_iter - last_ckpt_iter >= train_config.n_iter_ckpt:
+                    last_ckpt_iter = self.save_checkpoint(
+                        loss_list, 
+                        train_config.ckpt_dir, 
+                        current_iter, 
+                        last_ckpt_iter
+                    )
 
-        if n_iter != last_ckpt_iter:
-            self.save_checkpoint(loss_list, n_iter, train_config.ckpt_dir)
-            diff_iter = n_iter - last_ckpt_iter
-            avg_loss = sum(loss_list[last_ckpt_iter:n_iter]) / diff_iter
-            self.logger.info(f"iter: {n_iter} loss: {avg_loss}")
+        if current_iter != last_ckpt_iter:
+            last_ckpt_iter = self.save_checkpoint(
+                loss_list, 
+                train_config.ckpt_dir, 
+                current_iter, 
+                last_ckpt_iter
+            )
 
         self.logger.info("Training completed")
