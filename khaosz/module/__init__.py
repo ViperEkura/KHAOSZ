@@ -11,7 +11,6 @@ __all__ = [
     "BpeTokenizer",
     "ParameterLoader",
     "ModelParameter",
-    "RetrieverParameter",
     "TextGenerator",
     "ChatGenerator",
     "StreamGenerator",
