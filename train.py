@@ -82,7 +82,6 @@ def train(
     
     schedule_config = CosineScheduleConfig(
         total_iters= len(dataset) * n_epoch // n_iter_step, 
-        warmup_iters=warning_step, 
     )
     
     trainer = Trainer(parameter)
