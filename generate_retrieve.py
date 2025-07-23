@@ -10,7 +10,7 @@ if __name__ == "__main__":
     model = Khaosz(model_dir).to(device='cuda', dtype=torch.bfloat16)
     spliter = TextSplitter(model.encode)
     retriever = Retriever()
-    text = open("test_base.txt").read()
+    text = open("_base.txt").read()
     
     res = spliter.chunk(text, threshold=0.8, window_size=2)
     print(("\n" + "+"*100 + "\n").join(res))

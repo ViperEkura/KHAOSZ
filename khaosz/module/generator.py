@@ -90,7 +90,7 @@ class EmbeddingEncoderCore:
                 fragment_origin_idx.append(i)
         
         #if empty fragments
-        if not all_fragments:
+        if not all_fragments or not ids:
             return [] if with_batch else torch.tensor([])
         
         device = next(self.model.parameters()).device
@@ -105,7 +105,7 @@ class EmbeddingEncoderCore:
             padded_ids.append(padded_seq)
             masks.append(mask)
         
-        input_tensor = torch.tensor(padded_ids, device=device)
+        input_tensor = torch.tensor(padded_ids, device=device, dtype=torch.long)
         seq_mask = torch.tensor(masks, device=device, dtype=torch.bool)
         
         with torch.no_grad():

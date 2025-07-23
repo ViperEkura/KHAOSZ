@@ -1,24 +1,27 @@
 import os
 import sys
 
+
+
 parent_dir = os.path.join(os.path.dirname(__file__), '..')
 abs_parent_dir = os.path.abspath(parent_dir)
 sys.path.insert(0, abs_parent_dir)
 
-import tempfile
 import json
+import torch
 import shutil
 import pytest
-from khaosz.module import ParameterLoader, ModelParameter, BpeTokenizer
-from khaosz.module.transformer import TransformerConfig, Transformer
+import tempfile
 import safetensors.torch as st
+from khaosz.module import *
+from khaosz.module.generator import EmbeddingEncoderCore, GeneratorCore
 
 @pytest.fixture
 def test_env():
     test_dir = tempfile.mkdtemp()
     config_path = os.path.join(test_dir, "config.json")
     tokenizer_path = os.path.join(test_dir, "tokenizer.json")
-    model_path = os.path.join(test_dir, "model.safestensors")
+    model_path = os.path.join(test_dir, "model.safetensors")
     
     config = {
         "vocab_size": 1000,
@@ -34,6 +37,7 @@ def test_env():
         json.dump(config, f)
     
     tokenizer = BpeTokenizer()
+    tokenizer.train(["test.txt"], 1000, 1)
     tokenizer.save(tokenizer_path)
     
     transformer_config = TransformerConfig(config_path)
@@ -49,6 +53,7 @@ def test_env():
 
     shutil.rmtree(test_dir)
 
+# parameter loader
 def test_parameter_loader(test_env):
     loaded_param = ParameterLoader.load(test_env["test_dir"])
     assert loaded_param.model is not None
@@ -63,3 +68,52 @@ def test_model_parameter(test_env):
     assert os.path.exists(os.path.join(save_dir, "model.safetensors"))
     assert os.path.exists(os.path.join(save_dir, "tokenizer.json"))
     assert os.path.exists(os.path.join(save_dir, "config.json"))
+
+# transformer
+def test_transformer(test_env):
+    model = test_env["model"]
+    input_ids = torch.randint(0, test_env["transformer_config"].vocab_size, 
+                              (4, test_env["transformer_config"].m_len))
+    output_logits = model(input_ids)
+    target_shape = (4, test_env["transformer_config"].m_len, test_env["transformer_config"].vocab_size)
+    assert output_logits.shape == target_shape
+    
+# generator
+def test_embedding_encoder_core(test_env):
+    parameter = ModelParameter(
+        test_env["model"],
+        test_env["tokenizer"],
+        test_env["transformer_config"]
+    )
+    encoder = EmbeddingEncoderCore(parameter)
+    
+    single_emb = encoder.encode("测试文本")
+    assert isinstance(single_emb, torch.Tensor)
+    assert single_emb.shape[-1] == test_env["transformer_config"].n_dim
+    
+
+    batch_emb = encoder.encode(["测试1", "测试2"])
+    assert isinstance(batch_emb, list)
+    assert len(batch_emb) == 2
+
+
+def test_stream_generator(test_env):
+    parameter = ModelParameter(
+        test_env["model"],
+        test_env["tokenizer"],
+        test_env["transformer_config"]
+    )
+    generator = GeneratorCore(parameter)
+    
+    result = generator.generate(
+        query="你好",
+        history=[],
+        temperature=0.7,
+        top_k=50,
+        top_p=0.9
+    )
+    
+    responses = list(result)
+    assert len(responses) > 0
+    assert all(isinstance(resp, tuple) for resp in responses)
+    assert all(len(resp) == 2 for resp in responses)

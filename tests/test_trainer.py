@@ -5,16 +5,17 @@ parent_dir = os.path.join(os.path.dirname(__file__), '..')
 abs_parent_dir = os.path.abspath(parent_dir)
 sys.path.insert(0, abs_parent_dir)
 
-import tempfile
+
 import json
+import torch
 import shutil
 import pytest
-import torch
 import pickle
+import tempfile
 
 from torch.utils.data import Dataset
-from khaosz.module import ModelParameter, BpeTokenizer,  TransformerConfig, Transformer
-from khaosz.trainer import Trainer, DatasetLoader, TrainConfig, CosineScheduleConfig, SgdrScheduleConfig
+from khaosz.module import *
+from khaosz.trainer import *
 
 @pytest.fixture
 def test_env():
@@ -93,6 +94,7 @@ def test_training_config(test_env):
     assert train_config.get_kwargs()["batch_size"] == 2
 
 def test_cosine_schedule(test_env):
+    assert test_env is not None
     schedule_config = CosineScheduleConfig(
         warning_step=100,
         total_iters=1000
@@ -103,6 +105,7 @@ def test_cosine_schedule(test_env):
     
 
 def test_sgdr_schedule(test_env):
+    assert test_env is not None
     schedule_config = SgdrScheduleConfig(
         warning_step=100,
         cycle_length=200,

@@ -78,9 +78,12 @@ class BpeTokenizer:
         self._tokenizer = Tokenizer.from_file(path)
 
     def encode(self, tokens: Union[str, List[str]], out_ids: bool=True, add_special_tokens: bool=False) -> List:
-        encoded: Encoding = self._tokenizer.encode(tokens, add_special_tokens=add_special_tokens)
-        return encoded.ids if out_ids else encoded.tokens
-
+        if isinstance(tokens, str):
+            encoded: Encoding = self._tokenizer.encode(tokens, add_special_tokens=add_special_tokens)
+            return encoded.ids if out_ids else encoded.tokens
+        elif isinstance(tokens, list):
+            encoded_list: List[Encoding] = self._tokenizer.encode_batch(tokens, add_special_tokens=add_special_tokens)
+            return [encoded.ids if out_ids else encoded.tokens for encoded in encoded_list]
 
     def decode(self, tokens: List[int], skip_special_tokens: bool=True) -> str:
         return self._tokenizer.decode(tokens, skip_special_tokens=skip_special_tokens)
