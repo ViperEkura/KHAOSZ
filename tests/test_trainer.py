@@ -10,18 +10,18 @@ import json
 import shutil
 import pytest
 import torch
+import pickle
+
 from torch.utils.data import Dataset
 from khaosz.trainer import Trainer, DatasetLoader, TrainConfig, CosineScheduleConfig
-from khaosz.module import ModelParameter, ParameterLoader
+from khaosz.module import ModelParameter, BpeTokenizer
 from khaosz.module.transformer import TransformerConfig, Transformer
 
 @pytest.fixture
 def test_env():
-    # 创建临时测试环境
     test_dir = tempfile.mkdtemp()
     config_path = os.path.join(test_dir, "config.json")
     
-    # 创建测试配置
     config = {
         "vocab_size": 1000,
         "n_dim": 128,
@@ -32,15 +32,14 @@ def test_env():
         "n_layer": 2,
         "norm_eps": 1e-5
     }
+    
     with open(config_path, 'w') as f:
         json.dump(config, f)
     
-    # 初始化模型参数
     transformer_config = TransformerConfig(config_path)
     model = Transformer(transformer_config)
-    tokenizer = ParameterLoader.load(test_dir).tokenizer
+    tokenizer = BpeTokenizer()
     
-    # 创建测试数据集
     class DummyDataset(Dataset):
         def __init__(self, length=10):
             self.length = length
@@ -65,21 +64,20 @@ def test_env():
         "dataset": dataset
     }
     
-    # 清理临时文件
     shutil.rmtree(test_dir)
 
 def test_dataset_loader(test_env):
-    # 测试数据集加载器
-    loaded_dataset = DatasetLoader.load(
-        train_type="seq",
-        load_path=test_env["test_dir"],
-        max_len=64,
-        device="cpu"
-    )
+    test_dir = test_env["test_dir"]
+    pkl_path = os.path.join(test_dir, "test_data.pkl")
+    
+    dummy_data = {"sequence": torch.randint(0, 1000, (64,))}
+    with open(pkl_path, "wb") as f:
+        pickle.dump(dummy_data, f)
+    
+    loaded_dataset = DatasetLoader.load(train_type="seq", load_path=pkl_path, max_len=64, device="cpu")
     assert loaded_dataset is not None
 
 def test_training_config(test_env):
-    # 测试训练配置
     optimizer = torch.optim.AdamW(test_env["model"].parameters())
     train_config = TrainConfig(
         train_type="seq",
@@ -104,7 +102,6 @@ def test_cosine_schedule(test_env):
     assert schedule_config.get_kargs()["warning_step"] == 100
 
 def test_trainer_initialization(test_env):
-    # 测试训练器初始化
     optimizer = torch.optim.AdamW(test_env["model"].parameters())
     train_config = TrainConfig(
         train_type="seq",
@@ -122,6 +119,10 @@ def test_trainer_initialization(test_env):
         warning_step=100,
         total_iters=1000
     )
-    
-    trainer = Trainer(ModelParameter(test_env["model"], test_env["model"].tokenizer, test_env["transformer_config"]))
-    assert trainer is not None
+    model_parameter = ModelParameter(
+        test_env["model"], 
+        test_env["tokenizer"], 
+        test_env["transformer_config"]
+    )
+    trainer = Trainer(model_parameter)
+    trainer.train(train_config, schedule_config)

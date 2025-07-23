@@ -9,18 +9,18 @@ import tempfile
 import json
 import shutil
 import pytest
-from khaosz.module import ParameterLoader, ModelParameter
+from khaosz.module import ParameterLoader, ModelParameter, BpeTokenizer
 from khaosz.module.transformer import TransformerConfig, Transformer
 import safetensors.torch as st
-import torch
 
 @pytest.fixture
 def test_env():
-    # 创建临时测试环境
     test_dir = tempfile.mkdtemp()
     config_path = os.path.join(test_dir, "config.json")
+    tokenizer_path = os.path.join(test_dir, "tokenizer.json")
+    tokenizer = BpeTokenizer()
+    tokenizer.save(tokenizer_path)
     
-    # 创建测试配置
     config = {
         "vocab_size": 1000,
         "n_dim": 128,
@@ -34,22 +34,21 @@ def test_env():
     with open(config_path, 'w') as f:
         json.dump(config, f)
     
-    # 初始化模型参数
     transformer_config = TransformerConfig(config_path)
     model = Transformer(transformer_config)
     
     yield {
         "test_dir": test_dir,
         "config_path": config_path,
+        "model": model,
+        "tokenizer": tokenizer,
         "transformer_config": transformer_config,
-        "model": model
+        
     }
-    
-    # 清理临时文件
+
     shutil.rmtree(test_dir)
 
 def test_parameter_loader(test_env):
-    # 测试参数加载器
     model_path = os.path.join(test_env["test_dir"], "model.safetensors")
     model = test_env["model"]
     st.save_file(model.state_dict(), model_path)
@@ -58,11 +57,9 @@ def test_parameter_loader(test_env):
     assert loaded_param.model is not None
 
 def test_model_parameter(test_env):
-    # 测试模型参数类
     save_dir = os.path.join(test_env["test_dir"], "save")
-    model_param = ModelParameter(test_env["model"], None, test_env["transformer_config"])
+    model_param = ModelParameter(test_env["model"],test_env["tokenizer"] , test_env["transformer_config"])
     model_param.save(save_dir)
     
-    # 检查保存的文件
     assert os.path.exists(os.path.join(save_dir, "model.safetensors"))
     assert os.path.exists(os.path.join(save_dir, "config.json"))
