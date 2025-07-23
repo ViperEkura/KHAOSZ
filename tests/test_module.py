@@ -15,6 +15,7 @@ import tempfile
 import safetensors.torch as st
 from khaosz.module import *
 from khaosz.module.generator import EmbeddingEncoderCore, GeneratorCore
+from tokenizers import pre_tokenizers
 
 @pytest.fixture
 def test_env():
@@ -37,7 +38,8 @@ def test_env():
         json.dump(config, f)
     
     tokenizer = BpeTokenizer()
-    tokenizer.train(["test.txt"], 1000, 1)
+    sp_token_iter = iter(pre_tokenizers.ByteLevel.alphabet())
+    tokenizer.train_from_iterator(sp_token_iter, config["vocab_size"], 1)
     tokenizer.save(tokenizer_path)
     
     transformer_config = TransformerConfig(config_path)
@@ -97,7 +99,7 @@ def test_embedding_encoder_core(test_env):
     assert len(batch_emb) == 2
 
 
-def test_stream_generator(test_env):
+def test_generator_core(test_env):
     parameter = ModelParameter(
         test_env["model"],
         test_env["tokenizer"],
@@ -105,15 +107,21 @@ def test_stream_generator(test_env):
     )
     generator = GeneratorCore(parameter)
     
-    result = generator.generate(
-        query="你好",
-        history=[],
-        temperature=0.7,
-        top_k=50,
+    next_token = generator.sample_next_token(
+        ids=[1, 2, 3],
+        temperature=0.5,
+        top_k=10,
         top_p=0.9
     )
+    assert isinstance(next_token, int)
     
-    responses = list(result)
-    assert len(responses) > 0
-    assert all(isinstance(resp, tuple) for resp in responses)
-    assert all(len(resp) == 2 for resp in responses)
+    next_tokens = generator.sample_next_token(
+        ids=[[1, 2, 3], [4, 5, 6]],
+        temperature=0.5,
+        top_k=10,
+        top_p=0.9
+    )
+    assert isinstance(next_tokens, list)
+    
+    
+
