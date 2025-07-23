@@ -1,22 +1,19 @@
+
 import os
 import torch.nn as nn
 import safetensors.torch as st
 
 from typing import Self
+from dataclasses import dataclass
 from .tokenizer import BpeTokenizer
 from .transformer import TransformerConfig, Transformer
 
 
+@dataclass
 class ModelParameter:
-    def __init__(
-        self, 
-        model: nn.Module, 
-        tokenizer: BpeTokenizer, 
-        config: TransformerConfig
-    ):
-        self.model = model
-        self.tokenizer = tokenizer
-        self.config = config
+    model: nn.Module
+    tokenizer: BpeTokenizer
+    config: TransformerConfig
 
     def _get_paths(self, save_dir: str):
         return {

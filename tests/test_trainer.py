@@ -99,7 +99,7 @@ def test_cosine_schedule(test_env):
     )
     kwargs = schedule_config.get_kwargs()
     assert kwargs["warning_step"] == 100
-    assert kwargs["total_iters"] == 1000
+    assert kwargs["lr_decay_iters"] == 900
     
 
 def test_sgdr_schedule(test_env):
