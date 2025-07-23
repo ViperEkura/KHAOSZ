@@ -13,9 +13,8 @@ import torch
 import pickle
 
 from torch.utils.data import Dataset
-from khaosz.trainer import Trainer, DatasetLoader, TrainConfig, CosineScheduleConfig
-from khaosz.module import ModelParameter, BpeTokenizer
-from khaosz.module.transformer import TransformerConfig, Transformer
+from khaosz.module import ModelParameter, BpeTokenizer,  TransformerConfig, Transformer
+from khaosz.trainer import Trainer, DatasetLoader, TrainConfig, CosineScheduleConfig, SgdrScheduleConfig
 
 @pytest.fixture
 def test_env():
@@ -91,17 +90,30 @@ def test_training_config(test_env):
         max_grad_norm=1.0,
         random_seed=42
     )
-    assert train_config.get_kargs()["batch_size"] == 2
+    assert train_config.get_kwargs()["batch_size"] == 2
 
 def test_cosine_schedule(test_env):
-    # 测试余弦学习率调度器
     schedule_config = CosineScheduleConfig(
         warning_step=100,
         total_iters=1000
     )
-    assert schedule_config.get_kargs()["warning_step"] == 100
+    kwargs = schedule_config.get_kwargs()
+    assert kwargs["warning_step"] == 100
+    assert kwargs["total_iters"] == 1000
+    
 
-def test_trainer_initialization(test_env):
+def test_sgdr_schedule(test_env):
+    schedule_config = SgdrScheduleConfig(
+        warning_step=100,
+        cycle_length=200,
+        T_mult=2
+    )
+    kwargs = schedule_config.get_kwargs()
+    assert kwargs["warning_step"] == 100
+    assert kwargs["cycle_length"] == 200
+    assert kwargs["T_mult"] == 2
+    
+def test_trainer_train(test_env):
     optimizer = torch.optim.AdamW(test_env["model"].parameters())
     train_config = TrainConfig(
         train_type="seq",

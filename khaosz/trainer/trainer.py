@@ -99,7 +99,7 @@ class Trainer:
             
         lambda_scheduler_fn  = SchedulerFactory.load_schedule_fn(
             strategy=schedule_config.schedule_type, 
-            **schedule_config.get_kargs()
+            **schedule_config.get_kwargs()
         )
         
         ref_model = None

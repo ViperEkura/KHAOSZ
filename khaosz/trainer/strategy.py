@@ -161,7 +161,7 @@ class TrainConfig:
     random_seed: int = 3306
     dpo_beta: float = 0.1
 
-    def get_kargs(self)-> Dict[str, Any]:
+    def get_kwargs(self)-> Dict[str, Any]:
         config_dict = asdict(self)
         return {k: v for k, v in config_dict.items() if v is not None}
     
@@ -172,7 +172,7 @@ class ScheduleConfig:
     warning_step: int = 1000
     
     @abstractmethod
-    def get_kargs(self)-> Dict[str, Any]:
+    def get_kwargs(self)-> Dict[str, Any]:
         raise NotImplementedError
 
 
@@ -182,7 +182,7 @@ class CosineScheduleConfig(ScheduleConfig):
     min_rate: float = 0.05
     schedule_type: Literal["cosine"] = "cosine"
     
-    def get_kargs(self) -> Dict[str, Any]:
+    def get_kwargs(self) -> Dict[str, Any]:
         return {
             "warning_step": self.warning_step,
             "lr_decay_iters": self.total_iters - self.warning_step,
@@ -196,7 +196,7 @@ class SgdrScheduleConfig(ScheduleConfig):
     T_mult: int = 2
     schedule_type: Literal["sgdr"] = "sgdr"
     
-    def get_kargs(self) -> Dict[str, Any]:
+    def get_kwargs(self) -> Dict[str, Any]:
         return {
             "warning_step": self.warning_step,
             "cycle_length": self.cycle_length,
