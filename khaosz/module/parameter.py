@@ -2,8 +2,10 @@ import os
 import torch.nn as nn
 import safetensors.torch as st
 
+from typing import Self
 from .tokenizer import BpeTokenizer
 from .transformer import TransformerConfig, Transformer
+
 
 class ModelParameter:
     def __init__(
@@ -31,15 +33,17 @@ class ModelParameter:
         self.config.save(paths["config"])
         self.tokenizer.save(paths["tokenizer"])
 
-    def load(self, load_dir):
+    def load(self, load_dir) -> Self:
         paths = self._get_paths(load_dir)
         
         state_dict = st.load_file(paths["model"])
         self.model.load_state_dict(state_dict)
         self.config.load(paths["config"])
         self.tokenizer.load(paths["tokenizer"])
+        
+        return self
     
-    def to(self, *args, **kwargs):
+    def to(self, *args, **kwargs) -> Self:
         self.model.to(*args, **kwargs)
         return self
 

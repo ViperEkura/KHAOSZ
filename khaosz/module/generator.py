@@ -1,6 +1,6 @@
 import torch
 from torch import Tensor 
-from typing import List, Tuple, Union, Optional, Generator
+from typing import List, Tuple, Union, Optional, Generator, Self
 from .parameter import ModelParameter
 
 
@@ -60,7 +60,7 @@ class GeneratorCore:
         
         return next_token_ids.item() if not with_batch else next_token_ids.flatten().tolist()
 
-    def to(self, *args, **kargs):
+    def to(self, *args, **kargs) -> Self:
         self.model.to(*args, **kargs)
         return self
 
@@ -127,7 +127,7 @@ class EmbeddingEncoderCore:
         else:
             return sentence_embs[0].flatten()
 
-    def to(self, *args, **kargs):
+    def to(self, *args, **kargs) -> Self:
         self.model.to(*args, **kargs)
         return self
 

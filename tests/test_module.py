@@ -18,8 +18,7 @@ def test_env():
     test_dir = tempfile.mkdtemp()
     config_path = os.path.join(test_dir, "config.json")
     tokenizer_path = os.path.join(test_dir, "tokenizer.json")
-    tokenizer = BpeTokenizer()
-    tokenizer.save(tokenizer_path)
+    model_path = os.path.join(test_dir, "model.safestensors")
     
     config = {
         "vocab_size": 1000,
@@ -34,27 +33,27 @@ def test_env():
     with open(config_path, 'w') as f:
         json.dump(config, f)
     
+    tokenizer = BpeTokenizer()
+    tokenizer.save(tokenizer_path)
+    
     transformer_config = TransformerConfig(config_path)
     model = Transformer(transformer_config)
+    st.save_file(model.state_dict(), model_path)
     
     yield {
         "test_dir": test_dir,
-        "config_path": config_path,
         "model": model,
         "tokenizer": tokenizer,
         "transformer_config": transformer_config,
-        
     }
 
     shutil.rmtree(test_dir)
 
 def test_parameter_loader(test_env):
-    model_path = os.path.join(test_env["test_dir"], "model.safetensors")
-    model = test_env["model"]
-    st.save_file(model.state_dict(), model_path)
-    
     loaded_param = ParameterLoader.load(test_env["test_dir"])
     assert loaded_param.model is not None
+    assert loaded_param.tokenizer is not None
+    assert loaded_param.config == test_env["transformer_config"]
 
 def test_model_parameter(test_env):
     save_dir = os.path.join(test_env["test_dir"], "save")
@@ -62,4 +61,5 @@ def test_model_parameter(test_env):
     model_param.save(save_dir)
     
     assert os.path.exists(os.path.join(save_dir, "model.safetensors"))
+    assert os.path.exists(os.path.join(save_dir, "tokenizer.json"))
     assert os.path.exists(os.path.join(save_dir, "config.json"))
