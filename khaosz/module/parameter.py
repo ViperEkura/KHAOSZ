@@ -48,11 +48,9 @@ class ParameterLoader:
     @staticmethod
     def load(load_dir: str) -> ModelParameter:
         model_path = os.path.join(load_dir, "model.safetensors")
-        retriever_path = os.path.join(load_dir, "vectors.db")
         config_path = os.path.join(load_dir, "config.json")
         tokenizer_path = os.path.join(load_dir, "tokenizer.json")
         
-        has_retriever = os.path.exists(retriever_path)
         has_model_state_dict = os.path.exists(model_path)
         has_config = os.path.exists(config_path)
         assert has_config, "No config.json found in the load directory"
