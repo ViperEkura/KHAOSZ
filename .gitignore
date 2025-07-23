@@ -1,5 +1,6 @@
 # cache
 __pycache__
+.pytest_cache
 
 # params
 *.safetensors
@@ -10,8 +11,8 @@ __pycache__
 # train_log
 *.log
 
-# test unit
-test*
+# ignore file
+_*
 
-# debug file
+# vscode config
 .vscode
