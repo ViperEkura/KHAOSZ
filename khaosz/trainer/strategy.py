@@ -8,7 +8,7 @@ from torch.optim import Optimizer
 from torch.utils.data import Dataset
 from typing import Any, Literal, Tuple, Callable, Dict
 from abc import ABC, abstractmethod
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 def get_logprobs(model:nn.Module, input_ids: Tensor, mask: Tensor, pad_token_id):
     input_mask =  input_ids.ne(pad_token_id)
@@ -149,17 +149,50 @@ class StrategyFactory:
 
 @dataclass
 class TrainConfig:
-    train_type: Literal["seq", "sft", "dpo"]
-    dataset: Dataset
-    optimizer: Optimizer
-    ckpt_dir: str
-    n_epoch: int = 1
-    batch_size: int = 4
-    n_iter_ckpt: int = 5000
-    n_iter_step: int = 1
-    max_grad_norm: float = 1.0
-    random_seed: int = 3306
-    dpo_beta: float = 0.1
+    train_type: str = field(
+        default_factory=["seq", "sft", "dpo"],
+        metadata={"help": "Type of training."}
+    )
+    dataset: Dataset = field(
+        default=None,
+        metadata={"help": "Dataset for training."}
+    )
+    optimizer: Optimizer = field(
+        default=None,
+        metadata={"help": "Optimizer for training."}
+    )
+    ckpt_dir: str = field(
+        default="./checkpoint",
+        metadata={"help": "Checkpoint directory."}
+    )
+    n_epoch: int = field(
+        default=1,
+        metadata={"help": "Number of epochs for training."}
+    )
+    batch_size: int = field(
+        default=4,
+        metadata={"help": "Batch size for training."}
+    )
+    n_iter_ckpt: int = field(
+        default=5000,
+        metadata={"help": "Number of iterations between checkpoints."}
+    )
+    n_iter_step: int = field(
+        default=1,
+        metadata={"help": "Number of iterations between steps."}
+    )
+    max_grad_norm: float = field(
+        default=1.0,
+        metadata={"help": "Maximum gradient norm."}
+    )
+    random_seed: int = field(
+        default=3407,
+        metadata={"help": "Random seed."}
+    )
+    dpo_beta: float = field(
+        default=0.1,
+        metadata={"help": "DPO beta."}
+    )
 
     def get_kwargs(self)-> Dict[str, Any]:
         config_dict = asdict(self)
@@ -168,9 +201,14 @@ class TrainConfig:
 
 @dataclass
 class ScheduleConfig:
-    schedule_type: str
-    warning_step: int = 1000
-    
+    schedule_type: str = field(
+        default_factory=["cosine", "sgdr"],
+        metadata={"help": "Type of learning rate schedule."}
+    )
+    warning_step: int = field(
+        default=1000,
+        metadata= {"help": "Warning up step."}
+    )
     @abstractmethod
     def get_kwargs(self)-> Dict[str, Any]:
         raise NotImplementedError
@@ -178,8 +216,14 @@ class ScheduleConfig:
 
 @dataclass   
 class CosineScheduleConfig(ScheduleConfig):
-    total_iters: int = 0
-    min_rate: float = 0.05
+    total_iters: int = field(
+        default=None,
+        metadata={"help": "Total iterations for cosine schedule."}
+    )
+    min_rate: float = field(
+        default=0.05,
+        metadata={"help": "Minimum rate for cosine schedule."}
+    )
     schedule_type: Literal["cosine"] = "cosine"
     
     def get_kwargs(self) -> Dict[str, Any]:
@@ -191,11 +235,20 @@ class CosineScheduleConfig(ScheduleConfig):
 
 @dataclass
 class SgdrScheduleConfig(ScheduleConfig):
-    cycle_length: int = 1000
-    min_rate: float = 0.05
-    T_mult: int = 2
+    cycle_length: int = field(
+        default=1000,
+        metadata={"help": "Cycle length for sgdr schedule."}
+    )
+    min_rate: float = field(
+        default=0.05,
+        metadata={"help": "Minimum rate for sgdr schedule."}
+    )
+    T_mult: int = field(
+        default=2,
+        metadata={"help": "T_mult for sgdr schedule."}
+    )
     schedule_type: Literal["sgdr"] = "sgdr"
-    
+
     def get_kwargs(self) -> Dict[str, Any]:
         return {
             "warning_step": self.warning_step,
