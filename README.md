@@ -2,14 +2,178 @@
 
 # KHAOSZ
 
-这是一个支持中文和英文双语言的Transfomer模型，包含模型设置和训练流程， 通过加载`params/config.json` 中的设定的参数完成训练， 使用`train.py`解析命令行参数，包括数据集根目录、训练轮数、批处理大小、保存检查点的间隔轮数以及检查点保存目录。
+<div style="text-align: center; font-size: 16px; font-weight: bold;">
+  <a href="#english" style="text-decoration: none; margin: 0 10px;">English</a> | 
+  <a href="#chinese" style="text-decoration: none; margin: 0 10px;">中文</a>
+</div>
+ 
+
+<h2 id="english">English Version</h2>
+
+This is a Chinese-English bilingual Transformer model supporting both languages. It contains model configurations and training workflows, completing training by loading parameters defined in `params/config.json`. The training script `train.py` parses command-line arguments, including dataset root directory, number of training epochs, batch size, checkpoint interval, and checkpoint directory.
+
+**Model Download Options (Choose One):**
+
+1. Visit [HuggingFace](https://huggingface.co/ViperEk/KHAOSZ) to access **Files and versions**
+2. Run `params/download.py` to download parameters
+
+**Demo Video:** [bilibili](https://www.bilibili.com/video/BV1z5RPYHEkd)
+
+Training dataset sources are listed in the **Model Card** section of the HuggingFace download link.
+
+**License:** Code follows Apache-2.0 protocol. Please credit the source code when used.
+
+- **📊 Device Selection:** Code defaults to CUDA training
+- **🌐 Performance Optimization:** `dtype=torch.bfloat16` is enabled to accelerate training and reduce memory usage. Ensure hardware supports this feature.
+- **🤖 Language Support:** Model supports Chinese and English training. The BBPE tokenizer was trained without multilingual text, so OOV (out-of-vocabulary) issues are minimized for these languages but may exist for others.
+
+### 📌 Training Guide
+
+To train this Transformer model, follow these steps:
+
+**(1). Prepare Dataset:**
+
+Place datasets in the designated root directory. Files should be text documents in Chinese, English, or mixed. Format should align with model input requirements - preferably pre-tokenized token_ids stored as `torch.Tensor` (using `torch.Tensor` saves memory compared to Python lists, which default to 64-bit precision).
+
+**(2). Install Dependencies:**
+
+```bash
+conda env create -f environment.yml --name env_name
+```
+
+**(3). Run Training Script:**
+
+```bash
+python train.py \
+--train_type=train_type[seq, sft, dpo] \
+--data_root_path=/path/to/dataset \
+--n_epoch=5 \
+--batch_size=8 \
+--max_lr=2e-4 \
+--n_iter_ckpt=10000 \
+--ckpt_dir checkpoints 
+```
+
+**Parameters Explanation:**
+- `--train_type`: Training type (seq, sft, dpo)
+- `--data_root_path`: Dataset root directory
+- `--n_epoch`: Total training epochs
+- `--batch_size`: Batch size
+- `--n_iter_step`: Number of batches per training step
+- `--warning_step`: Warmup steps
+- `--max_lr`: Maximum learning rate (uses warmup + cosine decay)
+- `--n_iter_ckpt`: Checkpoint saving interval
+- `--ckpt_dir`: Checkpoint directory
+- `--resume_dir`: Path to resume training from checkpoint
+
+Training logs are saved in `train_log.txt`. Checkpoints will be stored in the specified directory for resuming training or evaluation.
+
+### 👉 Usage Guide
+
+**(1). Chatting with the Model:**
+
+Open `chat.py` or use streaming/non-streaming interfaces:
+
+**Streaming Output:**
+```python
+import torch
+from khaosz import Khaosz
+
+model_dir = "your_model_parameter_dir"
+model = Khaosz(model_dir).to(device='cuda', dtype=torch.bfloat16)
+history = []
+
+while True:
+    query = input(">> ")
+    if query == "!exit":
+        break
+    
+    response_size = 0
+    for response, history in model.stream_generate(
+        query=query, 
+        history=history,
+        temperature=0.85,
+        top_p=0.95,
+        top_k=50
+    ):
+        print(response[response_size:], end="")
+        response_size = len(response)       
+```
+
+**Non-streaming Output:**
+```python
+import torch
+from khaosz import Khaosz
+
+model_dir = "your_model_parameter_dir"
+model = Khaosz(model_dir).to(device='cuda', dtype=torch.bfloat16)
+history = []
+
+while True:
+    query = input(">> ")
+    if query == "!exit":
+        break
+    
+    response = model.generate(
+        query=query, 
+        history=history,
+        temperature=0.85,
+        top_p=0.95,
+        top_k=50
+    )
+    print(response)
+```
+
+**(2) Retrieval-Augmented Generation (RAG):**
+
+```python
+import torch
+from khaosz import Khaosz
+
+model_dir = "your_model_parameter_dir"
+model = Khaosz(model_dir).to(device='cuda', dtype=torch.bfloat16)
+
+retrieved_content = model.retrieve_generate(
+    query=query,
+    retrieve_top_k=5,
+    temperature=0.6,
+    top_k=30,
+    top_p=0.95
+)
+print(retrieved_content)
+```
+
+### 📌 Model Specifications
+
+This model is based on a 20-layer Transformer with parameters defined in `config.json`, totaling approximately 400 million (0.40B) parameters.
+
+**Key Design Choices:**
+- Weight tying between embedding and final linear layers (standard for small models to save parameters)
+- Embedding layer optimization: Without weight tying, a 10,000-word vocabulary would consume ~102M parameters (0.1B)
+
+**Limitations:**
+- May struggle with complex language phenomena due to smaller parameter size
+- Prone to overfitting on specialized datasets
+- Limited multilingual capabilities
+
+**Advantages:**
+- Runs efficiently on lower-spec hardware
+- Shorter training time compared to larger models
+
+**Training Pipeline:** 
+The model has completed pre-training + SFT (Supervised Fine-Tuning) + DPO (Direct Preference Optimization) workflows. All corresponding training code is included in the repository.
+
+
+<h2 id="chinese">中文版本</h2>
+
+这是一个支持中文和英文双语言的Transformer模型，包含模型设置和训练流程， 通过加载`params/config.json` 中的设定的参数完成训练， 使用`train.py`解析命令行参数，包括数据集根目录、训练轮数、批处理大小、保存检查点的间隔轮数以及检查点保存目录。
 
 模型下载方法(二选一)：
 
-1. 前往 https://huggingface.co/ViperEk/KHAOSZ 查找**Files and versions**
+1. 前往 [HuggingFace](https://huggingface.co/ViperEk/KHAOSZ) 查找**Files and versions**
 2. 运行 **params/download.py** 下载参数
 
-演示视频：https://www.bilibili.com/video/BV1z5RPYHEkd
+演示视频：[bilibili](https://www.bilibili.com/video/BV1z5RPYHEkd)
 
 训练数据集来源在huggingface下载链接中的**Model Card**界面查找
 
@@ -19,7 +183,7 @@
 - **🌐性能优化**：代码中设置了`dtype=torch.bfloat16`来启用训练，这有助于提高训练速度和降低显存消耗，但需确保硬件支持此特性。
 - **🤖语言支持**：该模型目前支持在中文和英文数据集上训练， 在训练分词器时没有加入其他语言的文本，BBPE分词器不会存在OOV问题，但是对别的语言支持比较差
 
-## 📌如何训练
+### 📌如何训练
 
 要训练这个Transformer模型，您可以按照以下步骤进行操作：
 
@@ -74,7 +238,7 @@ python train.py \
 检查点文件会保存在指定的检查点目录中，您可以使用这些检查点文件来恢复训练或进行评估。
 
 
-## 👉如何使用
+### 👉如何使用
 
 **(1).使用模型完成聊天：**
 
@@ -158,7 +322,7 @@ print(retrive_content)
 ```
 
 
-## 📌其他问题
+### 📌其他问题
 本模型基于20层的transformer，参数大致设置如`config.json`，参数大小为4亿（0.40b）
 
 模型采用权重绑定， embedding层的权重和最后线性层的权重是共享的（比较小的模型都采用这种方式节省参数大小， 因为不采用权重绑定， embedding层假设有10000单词， 将会占用 10000 * 1024 = 102,400,000 参数， 也就是 0.1b 参数， 因为词表会占用太多的参数， 所以采用权重绑定是小模型的通用方法）
