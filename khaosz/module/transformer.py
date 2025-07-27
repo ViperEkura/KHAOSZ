@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 from torch import Tensor
 from torch.nn import init
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Literal
 from dataclasses import asdict, dataclass
 
 def create_mask(L: int, device) -> Tensor:
@@ -95,17 +95,27 @@ def create_seq_mask(
 
 @dataclass
 class TransformerConfig:
-    # config info
+    # basic config
+    attn_type: Literal["GQA", "MLA"] = "GQA"
     vocab_size: Optional[int] = None
     n_dim: Optional[int] = None
     n_head: Optional[int] = None
-    n_kvhead: Optional[int] = None
-    d_ffn: Optional[int] = None
-    m_len: Optional[int] = None
     n_layer: Optional[int] = None
+    m_len: Optional[int] = None
     norm_eps: Optional[float] = None
-    flash_attn: Optional[bool] = None
+    d_ffn: Optional[int] = None
     
+    # GQA
+    n_kvhead: Optional[int] = None
+    
+    # MLA
+    q_lora_rank: Optional[int] = None
+    kv_lora_rank: Optional[int] = None
+    qk_rope_head_dim: Optional[int] = None
+    qk_nope_head_dim: Optional[int] = None
+    v_head_dim: Optional[int] = None
+    
+
     def __init__(self, config_path: str):
         if config_path is not None:
             with open(config_path, "r") as f:
@@ -164,7 +174,7 @@ class MLP(nn.Module):
         return out
 
 
-class Attention(nn.Module):
+class GQA(nn.Module):
     def __init__(self, n_dim, n_head, n_kvhead, flush_attn=True):
         super().__init__()
         assert n_dim % n_head == 0
@@ -210,12 +220,77 @@ class Attention(nn.Module):
         out = self.o_proj(attn_out)
 
         return out
+    
+
+class MLA(nn.Module):
+    def __init__(
+        self,
+        n_dim: int,
+        n_heads: int,
+        q_lora_rank: int,
+        kv_lora_rank: int,
+        qk_rope_head_dim: int,
+        qk_nope_head_dim: int,
+        v_head_dim: int,
+        norm_eps: float
+    ):
+        super().__init__()
+        self.n_dim = n_dim
+        self.n_heads = n_heads
+        
+        self.q_lora_rank = q_lora_rank
+        self.kv_lora_rank = kv_lora_rank
+        self.qk_rope_head_dim = qk_rope_head_dim
+        self.qk_nope_head_dim = qk_nope_head_dim
+        self.qk_head_dim = qk_nope_head_dim + qk_rope_head_dim
+        self.v_head_dim = v_head_dim  
+        
+        assert self.kv_lora_rank > 0
+        assert self.q_lora_rank >= 0
+
+        if self.q_lora_rank == 0:
+            self.wq = Linear(self.n_dim, self.n_heads * self.qk_head_dim)
+        else:
+            self.wq_a = Linear(self.n_dim, self.q_lora_rank)
+            self.q_nrom = RMSNorm(self.q_lora_rank, norm_eps)
+            self.wq_b = Linear(self.q_lora_rank, self.n_heads * self.qk_head_dim)
+        
+        self.wkv_a = Linear(self.n_dim, self.kv_lora_rank + self.qk_rope_head_dim)
+        self.kv_norm = RMSNorm(self.kv_lora_rank, norm_eps)
+        self.wkv_b = Linear(self.kv_lora_rank, self.n_heads * (self.qk_nope_head_dim + self.v_head_dim))
+        self.wo = Linear(self.n_heads * self.v_head_dim, self.n_dim)
+
+    def forward(self, x: Tensor, freqs_cis: Tensor, mask: Tensor = None) -> Tensor:
+        bsz, seq_len = x.size(0), x.size(1)
+        
+        q: Tensor = self.wq(x) if self.q_lora_rank == 0 else self.wq_b(self.q_nrom(self.wq_a(x)))
+        q = q.view(bsz, seq_len, self.n_heads, self.qk_head_dim)
+        q_nope, q_pe = q.split([self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
+        
+        c: Tensor = self.wkv_a(x)
+        kv, k_pe = c.split([self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
+        kv: Tensor = self.wkv_b(self.kv_norm(kv))
+        kv = kv.view(bsz, seq_len, self.n_heads, self.qk_nope_head_dim + self.v_head_dim)
+        k_nope, v = torch.split(kv, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
+        
+        q_pe, k_pe = apply_rotary_emb(q_pe,k_pe.unsqueeze(2), freqs_cis)
+        q = torch.cat([q_nope, q_pe], dim=-1)
+        k = torch.cat([k_nope, k_pe.expand(-1, -1, self.n_heads, -1)], dim=-1)
+        
+        attn_out = F.scaled_dot_product_attention(
+            q.transpose(1, 2), k.transpose(1, 2),v.transpose(1, 2), attn_mask=mask, is_causal=True
+        ).transpose(1, 2).flatten(2)
+        
+        x_out = self.wo(attn_out)
+        
+        return x_out
+    
 
 
 class DecoderBlock(nn.Module):
     def __init__(self, n_dim, n_head, d_ffn, n_kvhead, norm_eps):
         super().__init__()
-        self.attention = Attention(n_dim, n_head, n_kvhead)
+        self.attention = GQA(n_dim, n_head, n_kvhead)
         self.norm_attn = RMSNorm(n_dim, norm_eps)
         self.ffn = MLP(n_dim, d_ffn)
         self.norm_ffn = RMSNorm(n_dim, norm_eps)
