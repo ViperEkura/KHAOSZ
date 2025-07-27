@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, RandomSampler
 from tqdm import tqdm
 
 from khaosz.module import ModelParameter, BpeTokenizer, TransformerConfig
-from .strategy import SchedulerFactory, StrategyFactory, TrainConfig, ScheduleConfig
+from khaosz.trainer.strategy import SchedulerFactory, StrategyFactory, TrainConfig, ScheduleConfig
 
 
 class TrainCheckPoint(ModelParameter):
