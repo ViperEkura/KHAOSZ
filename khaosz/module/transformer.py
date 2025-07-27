@@ -116,11 +116,16 @@ class TransformerConfig:
     v_head_dim: Optional[int] = None
     
 
-    def __init__(self, config_path: str):
+    def __init__(self, config_path: str=None, **kwargs):
+
         if config_path is not None:
             with open(config_path, "r") as f:
                 self.load(config_path)
-        
+
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+    
     def load(self, config_path: str) -> None:
         with open(config_path, 'r') as f:
             config: dict = json.load(f)
