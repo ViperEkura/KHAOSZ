@@ -1,12 +1,14 @@
-![image-20250306182014120](/resources/images/project_logo.png)
+![image-20250306182014120](/resources/images/project_logo_clipped.png)
 
-# KHAOSZ
+<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; font-size: 16px; font-weight: bold; margin-top: 50px;">
+  
+  <div>
+    <a href="#english" style="text-decoration: none; margin: 0 10px; color: blue;">English</a> | 
+    <a href="#chinese" style="text-decoration: none; margin: 0 10px; color: blue;">中文</a>
+  </div>
 
-<div style="text-align: center; font-size: 16px; font-weight: bold;">
-  <a href="#english" style="text-decoration: none; margin: 0 10px;">English</a> | 
-  <a href="#chinese" style="text-decoration: none; margin: 0 10px;">中文</a>
+  <h1 style="margin: 20px 0 0 0; font-size: 2.5em; font-weight: bold;">KHAOSZ </h1>
 </div>
- 
 
 <h2 id="english">English Version</h2>
 
@@ -145,7 +147,7 @@ print(retrieved_content)
 
 ### 📌 Model Specifications
 
-This model is based on a 20-layer Transformer with parameters defined in `config.json`, totaling approximately 400 million (0.40B) parameters.
+This model is based on a 24-layer Transformer with parameters defined in `config.json`, totaling approximately 1.0 billion (1.0B) parameters.
 
 **Key Design Choices:**
 - Weight tying between embedding and final linear layers (standard for small models to save parameters)
@@ -165,44 +167,40 @@ The model has completed pre-training + SFT (Supervised Fine-Tuning) + DPO (Direc
 
 
 <h2 id="chinese">中文版本</h2>
+这是一个支持中英文双语的 Transformer 模型，能够处理两种语言。模型包含配置文件和训练流程，通过加载 `params/config.json` 中定义的参数完成训练。训练脚本 `train.py` 支持命令行参数解析，包括数据集根目录、训练轮数（epochs）、批量大小（batch size）、检查点保存间隔、检查点目录等。
 
-这是一个支持中文和英文双语言的Transformer模型，包含模型设置和训练流程， 通过加载`params/config.json` 中的设定的参数完成训练， 使用`train.py`解析命令行参数，包括数据集根目录、训练轮数、批处理大小、保存检查点的间隔轮数以及检查点保存目录。
+**模型下载选项（任选其一）：**
 
-模型下载方法(二选一)：
+1. 访问 [HuggingFace](https://huggingface.co/ViperEk/KHAOSZ) 查看 **Files and versions**
+2. 运行 `params/download.py` 下载模型参数
 
-1. 前往 [HuggingFace](https://huggingface.co/ViperEk/KHAOSZ) 查找**Files and versions**
-2. 运行 **params/download.py** 下载参数
+**演示视频：** [bilibili](https://www.bilibili.com/video/BV1z5RPYHEkd)
 
-演示视频：[bilibili](https://www.bilibili.com/video/BV1z5RPYHEkd)
+训练数据来源请参见 HuggingFace 下载页面中的 **Model Card** 部分。
 
-训练数据集来源在huggingface下载链接中的**Model Card**界面查找
+**许可证：** 代码遵循 Apache-2.0 协议，使用时请注明出处。
 
-代码遵循 Apache-2.0 协议， 使用时请注明代码来源
+- **📊 设备选择：** 默认使用 CUDA 进行训练
+- **🌐 性能优化：** 启用 `dtype=torch.bfloat16` 以加速训练并减少内存占用，请确保硬件支持该特性
+- **🤖 语言支持：** 模型支持中文和英文训练。由于 BBPE 分词器未使用多语言文本训练，因此中英文的 OOV（未登录词）问题较少，其他语言可能存在 OOV 问题
 
-- **📊设备选择**：当前代码默认使用CUDA进行训练
-- **🌐性能优化**：代码中设置了`dtype=torch.bfloat16`来启用训练，这有助于提高训练速度和降低显存消耗，但需确保硬件支持此特性。
-- **🤖语言支持**：该模型目前支持在中文和英文数据集上训练， 在训练分词器时没有加入其他语言的文本，BBPE分词器不会存在OOV问题，但是对别的语言支持比较差
 
-### 📌如何训练
 
-要训练这个Transformer模型，您可以按照以下步骤进行操作：
+### 📌 训练指南
 
-**(1). 准备数据集：**
+要训练该 Transformer 模型，请按照以下步骤操作：
 
-确保您的数据集位于一个指定的根目录下。数据集应包含用于训练的文本文件，这些文件可以是中文、英文或两者混合。
-数据文件的格式应与模型的输入要求一致，最好是经过tokenizer处理过后的token_id, 为了节省内存占用采用torch.Tensor 存储id,(如果使用python的list, 在读取训练数据的时候内存占用大概是原来的两倍以上，因为python似乎是默认采用64位数精度存储的数据， 但是实际上int32足够)
+#### **(1). 准备数据集：**
 
-**(2).安装依赖：**
+将数据集放置在指定的根目录下。文件应为包含中文、英文或混合文本的文本文档。格式应符合模型输入要求——建议使用预分词后的 `token_ids` 并以 `torch.Tensor` 格式保存（使用 `torch.Tensor` 相比 Python 列表更节省内存，列表默认为 64 位精度）。
 
-确保您已经安装了所有必要的Python库：
+#### **(2). 安装依赖：**
 
 ```bash
 conda env create -f environment.yml --name env_name
 ```
 
-**(3).运行训练脚本：**
-
-使用以下命令运行训练脚本，并根据需要调整参数：
+#### **(3). 运行训练脚本：**
 
 ```bash
 python train.py \
@@ -214,44 +212,37 @@ python train.py \
 --n_iter_ckpt=10000 \
 --ckpt_dir checkpoints 
 ```
---train_type: 指定训练的类型，可选值有seq, sft, dpo
 
---data_root_path：指定数据集的根目录路径。
+**参数说明：**
+- `--train_type`: 训练类型（seq, sft, dpo）
+- `--data_root_path`: 数据集根目录
+- `--n_epoch`: 总训练轮数
+- `--batch_size`: 批量大小
+- `--n_iter_step`: 每个训练步骤的 batch 数量
+- `--warning_step`: 预热步数（warmup steps）
+- `--max_lr`: 最大学习率（使用预热 + 余弦衰减）
+- `--n_iter_ckpt`: 检查点保存间隔
+- `--ckpt_dir`: 检查点保存目录
+- `--resume_dir`: 从指定路径恢复训练
 
---n_epoch：指定训练的总轮数。
-
---batch_size：指定每个批次的样本数量。
-
---n_iter_step： 多少batch迭代一步
-
---warning_step: 预热步数
-
---max_lr: 指定过程中最大的学习率（学习率采用的是预热 + 余弦衰减）
-
---n_iter_ckpt：指定每多少迭代次数保存一次检查点。
-
---ckpt_dir：指定保存检查点的目录。
-
---resume_dir: 恢复训练的checkpoint路径
-
-训练过程中，您可以在终端中查看训练日志(train_log.txt)，了解训练进度、损失值等信息。
-检查点文件会保存在指定的检查点目录中，您可以使用这些检查点文件来恢复训练或进行评估。
+训练日志将保存在 `train_log.txt` 中。检查点将保存在指定目录，用于恢复训练或评估。
 
 
-### 👉如何使用
 
-**(1).使用模型完成聊天：**
+### 👉 使用指南
 
-如果您想使用这个模型进行对话聊天, 请打开 chat.py 文件，并运行它。
-或者， 您可以使用流式输出接口/对话生成接口完成对话
+#### **(1). 与模型对话：**
 
+打开 `chat.py` 或使用流式/非流式接口：
+
+**流式输出：**
 ```python
 import torch
 from khaosz import Khaosz
 
 model_dir = "your_model_parameter_dir"
 model = Khaosz(model_dir).to(device='cuda', dtype=torch.bfloat16)
-histroy = []
+history = []
 
 while True:
     query = input(">> ")
@@ -259,37 +250,34 @@ while True:
         break
     
     response_size = 0
-    for response, histroy in model.stream_generate(
+    for response, history in model.stream_generate(
         query=query, 
-        history=histroy,
+        history=history,
         temperature=0.85,
         top_p=0.95,
         top_k=50
     ):
         print(response[response_size:], end="")
         response_size = len(response)       
-
 ```
 
-或者您可以使用非流式输出的方式完成对话
-
+**非流式输出：**
 ```python
 import torch
 from khaosz import Khaosz
 
 model_dir = "your_model_parameter_dir"
 model = Khaosz(model_dir).to(device='cuda', dtype=torch.bfloat16)
-histroy = []
+history = []
 
 while True:
     query = input(">> ")
     if query == "!exit":
         break
     
-    response_size = 0
-    response =  model.generate(
+    response = model.generate(
         query=query, 
-        history=histroy,
+        history=history,
         temperature=0.85,
         top_p=0.95,
         top_k=50
@@ -297,10 +285,7 @@ while True:
     print(response)
 ```
 
-**(2) 使用模型完成向量检索生成(RAG)：**
-
-
-如果您想在文本分段之后进行检索
+#### **(2). 基于检索的生成（RAG）：**
 
 ```python
 import torch
@@ -309,24 +294,34 @@ from khaosz import Khaosz
 model_dir = "your_model_parameter_dir"
 model = Khaosz(model_dir).to(device='cuda', dtype=torch.bfloat16)
 
-# after init database
-
-retrive_content = model.retrieve_generate(
+retrieved_content = model.retrieve_generate(
     query=query,
-    retrive_top_k=5,
+    retrieve_top_k=5,
     temperature=0.6,
     top_k=30,
     top_p=0.95
 )
-print(retrive_content)
+print(retrieved_content)
 ```
 
 
-### 📌其他问题
-本模型基于20层的transformer，参数大致设置如`config.json`，参数大小为4亿（0.40b）
 
-模型采用权重绑定， embedding层的权重和最后线性层的权重是共享的（比较小的模型都采用这种方式节省参数大小， 因为不采用权重绑定， embedding层假设有10000单词， 将会占用 10000 * 1024 = 102,400,000 参数， 也就是 0.1b 参数， 因为词表会占用太多的参数， 所以采用权重绑定是小模型的通用方法）
+### 📌 模型规格说明（重复部分）
 
-由于模型参数相对较少，在某些任务上可能会出现性能不足的情况，比如对复杂语言现象的理解能力可能不如更大规模的模型。此外，较小的模型也可能更容易过拟合训练数据，导致泛化能力较差。不过，这也意味着该模型可以在较低配置的硬件上运行，并且训练时间相对较短。
+该模型基于一个 24 层的 Transformer 架构，参数配置定义在 `config.json` 中，总参数量约为 10 亿（1.0B）。
 
-目前模型已经完成 pre-train + SFT + DPO 的流程， 相应的训练代码也存储在了项目当中
+**关键设计选择：**
+- 在嵌入层（embedding）与最终线性层之间进行权重绑定（weight tying），这是小型模型中常见的节省参数量的做法
+- 嵌入层优化：若不进行权重绑定，一个包含 10,000 个词的词汇表将消耗约 1.02 亿（0.1B）参数
+
+**局限性：**
+- 由于参数规模较小，可能在处理复杂语言现象时表现受限
+- 在特定领域的数据集上容易出现过拟合
+- 多语言能力有限
+
+**优势：**
+- 可在低配置硬件上高效运行
+- 相较于大型模型，训练时间更短
+
+**训练流程：**  
+该模型已完成预训练（pre-training）+ 监督微调（SFT, Supervised Fine-Tuning）+ 直接偏好优化（DPO, Direct Preference Optimization）的全流程。所有相关的训练代码均已包含在代码库中。
