@@ -10,6 +10,7 @@ from torch.nn import init
 from typing import Tuple, Optional, Literal
 from dataclasses import asdict, dataclass
 
+
 def create_mask(L: int, device) -> Tensor:
     return torch.ones(
         L, L, dtype=torch.bool, device=device
@@ -93,6 +94,7 @@ def create_seq_mask(
 
     return attention_mask
 
+
 @dataclass
 class TransformerConfig:
     # basic config
@@ -141,7 +143,7 @@ class TransformerConfig:
             
 
 class Linear(nn.Module):
-    def __init__(self, in_dim, out_dim, bias=False):
+    def __init__(self, in_dim: int, out_dim: int, bias: bool=False):
         super().__init__()
         self.weight = nn.Parameter(torch.empty((out_dim, in_dim)))
         self.bias = nn.Parameter(torch.zeros(out_dim)) if bias else None
@@ -168,7 +170,7 @@ class RMSNorm(nn.Module):
     
     
 class MLP(nn.Module):
-    def __init__(self, n_dim, d_ffn):
+    def __init__(self, n_dim: int, d_ffn: int):
         super().__init__()
         self.up = Linear(n_dim, d_ffn)
         self.gate = Linear(n_dim, d_ffn)
@@ -180,12 +182,16 @@ class MLP(nn.Module):
 
 
 class GQA(nn.Module):
-    def __init__(self, n_dim, n_head, n_kvhead, flush_attn=True):
+    def __init__(
+        self, 
+        n_dim: int, 
+        n_head: int, 
+        n_kvhead: int, 
+    ):
         super().__init__()
         assert n_dim % n_head == 0
         assert n_head % n_kvhead == 0
         
-        self.flush_attn = flush_attn
         self.head_dim = n_dim // n_head
         self.n_dim = n_dim
         self.n_heads = n_head
@@ -196,32 +202,29 @@ class GQA(nn.Module):
         self.k_proj = Linear(n_dim, n_kvhead * self.head_dim)
         self.v_proj = Linear(n_dim, n_kvhead * self.head_dim)
         self.o_proj = Linear(n_dim, n_dim)
-    def forward(self, x: Tensor, freqs_cis, mask=None) -> Tensor:
+    def forward(
+        self,
+        x: Tensor, 
+        freqs_cis: Tensor, 
+        mask: Tensor = None
+    ) -> Tensor:
         B, L, _ = x.size()
         # x(B, L, D)
         q: Tensor = self.q_proj(x)
         k: Tensor = self.k_proj(x)
         v: Tensor = self.v_proj(x)
         
-        q = q.view(B, L, self.n_heads, self.head_dim)
-        k = k.view(B, L, self.n_kvheads, self.head_dim)
-        v = v.view(B, L, self.n_kvheads, self.head_dim)
-        
+        q, k, v = (q.view(B, L, self.n_heads, self.head_dim), k.view(B, L, self.n_kvheads, self.head_dim), 
+                   v.view(B, L, self.n_kvheads, self.head_dim))
+
         q, k = apply_rotary_emb(q, k, freqs_cis)
         k, v = repeat_kv(k, self.n_rep), repeat_kv(v, self.n_rep)
         
         # (bsz, n_heads, L, head_dim)
-        q = q.permute(0, 2, 1, 3)
-        k = k.permute(0, 2, 1, 3)
-        v = v.permute(0, 2, 1, 3)
-        
-        if self.flush_attn:
-            attn_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=True)
-            attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(B, L, -1)
-        else:
-            attn_out = self_attention(q, k, v, self.n_heads, self.head_dim, mask)
-            attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(B, L, -1)
-        
+        q, k, v = q.permute(0, 2, 1, 3), k.permute(0, 2, 1, 3), v.permute(0, 2, 1, 3)
+
+        attn_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=True)
+        attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(B, L, -1)
         out = self.o_proj(attn_out)
 
         return out
@@ -265,7 +268,12 @@ class MLA(nn.Module):
         self.wkv_b = Linear(self.kv_lora_rank, self.n_heads * (self.qk_nope_head_dim + self.v_head_dim))
         self.wo = Linear(self.n_heads * self.v_head_dim, self.n_dim)
 
-    def forward(self, x: Tensor, freqs_cis: Tensor, mask: Tensor = None) -> Tensor:
+    def forward(
+        self, 
+        x: Tensor, 
+        freqs_cis: Tensor, 
+        mask: Tensor = None
+    ) -> Tensor:
         bsz, seq_len = x.size(0), x.size(1)
         
         q: Tensor = self.wq(x) if self.q_lora_rank == 0 else self.wq_b(self.q_nrom(self.wq_a(x)))
@@ -291,7 +299,6 @@ class MLA(nn.Module):
         return x_out
     
 
-
 class DecoderBlock(nn.Module):
     def __init__(self, n_dim, n_head, d_ffn, n_kvhead, norm_eps):
         super().__init__()
@@ -300,7 +307,12 @@ class DecoderBlock(nn.Module):
         self.ffn = MLP(n_dim, d_ffn)
         self.norm_ffn = RMSNorm(n_dim, norm_eps)
 
-    def forward(self, x, freqs_cis, mask=None) -> torch.Tensor:
+    def forward(
+        self,
+        x: Tensor,
+        freqs_cis: Tensor,
+        mask: Tensor = None,
+    ) -> Tensor:
         x = self.attention(self.norm_attn(x), freqs_cis, mask) + x
         x = self.ffn(self.norm_ffn(x)) + x
         return x
@@ -326,7 +338,12 @@ class Transformer(nn.Module):
             parameter_size += p.numel()
         return parameter_size
     
-    def forward(self, ids: Tensor, pos_mask: Tensor=None, return_hidden=False) -> Tensor:
+    def forward(
+        self, 
+        ids: Tensor, 
+        pos_mask: Tensor=None, 
+        return_hidden: bool=False
+    ) -> Tensor:
         assert ids.ndim == 2
         x = F.embedding(ids, self.embedding)
         
