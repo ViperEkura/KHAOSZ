@@ -1,19 +1,27 @@
-
 import os
 import torch.nn as nn
 import safetensors.torch as st
 
 from typing import Self
-from dataclasses import dataclass
-from .tokenizer import BpeTokenizer
-from .transformer import TransformerConfig, Transformer
+from dataclasses import dataclass, field
+from khaosz.module.tokenizer import BpeTokenizer
+from khaosz.module.transformer import TransformerConfig, Transformer
 
 
 @dataclass
 class ModelParameter:
-    model: nn.Module
-    tokenizer: BpeTokenizer
-    config: TransformerConfig
+    model: nn.Module = field(
+        default=None,
+        metadata={"help": "Transformer model."}
+    )
+    tokenizer: BpeTokenizer = field(
+        default_factory=BpeTokenizer,
+        metadata={"help": "Tokenizer for the model."}
+    )
+    config: TransformerConfig = field(
+        default_factory=TransformerConfig,
+        metadata={"help": "Transformer model configuration."}
+    )
 
     def _get_paths(self, save_dir: str):
         return {

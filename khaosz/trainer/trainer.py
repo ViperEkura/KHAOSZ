@@ -3,39 +3,30 @@ import copy
 import torch
 import logging
 import pickle as pkl
-import torch.nn as nn
 import matplotlib.pyplot as plt
 
+from typing import Tuple, Self
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader, RandomSampler
 from tqdm import tqdm
 
-from khaosz.module import ModelParameter, BpeTokenizer, TransformerConfig
+from khaosz.module import ModelParameter
 from khaosz.trainer.strategy import SchedulerFactory, StrategyFactory, TrainConfig, ScheduleConfig
+from dataclasses import dataclass, field
 
 
+@dataclass
 class TrainCheckPoint(ModelParameter):
-    def __init__(
-            self, 
-            model: nn.Module, 
-            tokenizer: BpeTokenizer, 
-            config: TransformerConfig, 
-            loss_list: list, 
-            current_iter: int
-        ):
-            super().__init__(model, tokenizer, config)
-            self.loss_list = loss_list
-            self.current_iter = current_iter
+    loss_list: list = field(default_factory=list)
+    current_iter: int = field(default=0)
 
-    def save_ckpt(self, save_dir: str):
+    def save(self, save_dir: str):
         super().save(save_dir)
         paths = {
             "loss_list": os.path.join(save_dir, "loss.pkl"),
             "lossfig": os.path.join(save_dir, "loss.png")
         }
-        
-        pkl.dump(self.loss_list, open(paths["loss_list"], "wb"))
         plt.figure()
         plt.plot(self.loss_list)
         plt.title(f"Training Loss - iter {self.current_iter}")
@@ -43,6 +34,16 @@ class TrainCheckPoint(ModelParameter):
         plt.ylabel("Loss")
         plt.savefig(paths["lossfig"])
         plt.close()
+        
+        with  open(paths["loss_list"], "wb") as f:
+            pkl.dump(self.loss_list, f)
+        
+    def load(self, save_dir: str) -> Self:
+        super().load(save_dir)
+        with open(os.path.join(save_dir, "loss.pkl"), "rb") as f:
+            self.loss_list = pkl.load(f)
+            self.current_iter = len(self.loss_list)
+        return self
 
 
 class Trainer:
@@ -71,9 +72,6 @@ class Trainer:
         current_iter: int, 
         last_ckpt_iter: int
     ):
-        diff_iter = current_iter - last_ckpt_iter
-        avg_loss = sum(loss_list[last_ckpt_iter:current_iter]) / diff_iter
-        self.logger.info(f"iter: {current_iter} loss: {avg_loss}")
         save_path = os.path.join(ckpt_dir, f"iter_{current_iter}")
         TrainCheckPoint(
             self.model, 
@@ -81,9 +79,23 @@ class Trainer:
             self.config, 
             loss_list, 
             current_iter
-        ).save_ckpt(save_path)
+        ).save(save_path)
+        
+        diff_iter = current_iter - last_ckpt_iter
+        avg_loss = sum(loss_list[last_ckpt_iter:current_iter]) / diff_iter
+        self.logger.info(f"iter: {current_iter} loss: {avg_loss}")  
         
         return current_iter
+    
+    def load_checkpoint(self, ckpt_path: str) -> Tuple[list, int]:
+        train_checkpoint = TrainCheckPoint().load(ckpt_path)
+        self.model = train_checkpoint.model
+        self.tokenizer = train_checkpoint.tokenizer
+        self.config = train_checkpoint.config
+        loss_list = train_checkpoint.loss_list
+        last_ckpt_iter = train_checkpoint.current_iter
+        
+        return loss_list, last_ckpt_iter
 
     def train(
         self,
