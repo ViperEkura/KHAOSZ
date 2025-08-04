@@ -40,7 +40,7 @@ Place datasets in the designated root directory. Files should be text documents 
 **(2). Install Dependencies:**
 
 ```bash
-conda env create -f environment.yml --name env_name
+pip install .
 ```
 
 **(3). Run Training Script:**
@@ -197,7 +197,7 @@ The model has completed pre-training + SFT (Supervised Fine-Tuning) + DPO (Direc
 #### **(2). 安装依赖：**
 
 ```bash
-conda env create -f environment.yml --name env_name
+pip install .
 ```
 
 #### **(3). 运行训练脚本：**

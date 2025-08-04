@@ -7,6 +7,9 @@ from khaosz.module import ParameterLoader
 from khaosz.trainer import Trainer, DatasetLoader, TrainConfig, CosineScheduleConfig
 
 
+PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__)))
+
 def get_files(root_path: str) -> list[str]:
     paths = []
     for root, _, files in os.walk(root_path):
@@ -36,8 +39,8 @@ def train(
     if train_type in ["sft", "dpo"]:
         assert resume_dir is not None
         
-    script_dir = os.path.dirname(__file__)
-    load_path = resume_dir if resume_dir is not None else os.path.join(script_dir, "params")
+    default_dir = os.path.join(PROJECT_ROOT, "params")
+    load_path = resume_dir if resume_dir else default_dir
     
     parameter = ParameterLoader.load(load_path)
     model = parameter.model

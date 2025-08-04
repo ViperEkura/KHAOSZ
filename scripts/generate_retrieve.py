@@ -3,6 +3,9 @@ import torch
 from khaosz import Khaosz, TextSplitter, Retriever
 
 
+PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__)))
+
 if __name__ == "__main__":
     script_dir = os.path.dirname(__file__)
     model_dir = os.path.join(script_dir, "params")

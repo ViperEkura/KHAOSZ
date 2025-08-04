@@ -3,9 +3,11 @@ import torch
 from khaosz import Khaosz
 
 
+PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__)))
+
 def generate_text():
-    script_dir = os.path.dirname(__file__)
-    model_dir = os.path.join(script_dir, "params")
+    model_dir = os.path.join(PROJECT_ROOT, "params")
     model = Khaosz(model_dir).to(device='cuda', dtype=torch.bfloat16)
 
     query = input(">> ")

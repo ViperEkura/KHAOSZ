@@ -1,4 +1,5 @@
 import os
+import torch
 import json
 import torch
 import argparse
@@ -6,6 +7,10 @@ import argparse
 from khaosz import Khaosz
 from typing import List
 from tqdm import tqdm
+
+
+PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__)))
 
 def batch_generate(
     queries: List[str],
@@ -116,9 +121,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size for generating responses.")
 
     args = parser.parse_args()
-
-    script_dir = os.path.dirname(__file__)
-    model_dir = os.path.join(script_dir, "params")
+    model_dir = os.path.join(PROJECT_ROOT, "params")
     model = Khaosz(model_dir).to(device='cuda', dtype=torch.bfloat16)
     
     dpo_processor(
