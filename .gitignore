@@ -14,5 +14,9 @@ __pycache__
 # ignore file
 _*
 
-# vscode config
+# vscode file
 .vscode
+
+# build file
+build
+*.egg-info
