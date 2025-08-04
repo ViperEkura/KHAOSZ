@@ -40,6 +40,7 @@ Place datasets in the designated root directory. Files should be text documents 
 **(2). Install Dependencies:**
 
 ```bash
+pip install -r requirements.txt
 pip install .
 ```
 
@@ -197,6 +198,7 @@ The model has completed pre-training + SFT (Supervised Fine-Tuning) + DPO (Direc
 #### **(2). 安装依赖：**
 
 ```bash
+pip install -r requirements.txt
 pip install .
 ```
 
