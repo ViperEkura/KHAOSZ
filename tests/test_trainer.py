@@ -1,11 +1,4 @@
 import os
-import sys
-
-parent_dir = os.path.join(os.path.dirname(__file__), '..')
-abs_parent_dir = os.path.abspath(parent_dir)
-sys.path.insert(0, abs_parent_dir)
-
-
 import json
 import torch
 import shutil
