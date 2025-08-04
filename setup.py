@@ -15,7 +15,7 @@ setup(
         "fsspec==2024.6.1",
         "huggingface-hub==0.34.3",
         "idna==3.10",
-        "Jinja2==3.1.4",
+        "Jinja2==3.1.6",
         "kiwisolver==1.4.8",
         "MarkupSafe==2.1.5",
         "matplotlib==3.10.5",
