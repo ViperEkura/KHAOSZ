@@ -4,7 +4,7 @@ import pickle as pkl
 import safetensors.torch as st
 import matplotlib.pyplot as plt
 
-from typing import Self
+from typing import Self, Union
 from dataclasses import dataclass, field
 from khaosz.module.tokenizer import BpeTokenizer
 from khaosz.module.transformer import TransformerConfig, Transformer
@@ -87,21 +87,36 @@ class CheckPoint(ModelParameter):
 
 class ParameterLoader:
     @staticmethod
-    def load(load_dir: str) -> ModelParameter:
+    def load(load_dir: str) -> Union[ModelParameter, CheckPoint]:
         model_path = os.path.join(load_dir, "model.safetensors")
         config_path = os.path.join(load_dir, "config.json")
         tokenizer_path = os.path.join(load_dir, "tokenizer.json")
-        
+
         has_model_state_dict = os.path.exists(model_path)
         has_config = os.path.exists(config_path)
         assert has_config, "No config.json found in the load directory"
-        
+
         config = TransformerConfig(config_path)
         tokenizer = BpeTokenizer(tokenizer_path)
         model = Transformer(config)
-        
+
         if has_model_state_dict:
             state_dict = st.load_file(model_path)
             model.load_state_dict(state_dict)
-    
-        return ModelParameter(model, tokenizer, config)
+
+        model_parameter = ModelParameter(model, tokenizer, config)
+
+        loss_path = os.path.join(load_dir, "loss.pkl")
+        if os.path.exists(loss_path):
+            with open(loss_path, "rb") as f:
+                loss_list = pkl.load(f)
+            current_iter = len(loss_list)
+            return CheckPoint(
+                model=model_parameter.model,
+                tokenizer=model_parameter.tokenizer,
+                config=model_parameter.config,
+                loss_list=loss_list,
+                current_iter=current_iter
+            )
+        else:
+            return model_parameter
