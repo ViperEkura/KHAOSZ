@@ -7,8 +7,7 @@ from khaosz.module import ParameterLoader
 from khaosz.trainer import Trainer, DatasetLoader, TrainConfig, CosineScheduleConfig
 
 
-PROJECT_ROOT = os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 def get_files(root_path: str) -> list[str]:
     paths = []
