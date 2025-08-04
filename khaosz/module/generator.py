@@ -1,7 +1,7 @@
 import torch
 from torch import Tensor 
 from typing import List, Tuple, Union, Optional, Generator, Self
-from .parameter import ModelParameter
+from khaosz.module.parameter import ModelParameter
 
 
 def build_prompt(query, history) -> str:
