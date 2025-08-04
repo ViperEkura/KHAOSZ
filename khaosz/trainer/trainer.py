@@ -2,48 +2,15 @@ import os
 import copy
 import torch
 import logging
-import pickle as pkl
-import matplotlib.pyplot as plt
 
-from typing import Tuple, Self
+from typing import Tuple
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader, RandomSampler
 from tqdm import tqdm
 
-from khaosz.module import ModelParameter
+from khaosz.module import ModelParameter, CheckPoint
 from khaosz.trainer.strategy import SchedulerFactory, StrategyFactory, TrainConfig, ScheduleConfig
-from dataclasses import dataclass, field
-
-
-@dataclass
-class TrainCheckPoint(ModelParameter):
-    loss_list: list = field(default_factory=list)
-    current_iter: int = field(default=0)
-
-    def save(self, save_dir: str):
-        super().save(save_dir)
-        paths = {
-            "loss_list": os.path.join(save_dir, "loss.pkl"),
-            "lossfig": os.path.join(save_dir, "loss.png")
-        }
-        plt.figure()
-        plt.plot(self.loss_list)
-        plt.title(f"Training Loss - iter {self.current_iter}")
-        plt.xlabel("Batch")
-        plt.ylabel("Loss")
-        plt.savefig(paths["lossfig"])
-        plt.close()
-        
-        with  open(paths["loss_list"], "wb") as f:
-            pkl.dump(self.loss_list, f)
-        
-    def load(self, save_dir: str) -> Self:
-        super().load(save_dir)
-        with open(os.path.join(save_dir, "loss.pkl"), "rb") as f:
-            self.loss_list = pkl.load(f)
-            self.current_iter = len(self.loss_list)
-        return self
 
 
 class Trainer:
@@ -73,7 +40,7 @@ class Trainer:
         last_ckpt_iter: int
     ):
         save_path = os.path.join(ckpt_dir, f"iter_{current_iter}")
-        TrainCheckPoint(
+        CheckPoint(
             self.model, 
             self.tokenizer, 
             self.config, 
@@ -88,7 +55,7 @@ class Trainer:
         return current_iter
     
     def load_checkpoint(self, ckpt_path: str) -> Tuple[list, int]:
-        train_checkpoint = TrainCheckPoint().load(ckpt_path)
+        train_checkpoint = CheckPoint().load(ckpt_path)
         self.model = train_checkpoint.model
         self.tokenizer = train_checkpoint.tokenizer
         self.config = train_checkpoint.config
@@ -101,6 +68,7 @@ class Trainer:
         self,
         train_config: TrainConfig,
         schedule_config: ScheduleConfig,
+        train_checkpoint: CheckPoint = None
     ):
         assert schedule_config.schedule_type in ["cosine", "sgdr"]
         assert train_config.train_type in ["seq", "sft", "dpo"]

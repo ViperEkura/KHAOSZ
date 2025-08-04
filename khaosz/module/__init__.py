@@ -1,6 +1,6 @@
 from khaosz.module.tokenizer import BpeTokenizer
 from khaosz.module.transformer import Transformer, TransformerConfig
-from khaosz.module.parameter import ParameterLoader, ModelParameter
+from khaosz.module.parameter import ParameterLoader, ModelParameter, CheckPoint
 from khaosz.module.generator import (
     TextGenerator,
     ChatGenerator, 
@@ -17,6 +17,7 @@ __all__ = [
     "BpeTokenizer",
     "ParameterLoader",
     "ModelParameter",
+    "CheckPoint",
     "TextGenerator",
     "ChatGenerator",
     "StreamGenerator",

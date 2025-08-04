@@ -1,6 +1,8 @@
 import os
 import torch.nn as nn
+import pickle as pkl
 import safetensors.torch as st
+import matplotlib.pyplot as plt
 
 from typing import Self
 from dataclasses import dataclass, field
@@ -50,6 +52,36 @@ class ModelParameter:
     
     def to(self, *args, **kwargs) -> Self:
         self.model.to(*args, **kwargs)
+        return self
+
+
+@dataclass
+class CheckPoint(ModelParameter):
+    loss_list: list = field(default_factory=list)
+    current_iter: int = field(default=0)
+
+    def save(self, save_dir: str):
+        super().save(save_dir)
+        paths = {
+            "loss_list": os.path.join(save_dir, "loss.pkl"),
+            "lossfig": os.path.join(save_dir, "loss.png")
+        }
+        plt.figure()
+        plt.plot(self.loss_list)
+        plt.title(f"Training Loss - iter {self.current_iter}")
+        plt.xlabel("Batch")
+        plt.ylabel("Loss")
+        plt.savefig(paths["lossfig"])
+        plt.close()
+        
+        with  open(paths["loss_list"], "wb") as f:
+            pkl.dump(self.loss_list, f)
+        
+    def load(self, save_dir: str) -> Self:
+        super().load(save_dir)
+        with open(os.path.join(save_dir, "loss.pkl"), "rb") as f:
+            self.loss_list = pkl.load(f)
+            self.current_iter = len(self.loss_list)
         return self
 
 
