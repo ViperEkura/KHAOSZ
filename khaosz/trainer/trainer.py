@@ -9,7 +9,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader, RandomSampler
 from tqdm import tqdm
 
-from khaosz.module import ModelParameter, CheckPoint
+from khaosz.core import ModelParameter, CheckPoint
 from khaosz.trainer.strategy import SchedulerFactory, StrategyFactory, TrainConfig, ScheduleConfig
 
 

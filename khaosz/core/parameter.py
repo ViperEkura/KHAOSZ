@@ -6,8 +6,8 @@ import matplotlib.pyplot as plt
 
 from typing import Self, Union
 from dataclasses import dataclass, field
-from khaosz.module.tokenizer import BpeTokenizer
-from khaosz.module.transformer import TransformerConfig, Transformer
+from khaosz.core.tokenizer import BpeTokenizer
+from khaosz.core.transformer import TransformerConfig, Transformer
 
 
 @dataclass

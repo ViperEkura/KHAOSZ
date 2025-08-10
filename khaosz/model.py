@@ -1,7 +1,7 @@
 from torch import Tensor
 from typing import List, Tuple, Generator, Union
 
-from khaosz.module.generator import (
+from khaosz.core.generator import (
     TextGenerator,
     ChatGenerator, 
     StreamGenerator, 
@@ -9,7 +9,7 @@ from khaosz.module.generator import (
     RetrievalGenerator, 
     EmbeddingEncoder
 )
-from khaosz.module.parameter import ParameterLoader
+from khaosz.core.parameter import ParameterLoader
 
 
 class Khaosz:

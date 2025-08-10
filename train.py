@@ -3,7 +3,7 @@ import argparse
 import torch
 
 from torch.optim import AdamW
-from khaosz.module import ParameterLoader
+from khaosz.core import ParameterLoader
 from khaosz.trainer import Trainer, DatasetLoader, TrainConfig, CosineScheduleConfig
 
 

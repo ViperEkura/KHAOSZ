@@ -2,11 +2,11 @@ __version__ = "1.2.0"
 __author__ = "ViperEkura"
 
 from khaosz.model import Khaosz
-from khaosz.module.transformer import Transformer, TransformerConfig
+from khaosz.core.transformer import Transformer, TransformerConfig
 from khaosz.retriever import Retriever, TextSplitter
-from khaosz.module.tokenizer import BpeTokenizer
-from khaosz.module.parameter import ParameterLoader, ModelParameter
-from khaosz.module.generator import (
+from khaosz.core.tokenizer import BpeTokenizer
+from khaosz.core.parameter import ParameterLoader, ModelParameter
+from khaosz.core.generator import (
     TextGenerator,
     ChatGenerator, 
     StreamGenerator, 

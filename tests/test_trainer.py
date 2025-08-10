@@ -7,7 +7,7 @@ import pickle
 import tempfile
 
 from torch.utils.data import Dataset
-from khaosz.module import *
+from khaosz.core import *
 from khaosz.trainer import *
 
 @pytest.fixture
