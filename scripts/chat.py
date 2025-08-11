@@ -20,7 +20,7 @@ def chat():
         for response, histroy in model.stream_generate(
             query=query, 
             history=histroy,
-            temperature=0.6,
+            temperature=0.7,
             top_p=0.95,
             top_k=30
         ):

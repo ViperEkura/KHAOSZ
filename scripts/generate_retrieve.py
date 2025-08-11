@@ -7,16 +7,16 @@ PROJECT_ROOT = os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))
 
 if __name__ == "__main__":
-    script_dir = os.path.dirname(__file__)
-    model_dir = os.path.join(script_dir, "params")
+    model_dir = os.path.join(PROJECT_ROOT, "params")
+    context_path = os.path.join(PROJECT_ROOT, "README.md")
     
     model = Khaosz(model_dir).to(device='cuda', dtype=torch.bfloat16)
     spliter = TextSplitter(model.encode)
     retriever = Retriever()
-    text = open("_base.txt").read()
+    text = open(context_path, "r", encoding="utf-8").read()
     
-    res = spliter.chunk(text, threshold=0.8, window_size=2)
-    print(("\n" + "+"*100 + "\n").join(res))
+    res = spliter.chunk(text, threshold=0.8, window_size=1)
+    # print(("\n" + "+"*100 + "\n").join(res))
 
     res_embs = model.encode(res)
     for sentence, emb in zip(res, res_embs):
@@ -30,7 +30,7 @@ if __name__ == "__main__":
     retrive_response = model.retrieve_generate(
         retrieved=retrieved,
         query=query,
-        temperature=0.6,
+        temperature=0.7,
         top_k=30,
         top_p=0.95,
     )
