@@ -332,7 +332,7 @@ class RetrievalGenerator(GeneratorCore):
             history = []
             
         retrieved = "\n".join([f"{idx + 1}. {key}" for idx, key in enumerate(retrieved)]) if retrieved else ""
-        retrieved_query = f"{retrieved}\n\n根据以上内容回答: {query}" if retrieved else query
+        retrieved_query = f"{retrieved}<eos>\n\n根据以上内容回答: {query}" if retrieved else query
         parameter = ModelParameter(self.model, self.tokenizer, self.config)
         
         return ChatGenerator(parameter).generate(
