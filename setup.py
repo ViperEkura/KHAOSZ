@@ -1,44 +1,16 @@
+import re
 from setuptools import find_packages, setup
+
+
+with open("requirements.txt") as f:
+    required = [line for line in f.read().splitlines() 
+                if line and re.match(r'^[^=]+==[^=]+$', line.strip())]
 
 setup(
     name="khaosz", 
     version="1.2.0", 
     packages=find_packages(),
-    install_requires=[
-        "certifi==2025.8.3",
-        "charset-normalizer==3.4.2",
-        "colorama==0.4.6",
-        "contourpy==1.3.3",
-        "cycler==0.12.1",
-        "filelock==3.13.1",
-        "fonttools==4.59.0",
-        "fsspec==2024.6.1",
-        "huggingface-hub==0.34.3",
-        "idna==3.10",
-        "Jinja2==3.1.6",
-        "kiwisolver==1.4.8",
-        "MarkupSafe==2.1.5",
-        "matplotlib==3.10.5",
-        "mpmath==1.3.0",
-        "networkx==3.3",
-        "numpy==2.3.2",
-        "packaging==25.0",
-        "pillow==11.3.0",
-        "pyparsing==3.2.3",
-        "python-dateutil==2.9.0.post0",
-        "PyYAML==6.0.2",
-        "requests==2.32.4",
-        "safetensors==0.5.3",
-        "setuptools==78.1.1",
-        "six==1.17.0",
-        "sympy==1.13.3",
-        "tokenizers==0.21.4",
-        "torch==2.7.1+cu126",
-        "tqdm==4.67.1",
-        "typing_extensions==4.12.2",
-        "urllib3==2.5.0",
-        "wheel==0.45.1",
-    ],
+    install_requires=required,
     dependency_links=[
         "https://download.pytorch.org/whl/cu126",
     ],
