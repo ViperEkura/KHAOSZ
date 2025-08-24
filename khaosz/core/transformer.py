@@ -209,26 +209,27 @@ class GQA(nn.Module):
         mask: Tensor = None
     ) -> Tensor:
         B, L, _ = x.size()
-        # x(B, L, D)
-        q: Tensor = self.q_proj(x)
-        k: Tensor = self.k_proj(x)
-        v: Tensor = self.v_proj(x)
-        
-        q, k, v = (q.view(B, L, self.n_heads, self.head_dim), k.view(B, L, self.n_kvheads, self.head_dim), 
-                   v.view(B, L, self.n_kvheads, self.head_dim))
+        # x(B, L, D) -> (B, L, n_heads, head_dim)
+        q = self._split_heads(self.q_proj(x), self.n_heads)
+        k = self._split_heads(self.k_proj(x), self.n_kvheads)
+        v = self._split_heads(self.v_proj(x), self.n_kvheads)
 
         q, k = apply_rotary_emb(q, k, freqs_cis)
         k, v = repeat_kv(k, self.n_rep), repeat_kv(v, self.n_rep)
         
-        # (bsz, n_heads, L, head_dim)
+        # (B, L, n_heads, head_dim) -> (B, n_heads, L, head_dim)
         q, k, v = q.permute(0, 2, 1, 3), k.permute(0, 2, 1, 3), v.permute(0, 2, 1, 3)
 
-        attn_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=True)
-        attn_out = attn_out.permute(0, 2, 1, 3).contiguous().view(B, L, -1)
-        out = self.o_proj(attn_out)
+        sdqa_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=True).permute(0, 2, 1, 3)
+        out = self.o_proj(sdqa_out.contiguous().view(B, L, -1))
 
         return out
     
+    def _split_heads(self, x: Tensor, n_heads) -> Tensor:
+        batch_size, seq_len, _ = x.shape
+        x = x.reshape(batch_size, seq_len, n_heads, self.head_dim)
+        return x
+
 
 class MLA(nn.Module):
     def __init__(
@@ -243,15 +244,17 @@ class MLA(nn.Module):
         norm_eps: float
     ):
         super().__init__()
-        self.n_dim = n_dim
-        self.n_heads = n_heads
+ 
         
         self.q_lora_rank = q_lora_rank
         self.kv_lora_rank = kv_lora_rank
         self.qk_rope_head_dim = qk_rope_head_dim
         self.qk_nope_head_dim = qk_nope_head_dim
         self.qk_head_dim = qk_nope_head_dim + qk_rope_head_dim
-        self.v_head_dim = v_head_dim  
+        self.v_head_dim = v_head_dim 
+    
+        self.n_dim = n_dim
+        self.n_heads = n_heads
         
         assert self.kv_lora_rank > 0
         assert self.q_lora_rank >= 0
@@ -291,7 +294,11 @@ class MLA(nn.Module):
         k = torch.cat([k_nope, k_pe.expand(-1, -1, self.n_heads, -1)], dim=-1)
         
         attn_out = F.scaled_dot_product_attention(
-            q.transpose(1, 2), k.transpose(1, 2),v.transpose(1, 2), attn_mask=mask, is_causal=True
+            q.transpose(1, 2), 
+            k.transpose(1, 2),
+            v.transpose(1, 2), 
+            attn_mask=mask, 
+            is_causal=True
         ).transpose(1, 2).flatten(2)
         
         x_out = self.wo(attn_out)
