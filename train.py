@@ -30,7 +30,7 @@ def train(
     adamw_betas: tuple,
     adamw_weight_decay: float,
     max_grad_norm: float,
-    freeze_embedding: bool,
+    embdeding_lr_rate: int,
     random_seed: int,
     resume_dir: str
 ):
@@ -54,15 +54,14 @@ def train(
         max_len=parameter.config.m_len,
         device=device
     )
-
-    if freeze_embedding:
-        for name, param in model.named_parameters():
-            if name.find("embedding") != -1:
-                param.requires_grad = False
+    
+    param_groups = [
+        {"params": [p for n, p in model.named_parameters() if "embedding" in n], "lr": max_lr * embdeding_lr_rate},
+        {"params": [p for n, p in model.named_parameters() if "embedding" not in n], "lr": max_lr}
+    ]
 
     optim = AdamW(
-        model.parameters(),
-        lr=max_lr,
+        param_groups,
         betas=adamw_betas,
         weight_decay=adamw_weight_decay
     )
@@ -108,8 +107,8 @@ if __name__ == "__main__":
     parser.add_argument("--max_grad_norm", type=float, default=1.0, help="Max gradient norm for clipping.")
     parser.add_argument("--adamw_betas", type=tuple, default=(0.9, 0.95), help="Beta values for AdamW optimizer.")
     parser.add_argument("--adamw_weight_decay", type=float, default=0.01, help="Weight decay for AdamW optimizer.")
+    parser.add_argument("--embdeding_lr_rate", type=float, default=1.0, help="The rate between the embedding layers lr rate and the max lr rate.")
     parser.add_argument("--random_seed", type=int, default=3407, help="Random seed for reproducibility.")
-    parser.add_argument("--freeze_embedding", type=bool, default=False, help="Whether to freeze the embedding layer.")
 
     args = parser.parse_args()
 
@@ -124,7 +123,7 @@ if __name__ == "__main__":
         adamw_betas=args.adamw_betas,
         adamw_weight_decay=args.adamw_weight_decay,
         max_grad_norm=args.max_grad_norm,
-        freeze_embedding=args.freeze_embedding,
+        embdeding_lr_rate=args.embdeding_lr_rate,
         n_iter_ckpt=args.n_iter_ckpt,
         ckpt_dir=args.ckpt_dir,
         resume_dir=args.resume_dir,
