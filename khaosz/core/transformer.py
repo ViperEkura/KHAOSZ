@@ -1,4 +1,3 @@
-
 import math
 import json
 import torch
@@ -10,11 +9,6 @@ from torch.nn import init
 from typing import Tuple, Optional, Literal
 from dataclasses import asdict, dataclass
 
-
-def create_mask(L: int, device) -> Tensor:
-    return torch.ones(
-        L, L, dtype=torch.bool, device=device
-    ).triu(diagonal=1)
     
 def get_rotary_emb(
         dim: int, 
@@ -36,48 +30,16 @@ def apply_rotary_emb(
     freqs_cis: Tensor
 ) -> Tuple[Tensor, Tensor]:
     dtype = xq.dtype
-    ndim = xq.ndim
 
     xq = torch.view_as_complex(xq.view(*xq.shape[:-1], -1, 2).float())
     xk = torch.view_as_complex(xk.view(*xk.shape[:-1], -1, 2).float())
-    shape = [d if i == 1 or i == ndim - 1 else 1 for i, d in enumerate(xq.shape)]
-    freqs_cis =  freqs_cis.view(*shape)
+    
+    freqs_cis = freqs_cis.reshape(1, freqs_cis.size(0), 1, -1)
     
     xq_out = torch.view_as_real(xq * freqs_cis).flatten(3)
     xk_out = torch.view_as_real(xk * freqs_cis).flatten(3)
     
     return xq_out.to(dtype), xk_out.to(dtype)
-
-    
-def repeat_kv(x: Tensor, n_rep: int) -> Tensor:
-    bs, slen, n_kv_heads, head_dim = x.shape
-    if n_rep == 1:
-        return x
-    return (
-        x[:, :, :, None, :]
-        .expand(bs, slen, n_kv_heads, n_rep, head_dim)
-        .reshape(bs, slen, n_kv_heads * n_rep, head_dim)
-    )
-
-def self_attention(
-    q: Tensor, 
-    k: Tensor, 
-    v: Tensor, 
-    n_heads: int,
-    n_dim: int,
-    mask=None
-) -> Tensor:
-    head_dim = n_dim // n_heads
-    
-    scores = torch.matmul(q, k.transpose(2, 3)) / math.sqrt(head_dim)
-    if mask is not None:
-        scores = scores + mask
-    causal_mask = create_mask(q.size(2), q.device)
-    scores = scores.masked_fill(causal_mask, -torch.finfo(scores.dtype).max / 2)
-    scores = F.softmax(scores.float(), dim=-1).type_as(q)
-    
-    output = torch.matmul(scores, v)
-    return output
 
 def create_seq_mask(
         batch_attn_mask: Tensor, 
@@ -87,11 +49,10 @@ def create_seq_mask(
     batch_size, seq_len = batch_attn_mask.shape
     expanded_mask = batch_attn_mask.unsqueeze(1).expand(batch_size, seq_len, seq_len)
     bool_mask = expanded_mask & expanded_mask.transpose(1, 2)
-
-    attention_mask = torch.zeros(bool_mask.shape, dtype=dtype, device=device)
-    attention_mask = attention_mask.masked_fill(bool_mask.logical_not(), -torch.finfo(dtype).max / 2)
-    attention_mask = attention_mask.to(device=device, dtype=dtype).unsqueeze(1)
-
+    
+    attention_mask = torch.zeros_like(bool_mask, dtype=dtype, device=device)
+    attention_mask = attention_mask.masked_fill_(~bool_mask, -torch.finfo(dtype).max / 2).unsqueeze(1)
+    
     return attention_mask
 
 
@@ -215,13 +176,11 @@ class GQA(nn.Module):
         v = self._split_heads(self.v_proj(x), self.n_kvheads)
 
         q, k = apply_rotary_emb(q, k, freqs_cis)
-        k, v = repeat_kv(k, self.n_rep), repeat_kv(v, self.n_rep)
         
         # (B, L, n_heads, head_dim) -> (B, n_heads, L, head_dim)
         q, k, v = q.permute(0, 2, 1, 3), k.permute(0, 2, 1, 3), v.permute(0, 2, 1, 3)
-
-        sdqa_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=True).permute(0, 2, 1, 3)
-        out = self.o_proj(sdqa_out.contiguous().view(B, L, -1))
+        sdqa_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=True, enable_gqa=True).permute(0, 2, 1, 3)
+        out = self.o_proj(sdqa_out.contiguous().flatten(2))
 
         return out
     
@@ -368,5 +327,5 @@ class Transformer(nn.Module):
         
         if return_hidden:
             return torch.masked_fill(x, pos_mask.logical_not().unsqueeze(-1), 0)
-        else :
+        else:
             return F.linear(x,  self.embedding)
