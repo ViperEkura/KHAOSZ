@@ -169,7 +169,7 @@ class GQA(nn.Module):
         freqs_cis: Tensor, 
         mask: Tensor = None
     ) -> Tensor:
-        B, L, _ = x.size()
+        is_causal = mask is None
         # x(B, L, D) -> (B, L, n_heads, head_dim)
         q = self._split_heads(self.q_proj(x), self.n_heads)
         k = self._split_heads(self.k_proj(x), self.n_kvheads)
@@ -179,7 +179,7 @@ class GQA(nn.Module):
         
         # (B, L, n_heads, head_dim) -> (B, n_heads, L, head_dim)
         q, k, v = q.permute(0, 2, 1, 3), k.permute(0, 2, 1, 3), v.permute(0, 2, 1, 3)
-        sdqa_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=True, enable_gqa=True).permute(0, 2, 1, 3)
+        sdqa_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=is_causal, enable_gqa=True).permute(0, 2, 1, 3)
         out = self.o_proj(sdqa_out.contiguous().flatten(2))
 
         return out
