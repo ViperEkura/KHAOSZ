@@ -1,4 +1,3 @@
-import math
 import json
 import torch
 import torch.nn as nn
@@ -9,7 +8,17 @@ from torch.nn import init
 from typing import Tuple, Optional, Literal
 from dataclasses import asdict, dataclass
 
-    
+
+def repeat_kv(x: Tensor, n_rep: int) -> Tensor:
+    bs, slen, n_heads, head_dim = x.shape
+    if n_rep == 1:
+        return x
+    return (
+        x[:, :, :, None, :]
+        .expand(bs, slen, n_heads, n_rep, head_dim)
+        .reshape(bs, slen, n_heads * n_rep, head_dim)
+    )
+
 def get_rotary_emb(
         dim: int, 
         max_len: int, 
@@ -169,18 +178,19 @@ class GQA(nn.Module):
         freqs_cis: Tensor, 
         mask: Tensor = None
     ) -> Tensor:
-        is_causal = mask is None
+        B, L, _ = x.size()
         # x(B, L, D) -> (B, L, n_heads, head_dim)
         q = self._split_heads(self.q_proj(x), self.n_heads)
         k = self._split_heads(self.k_proj(x), self.n_kvheads)
         v = self._split_heads(self.v_proj(x), self.n_kvheads)
 
         q, k = apply_rotary_emb(q, k, freqs_cis)
+        k, v = repeat_kv(k, self.n_rep), repeat_kv(v, self.n_rep)
         
         # (B, L, n_heads, head_dim) -> (B, n_heads, L, head_dim)
         q, k, v = q.permute(0, 2, 1, 3), k.permute(0, 2, 1, 3), v.permute(0, 2, 1, 3)
-        sdqa_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=is_causal, enable_gqa=True).permute(0, 2, 1, 3)
-        out = self.o_proj(sdqa_out.contiguous().flatten(2))
+        sdqa_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=True).permute(0, 2, 1, 3)
+        out = self.o_proj(sdqa_out.contiguous().view(B, L, -1))
 
         return out
     
@@ -297,12 +307,6 @@ class Transformer(nn.Module):
         self.norm = RMSNorm(config.n_dim, config.norm_eps)
         self.freq_cis = get_rotary_emb(self.head_dim, config.m_len)
         init.normal_(self.embedding, mean=0, std=0.02)
-    
-    def parameter_size(self):
-        parameter_size = 0
-        for p in self.parameters():
-            parameter_size += p.numel()
-        return parameter_size
     
     def forward(
         self, 
