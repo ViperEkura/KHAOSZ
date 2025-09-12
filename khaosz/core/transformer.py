@@ -5,8 +5,8 @@ import torch.nn.functional as F
 
 from torch import Tensor
 from torch.nn import init
-from typing import Tuple, Optional, Literal
 from dataclasses import asdict, dataclass
+from typing import List, Literal, Optional, Tuple
 
 
 def repeat_kv(x: Tensor, n_rep: int) -> Tensor:
@@ -176,13 +176,21 @@ class GQA(nn.Module):
         self,
         x: Tensor, 
         freqs_cis: Tensor, 
-        mask: Tensor = None
+        mask: Tensor = None,
+        past_key_value: Optional[Tuple[Tensor, Tensor]] = None,
     ) -> Tensor:
         B, L, _ = x.size()
         # x(B, L, D) -> (B, L, n_heads, head_dim)
         q = self._split_heads(self.q_proj(x), self.n_heads)
         k = self._split_heads(self.k_proj(x), self.n_kvheads)
         v = self._split_heads(self.v_proj(x), self.n_kvheads)
+        
+        if past_key_value is not None:
+            past_key, past_value = past_key_value
+            k = torch.cat([past_key, k], dim=1)
+            v = torch.cat([past_value, v], dim=1)
+        
+        present_key_value = (k, v) if self.training else None
 
         q, k = apply_rotary_emb(q, k, freqs_cis)
         k, v = repeat_kv(k, self.n_rep), repeat_kv(v, self.n_rep)
@@ -192,7 +200,7 @@ class GQA(nn.Module):
         sdqa_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=True).permute(0, 2, 1, 3)
         out = self.o_proj(sdqa_out.contiguous().view(B, L, -1))
 
-        return out
+        return out, present_key_value
     
     def _split_heads(self, x: Tensor, n_heads) -> Tensor:
         batch_size, seq_len, _ = x.shape
@@ -288,12 +296,20 @@ class DecoderBlock(nn.Module):
         x: Tensor,
         freqs_cis: Tensor,
         mask: Tensor = None,
+        past_key_value: Optional[Tuple[Tensor, Tensor]] = None
     ) -> Tensor:
-        x = self.attention(self.norm_attn(x), freqs_cis, mask) + x
+        # attention
+        attn_output, present_key_value = self.attention(
+            self.norm_attn(x), freqs_cis, mask, past_key_value
+        )
+        x = attn_output + x
+        
+        # feed forward
         x = self.ffn(self.norm_ffn(x)) + x
-        return x
-    
-  
+        
+        return x, present_key_value
+
+
 class Transformer(nn.Module):
     def __init__(self, config: TransformerConfig):
         super().__init__()
@@ -301,8 +317,13 @@ class Transformer(nn.Module):
         self.embedding = nn.Parameter(torch.empty(config.vocab_size, config.n_dim))
         self.layers = nn.ModuleList([
             DecoderBlock(
-                config.n_dim, config.n_head, config.d_ffn, config.n_kvhead, config.norm_eps
-            )for _ in range(config.n_layer)
+                config.n_dim, 
+                config.n_head, 
+                config.d_ffn, 
+                config.n_kvhead, 
+                config.norm_eps
+            )
+            for _ in range(config.n_layer)
         ])
         self.norm = RMSNorm(config.n_dim, config.norm_eps)
         self.freq_cis = get_rotary_emb(self.head_dim, config.m_len)
@@ -311,7 +332,8 @@ class Transformer(nn.Module):
     def forward(
         self, 
         ids: Tensor, 
-        pos_mask: Tensor=None, 
+        pos_mask: Tensor=None,
+        past_key_values: Optional[List[Tuple[Tensor, Tensor]]]=None,
         return_hidden: bool=False
     ) -> Tensor:
         assert ids.ndim == 2
@@ -324,9 +346,11 @@ class Transformer(nn.Module):
         if pos_mask is not None:
             format_mask = create_seq_mask(pos_mask, x.device, x.dtype)
         
-        for layer in self.layers:
-            x = layer(x, freq_cis, format_mask)
-            
+        present_key_values = []
+        for layer, past_kv in zip(self.layers, past_key_values or [None] * len(self.layers)):
+            x, present_kv = layer(x, freq_cis, format_mask, past_kv)
+            present_key_values.append(present_kv)
+        
         x = self.norm(x)
         
         if return_hidden:
