@@ -4,15 +4,19 @@ from typing import List, Tuple, Union, Optional, Generator, Self
 from khaosz.core.parameter import ModelParameter
 
 
-def build_prompt(query, history) -> str:
-    ret_prompt = ""
-    if len(history) > 0:
-        for his_query, his_response in history:
-            ret_prompt += f"<|user|> {his_query} <|system|> <bos>{his_response}<eos>\n"
+def build_prompt(query: str, history: List[Tuple[str, str]]) -> str:
+    prompt_parts = []
+    
+    if history is None:
+        history = []
+    
+    for his_query, his_response in history:
+        prompt_parts.append(f"<|user|> {his_query} <|system|> <bos>{his_response}<eos>")
+        
     if query is not None:
-        ret_prompt += f"<|user|> {query} <|system|> <bos>"
-    return ret_prompt
-
+        prompt_parts.append(f"<|user|> {query} <|system|> <bos>")
+    
+    return "\n".join(prompt_parts)
 
 class GeneratorCore:
     def __init__(self, parameter: ModelParameter):
