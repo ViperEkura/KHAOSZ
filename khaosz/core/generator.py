@@ -33,13 +33,13 @@ class GeneratorCore:
         torch.cuda.empty_cache()
         device = next(self.model.parameters()).device
         input_tensor = torch.as_tensor(ids, device=device)
-        with_batch = input_tensor.ndim == 2
+        with_batch = (input_tensor.ndim == 2)
         input_tensor = input_tensor.unsqueeze(0) if not with_batch else input_tensor
         attn_mask = torch.as_tensor(attn_mask, dtype=torch.bool, device=device) if attn_mask is not None else None
+        top_k = min(top_k, self.config.vocab_size) if top_k > 0 else 0
         
         with torch.no_grad():
-            logits: Tensor = self.model(input_tensor, attn_mask)[:, -1, :]
-        top_k = min(top_k, logits.size(-1)) if top_k > 0 else 0
+            logits = self.model(input_tensor, attn_mask)[:, -1, :]
         
         if top_k > 0:
             indices_to_remove = logits < torch.topk(logits, top_k).values[:, -1, None]

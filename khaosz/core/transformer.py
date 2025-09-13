@@ -23,7 +23,7 @@ def get_rotary_emb(
         dim: int, 
         max_len: int, 
         base: float = 10000, 
-        device: torch.device = torch.device('cuda'),
+        device: torch.device = "cuda",
     ) -> torch.Tensor:
 
     theta = base ** (-torch.arange(0, dim, 2, device=device).float() / dim)
@@ -52,9 +52,13 @@ def apply_rotary_emb(
 
 def create_seq_mask(
         batch_attn_mask: Tensor, 
-        device: torch.device, 
-        dtype: torch.dtype
+        device: torch.device = "cuda", 
+        dtype: torch.dtype = torch.float32
     ) -> Tensor:
+    
+    if batch_attn_mask is None:
+        return None
+    
     batch_size, seq_len = batch_attn_mask.shape
     expanded_mask = batch_attn_mask.unsqueeze(1).expand(batch_size, seq_len, seq_len)
     bool_mask = expanded_mask & expanded_mask.transpose(1, 2)
@@ -313,7 +317,6 @@ class DecoderBlock(nn.Module):
 class Transformer(nn.Module):
     def __init__(self, config: TransformerConfig):
         super().__init__()
-        self.head_dim = config.n_dim // config.n_head
         self.embedding = nn.Parameter(torch.empty(config.vocab_size, config.n_dim))
         self.layers = nn.ModuleList([
             DecoderBlock(
@@ -326,7 +329,7 @@ class Transformer(nn.Module):
             for _ in range(config.n_layer)
         ])
         self.norm = RMSNorm(config.n_dim, config.norm_eps)
-        self.freq_cis = get_rotary_emb(self.head_dim, config.m_len)
+        self.freq_cis = get_rotary_emb(config.n_dim // config.n_head, config.m_len)
         init.normal_(self.embedding, mean=0, std=0.02)
     
     def forward(
@@ -341,10 +344,7 @@ class Transformer(nn.Module):
         
         self.freq_cis = self.freq_cis.to(x.device)
         freq_cis = self.freq_cis[:x.size(1)]
-        format_mask = None
-        
-        if pos_mask is not None:
-            format_mask = create_seq_mask(pos_mask, x.device, x.dtype)
+        format_mask = create_seq_mask(pos_mask, x.device, x.dtype)
         
         present_key_values = []
         for layer, past_kv in zip(self.layers, past_key_values or [None] * len(self.layers)):
