@@ -190,7 +190,7 @@ class GQA(nn.Module):
             k = torch.cat([past_key, k], dim=1)
             v = torch.cat([past_value, v], dim=1)
         
-        present_key_value = (k, v) if self.training else None
+        present_key_value = None if self.training else (k, v)
 
         q, k = apply_rotary_emb(q, k, freqs_cis)
         k, v = repeat_kv(k, self.n_rep), repeat_kv(v, self.n_rep)
