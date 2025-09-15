@@ -59,12 +59,8 @@ def create_seq_mask(
     if batch_attn_mask is None:
         return None
     
-    batch_size, seq_len = batch_attn_mask.shape
-    expanded_mask = batch_attn_mask.unsqueeze(1).expand(batch_size, seq_len, seq_len)
-    bool_mask = expanded_mask & expanded_mask.transpose(1, 2)
-    
-    attention_mask = torch.zeros_like(bool_mask, dtype=dtype, device=device)
-    attention_mask = attention_mask.masked_fill_(~bool_mask, -torch.finfo(dtype).max / 2).unsqueeze(1)
+    B, L = batch_attn_mask.shape
+    attention_mask = batch_attn_mask.view(B, 1, 1, L).to(dtype=dtype, device=device)
     
     return attention_mask
 
