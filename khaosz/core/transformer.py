@@ -52,6 +52,7 @@ def apply_rotary_emb(
 
 def create_seq_mask(
         batch_attn_mask: Tensor, 
+        is_causal: bool = False,
         device: torch.device = "cuda", 
         dtype: torch.dtype = torch.float32
     ) -> Tensor:
@@ -59,8 +60,19 @@ def create_seq_mask(
     if batch_attn_mask is None:
         return None
     
-    B, L = batch_attn_mask.shape
-    attention_mask = batch_attn_mask.view(B, 1, 1, L).to(dtype=dtype, device=device)
+    batch_size, seq_len = batch_attn_mask.shape
+    batch_attn_mask = batch_attn_mask.to(device=device, dtype=torch.bool)
+    expanded_mask = batch_attn_mask.unsqueeze(1).expand(batch_size, seq_len, seq_len)
+    bool_mask = expanded_mask & expanded_mask.transpose(1, 2)
+    
+    if is_causal:
+        causal_mask = torch.tril(torch.ones((seq_len, seq_len), dtype=torch.bool, device=device))
+        causal_mask = causal_mask.unsqueeze(0).expand(batch_size, seq_len, seq_len)
+        bool_mask = bool_mask & causal_mask
+    
+    attention_mask = torch.zeros_like(bool_mask, dtype=dtype, device=device)
+    attention_mask = attention_mask.masked_fill_(~bool_mask, -torch.finfo(dtype).max / 2).unsqueeze(1)
+    # (bsz, 1, seq_len, seq_len)
     
     return attention_mask
 
@@ -197,7 +209,7 @@ class GQA(nn.Module):
         
         # (B, L, n_heads, head_dim) -> (B, n_heads, L, head_dim)
         q, k, v = q.permute(0, 2, 1, 3), k.permute(0, 2, 1, 3), v.permute(0, 2, 1, 3)
-        sdqa_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=True).permute(0, 2, 1, 3)
+        sdqa_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=(mask == None)).permute(0, 2, 1, 3)
         out = self.o_proj(sdqa_out.contiguous().view(B, L, -1))
 
         return out, present_key_value
@@ -340,7 +352,13 @@ class Transformer(nn.Module):
         
         self.freq_cis = self.freq_cis.to(x.device)
         freq_cis = self.freq_cis[:x.size(1)]
-        format_mask = create_seq_mask(pos_mask, x.device, x.dtype)
+        
+        format_mask = create_seq_mask(
+            pos_mask, 
+            is_causal=True, 
+            device=x.device,
+            dtype=x.dtype
+        )
         
         present_key_values = []
         for layer, past_kv in zip(self.layers, past_key_values or [None] * len(self.layers)):
