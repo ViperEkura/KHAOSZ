@@ -68,7 +68,7 @@ def test_transformer(test_env):
     model = test_env["model"]
     input_ids = torch.randint(0, test_env["transformer_config"].vocab_size, 
                               (4, test_env["transformer_config"].m_len))
-    output_logits = model(input_ids)
+    output_logits = model(input_ids)["logits"]
     target_shape = (4, test_env["transformer_config"].m_len, test_env["transformer_config"].vocab_size)
     assert output_logits.shape == target_shape
     

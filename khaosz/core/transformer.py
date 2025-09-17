@@ -345,7 +345,6 @@ class Transformer(nn.Module):
         ids: Tensor, 
         pos_mask: Tensor=None,
         past_key_values: Optional[List[Tuple[Tensor, Tensor]]]=None,
-        return_hidden: bool=False
     ) -> Tensor:
         assert ids.ndim == 2
         x = F.embedding(ids, self.embedding)
@@ -365,9 +364,12 @@ class Transformer(nn.Module):
             x, present_kv = layer(x, freq_cis, format_mask, past_kv)
             present_key_values.append(present_kv)
         
-        x = self.norm(x)
+        hidden_states = self.norm(x)        
+        logits = F.linear(hidden_states,  self.embedding)
         
-        if return_hidden:
-            return torch.masked_fill(x, pos_mask.logical_not().unsqueeze(-1), 0)
-        else:
-            return F.linear(x,  self.embedding)
+        return {
+            "logits": logits,
+            "hidden_states": hidden_states,
+            "present_key_values": present_key_values
+        }
+        

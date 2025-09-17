@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, field
 
 def get_logprobs(model:nn.Module, input_ids: Tensor, mask: Tensor, pad_token_id):
     input_mask =  input_ids.ne(pad_token_id)
-    logits = model(input_ids, input_mask)
+    logits = model(input_ids, input_mask)["logits"]
     log_probs = torch.log_softmax(logits, dim=-1)
     
     shifted_log_probs = log_probs[:, :-1, :] 
@@ -50,7 +50,7 @@ class SeqStrategy(BaseStrategy):
     def compute_loss(self, batch: Tuple[Tensor, ...]) -> Tensor:
         x, y = batch
         B, L = x.size()
-        logits: Tensor = self.model(x)
+        logits: Tensor = self.model(x)["logits"]
         
         loss = F.cross_entropy(
             logits.view(B * L, -1), y.flatten()
@@ -67,7 +67,7 @@ class SftStrategy(BaseStrategy):
         B, L = x.size()
         ignore_idx = -1
         
-        logits: Tensor = self.model(x)
+        logits: Tensor = self.model(x)["logits"]
         masked_y = y.masked_fill(loss_mask == 0, ignore_idx)
         
         loss = F.cross_entropy(
