@@ -18,6 +18,112 @@ def build_prompt(query: str, history: List[Tuple[str, str]]) -> str:
     
     return "\n".join(prompt_parts)
 
+
+class KVCacher:
+    def __init__(
+        self, 
+        max_len: int, 
+        num_layers: int, 
+        num_heads: int, 
+        head_dim: int, 
+        device: torch.device = "cuda", 
+        dtype: torch.dtype = torch.bfloat16
+    ):
+        self.max_len = max_len
+        self.num_layers = num_layers
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+        self.device = device
+        self.dtype = dtype
+        
+        # cache
+        self.kv_cache: List[Tuple[Tensor, Tensor]] = None
+        self.cache_pos = 0
+    
+    def reset(self):
+        self.kv_cache = None
+        self.cache_pos = 0
+    
+    def _initialize_cache(self, batch_size: int):
+        self.kv_cache = []
+        for _ in range(self.num_layers):
+            k_cache = torch.zeros(
+                (batch_size, self.num_heads, self.max_len, self.head_dim),
+                device=self.device, dtype=self.dtype
+            )
+            v_cache = torch.zeros(
+                (batch_size, self.num_heads, self.max_len, self.head_dim),
+                device=self.device, dtype=self.dtype
+            )
+            self.kv_cache.append((k_cache, v_cache))
+    
+    def prefill(
+        self, 
+        kv_pairs: List[Tuple[Tensor, Tensor]], 
+        batch_indices: Optional[Tensor] = None
+    ):
+        batch_size = kv_pairs[0][0].size(0)
+        seq_len = kv_pairs[0][0].size(2)
+        
+        if self.kv_cache is None:
+            self._initialize_cache(batch_size)
+        
+        assert self.cache_pos + seq_len <= self.max_len   
+        
+        for layer_idx, (k_new, v_new) in enumerate(kv_pairs):
+            k_cache, v_cache = self.kv_cache[layer_idx]
+            
+            if batch_indices is not None:
+                k_cache[batch_indices, :, self.cache_pos:self.cache_pos+seq_len, :] = k_new[batch_indices]
+                v_cache[batch_indices, :, self.cache_pos:self.cache_pos+seq_len, :] = v_new[batch_indices]
+            else:
+                k_cache[:, :, self.cache_pos:self.cache_pos+seq_len, :] = k_new
+                v_cache[:, :, self.cache_pos:self.cache_pos+seq_len, :] = v_new
+        
+        self.cache_pos += seq_len
+    
+    def decoding(
+        self, 
+        kv_pairs: List[Tuple[Tensor, Tensor]], 
+        batch_indices: Optional[Tensor] = None
+    ):
+        assert self.kv_cache is not None
+        assert self.cache_pos < self.max_len
+        
+        for layer_idx, (k_new, v_new) in enumerate(kv_pairs):
+            k_cache, v_cache = self.kv_cache[layer_idx]
+            
+            if batch_indices is not None:
+                k_cache[batch_indices, :, self.cache_pos, :] = k_new[batch_indices].squeeze(2)
+                v_cache[batch_indices, :, self.cache_pos, :] = v_new[batch_indices].squeeze(2)
+            else:
+                k_cache[:, :, self.cache_pos, :] = k_new.squeeze(2)
+                v_cache[:, :, self.cache_pos, :] = v_new.squeeze(2)
+        
+        self.cache_pos += 1
+    
+    def get_cache(
+        self, 
+        layer_idx: int, 
+        start_pos: int = 0, 
+        end_pos: Optional[int] = None
+    ) -> Tuple[Tensor, Tensor]:
+        
+        assert self.kv_cache is not None
+        
+        if end_pos is None:
+            end_pos = self.cache_pos
+        
+        k_cache, v_cache = self.kv_cache[layer_idx]
+        return k_cache[:, :, start_pos:end_pos, :], v_cache[:, :, start_pos:end_pos, :]
+    
+    def get_current_length(self) -> int:
+        return self.cache_pos
+    
+    def get_max_remaining_length(self) -> int:
+        return self.max_len - self.cache_pos
+
+
 class GeneratorCore:
     def __init__(self, parameter: ModelParameter):
         self.model = parameter.model
@@ -31,6 +137,7 @@ class GeneratorCore:
         top_k: int, 
         top_p: float,
         attn_mask: Optional[List] = None,
+        past_key_value: Optional[Tuple[Tensor, Tensor]] = None,
         filter_value: float=-float('inf')
     ) -> Union[int, list[int]]:
         
@@ -43,7 +150,7 @@ class GeneratorCore:
         top_k = min(top_k, self.config.vocab_size) if top_k > 0 else 0
         
         with torch.no_grad():
-            logits = self.model(input_tensor, attn_mask)[:, -1, :]
+            logits = self.model(input_tensor, attn_mask, past_key_value)[:, -1, :]
         
         if top_k > 0:
             indices_to_remove = logits < torch.topk(logits, top_k).values[:, -1, None]
