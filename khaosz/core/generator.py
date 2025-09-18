@@ -54,10 +54,13 @@ class KVCacher:
                 device=self.device, dtype=self.dtype
             )
             self.kv_cache.append((k_cache, v_cache))
-
+            
     def reset(self):
         self.kv_cache = None
         self.cache_pos = 0
+        
+    def set_cache_pos(self, pos: int):
+        self.cache_pos = pos
     
     def get_current_length(self) -> int:
         return self.cache_pos
