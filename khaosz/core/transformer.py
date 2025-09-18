@@ -179,7 +179,7 @@ class GQA(nn.Module):
         self.n_heads = n_head
         self.n_kvheads = n_kvhead
         self.n_rep = n_head // n_kvhead
-    
+        
         self.q_proj = Linear(n_dim, n_head * self.head_dim)
         self.k_proj = Linear(n_dim, n_kvhead * self.head_dim)
         self.v_proj = Linear(n_dim, n_kvhead * self.head_dim)
@@ -202,7 +202,7 @@ class GQA(nn.Module):
             k = torch.cat([past_key, k], dim=1)
             v = torch.cat([past_value, v], dim=1)
         
-        present_key_value = None if self.training else (k, v)
+        present_key_value = (k, v)
 
         q, k = apply_rotary_emb(q, k, freqs_cis)
         k, v = repeat_kv(k, self.n_rep), repeat_kv(v, self.n_rep)
@@ -307,12 +307,12 @@ class DecoderBlock(nn.Module):
         self,
         x: Tensor,
         freqs_cis: Tensor,
-        mask: Tensor = None,
+        attention_mask: Optional[Tensor] = None,
         past_key_value: Optional[Tuple[Tensor, Tensor]] = None
     ) -> Tensor:
         # attention
         attn_output, present_key_value = self.attention(
-            self.norm_attn(x), freqs_cis, mask, past_key_value
+            self.norm_attn(x), freqs_cis, attention_mask, past_key_value
         )
         x = attn_output + x
         
@@ -342,27 +342,30 @@ class Transformer(nn.Module):
     
     def forward(
         self, 
-        ids: Tensor, 
-        pos_mask: Tensor=None,
+        input_ids: Tensor, 
+        attention_mask: Optional[Tensor]=None,
         past_key_values: Optional[List[Tuple[Tensor, Tensor]]]=None,
+        use_cache: bool = False
     ) -> Tensor:
-        assert ids.ndim == 2
-        x = F.embedding(ids, self.embedding)
+        assert input_ids.ndim == 2
+        x = F.embedding(input_ids, self.embedding)
         
         self.freq_cis = self.freq_cis.to(x.device)
         freq_cis = self.freq_cis[:x.size(1)]
         
         format_mask = create_seq_mask(
-            pos_mask, 
-            is_causal=True, 
+            attention_mask, 
+            is_causal=True,
             device=x.device,
             dtype=x.dtype
         )
         
         present_key_values = []
-        for layer, past_kv in zip(self.layers, past_key_values or [None] * len(self.layers)):
+        for i, layer in enumerate(self.layers):
+            past_kv = past_key_values[i] if past_key_values is not None else None
             x, present_kv = layer(x, freq_cis, format_mask, past_kv)
-            present_key_values.append(present_kv)
+            if use_cache:
+                present_key_values.append(present_kv)
         
         hidden_states = self.norm(x)        
         logits = F.linear(hidden_states,  self.embedding)
