@@ -156,7 +156,8 @@ class MLP(nn.Module):
         super().__init__()
         self.up = Linear(n_dim, d_ffn)
         self.gate = Linear(n_dim, d_ffn)
-        self.down = Linear(d_ffn, n_dim,)
+        self.down = Linear(d_ffn, n_dim)
+    
     def forward(self, x: Tensor) -> Tensor:
         gated = self.up(x) * F.silu(self.gate(x))
         out = self.down(gated)
@@ -184,35 +185,41 @@ class GQA(nn.Module):
         self.k_proj = Linear(n_dim, n_kvhead * self.head_dim)
         self.v_proj = Linear(n_dim, n_kvhead * self.head_dim)
         self.o_proj = Linear(n_dim, n_dim)
+    
     def forward(
         self,
         x: Tensor, 
         freqs_cis: Tensor, 
         mask: Tensor = None,
-        past_key_value: Optional[Tuple[Tensor, Tensor]] = None,
+        kv_cache: Optional[Tuple[Tensor, Tensor]] = None,
+        start_pos: int = 0
     ) -> Tensor:
-        B, L, _ = x.size()
-        # x(B, L, D) -> (B, L, n_heads, head_dim)
+        bsz, seq_len, _ = x.size()
+        # x(bsz, seq_len, n_heads * head_dim) -> (bsz, seq_len, n_heads, head_dim)
         q = self._split_heads(self.q_proj(x), self.n_heads)
         k = self._split_heads(self.k_proj(x), self.n_kvheads)
         v = self._split_heads(self.v_proj(x), self.n_kvheads)
-        
-        if past_key_value is not None:
-            past_key, past_value = past_key_value
-            k = torch.cat([past_key, k], dim=1)
-            v = torch.cat([past_value, v], dim=1)
-        
-        present_key_value = (k, v)
-
         q, k = apply_rotary_emb(q, k, freqs_cis)
+        
+        if kv_cache is not None:
+            k_cache, v_cache = kv_cache
+            
+            # copy to cache
+            k_cache[:bsz, start_pos: start_pos + seq_len] = k
+            v_cache[:bsz, start_pos: start_pos + seq_len] = v
+            
+            # get cache
+            k = k_cache[:bsz, : start_pos + seq_len]
+            v = v_cache[:bsz, : start_pos + seq_len]
+        
         k, v = repeat_kv(k, self.n_rep), repeat_kv(v, self.n_rep)
         
-        # (B, L, n_heads, head_dim) -> (B, n_heads, L, head_dim)
+        # (bsz, seq_len, n_heads, head_dim) -> (bsz, n_heads, seq_len, head_dim)
         q, k, v = q.permute(0, 2, 1, 3), k.permute(0, 2, 1, 3), v.permute(0, 2, 1, 3)
         sdqa_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=(mask == None)).permute(0, 2, 1, 3)
-        out = self.o_proj(sdqa_out.contiguous().view(B, L, -1))
+        out = self.o_proj(sdqa_out.contiguous().view(bsz, seq_len, -1))
 
-        return out, present_key_value
+        return out
     
     def _split_heads(self, x: Tensor, n_heads) -> Tensor:
         batch_size, seq_len, _ = x.shape
@@ -233,7 +240,6 @@ class MLA(nn.Module):
         norm_eps: float
     ):
         super().__init__()
- 
         
         self.q_lora_rank = q_lora_rank
         self.kv_lora_rank = kv_lora_rank
@@ -308,18 +314,17 @@ class DecoderBlock(nn.Module):
         x: Tensor,
         freqs_cis: Tensor,
         attention_mask: Optional[Tensor] = None,
-        past_key_value: Optional[Tuple[Tensor, Tensor]] = None
+        kv_cache: Optional[Tuple[Tensor, Tensor]] = None
     ) -> Tensor:
         # attention
-        attn_output, present_key_value = self.attention(
-            self.norm_attn(x), freqs_cis, attention_mask, past_key_value
-        )
+        attn_output = self.attention(
+            self.norm_attn(x), freqs_cis, attention_mask, kv_cache)
         x = attn_output + x
         
         # feed forward
         x = self.ffn(self.norm_ffn(x)) + x
         
-        return x, present_key_value
+        return x
 
 
 class Transformer(nn.Module):
@@ -344,8 +349,7 @@ class Transformer(nn.Module):
         self, 
         input_ids: Tensor, 
         attention_mask: Optional[Tensor]=None,
-        past_key_values: Optional[List[Tuple[Tensor, Tensor]]]=None,
-        use_cache: bool = False
+        persistent_key_values: Optional[List[Tuple[Tensor, Tensor]]]=None,
     ) -> Tensor:
         assert input_ids.ndim == 2
         x = F.embedding(input_ids, self.embedding)
@@ -360,19 +364,15 @@ class Transformer(nn.Module):
             dtype=x.dtype
         )
         
-        present_key_values = []
         for i, layer in enumerate(self.layers):
-            past_kv = past_key_values[i] if past_key_values is not None else None
-            x, present_kv = layer(x, freq_cis, format_mask, past_kv)
-            if use_cache:
-                present_key_values.append(present_kv)
+            kv_cache = persistent_key_values[i] if persistent_key_values else None
+            x = layer(x, freq_cis, format_mask, kv_cache)
         
         hidden_states = self.norm(x)        
         logits = F.linear(hidden_states,  self.embedding)
         
         return {
             "logits": logits,
-            "hidden_states": hidden_states,
-            "present_key_values": present_key_values
+            "hidden_states": hidden_states
         }
         
