@@ -130,6 +130,7 @@ class GeneratorCore:
         self.tokenizer = parameter.tokenizer
         self.config = parameter.config
     
+
     def sample_next_token(
         self, 
         ids, 
@@ -149,7 +150,7 @@ class GeneratorCore:
         attn_mask = torch.as_tensor(attn_mask, dtype=torch.bool, device=device) if attn_mask is not None else None
         top_k = min(top_k, self.config.vocab_size) if top_k > 0 else 0
         
-        with torch.no_grad():
+        with torch.inference_mode():
             logits = self.model(input_tensor, attn_mask, past_key_value)["logits"][:, -1, :]
         
         if top_k > 0:
@@ -219,7 +220,7 @@ class EmbeddingEncoderCore:
         input_tensor = torch.tensor(padded_ids, device=device, dtype=torch.long)
         seq_mask = torch.tensor(masks, device=device, dtype=torch.bool)
         
-        with torch.no_grad():
+        with torch.inference_mode():
             outputs = self.model(input_tensor, seq_mask)["hidden_states"]
             # [num_fragments, seq_len, hidden_size]
             fragment_embs = torch.mul(outputs, seq_mask.unsqueeze(-1))  
