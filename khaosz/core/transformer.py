@@ -314,11 +314,17 @@ class DecoderBlock(nn.Module):
         x: Tensor,
         freqs_cis: Tensor,
         attention_mask: Optional[Tensor] = None,
-        kv_cache: Optional[Tuple[Tensor, Tensor]] = None
+        kv_cache: Optional[Tuple[Tensor, Tensor]] = None,
+        start_pos: int = 0
     ) -> Tensor:
         # attention
         attn_output = self.attention(
-            self.norm_attn(x), freqs_cis, attention_mask, kv_cache)
+            self.norm_attn(x), 
+            freqs_cis, 
+            attention_mask, 
+            kv_cache, 
+            start_pos
+        )
         x = attn_output + x
         
         # feed forward
@@ -350,6 +356,7 @@ class Transformer(nn.Module):
         input_ids: Tensor, 
         attention_mask: Optional[Tensor]=None,
         persistent_key_values: Optional[List[Tuple[Tensor, Tensor]]]=None,
+        start_pos: int = 0
     ) -> Tensor:
         assert input_ids.ndim == 2
         x = F.embedding(input_ids, self.embedding)
@@ -366,7 +373,7 @@ class Transformer(nn.Module):
         
         for i, layer in enumerate(self.layers):
             kv_cache = persistent_key_values[i] if persistent_key_values else None
-            x = layer(x, freq_cis, format_mask, kv_cache)
+            x = layer(x, freq_cis, format_mask, kv_cache, start_pos)
         
         hidden_states = self.norm(x)        
         logits = F.linear(hidden_states,  self.embedding)

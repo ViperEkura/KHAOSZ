@@ -18,6 +18,40 @@ def build_prompt(query: str, history: List[Tuple[str, str]]) -> str:
     
     return "\n".join(prompt_parts)
 
+def apply_sampling_strategies_batch(
+    logits: Tensor,
+    temperature: float,
+    top_k: int,
+    top_p: float,
+    filter_value: float
+) -> Tensor:
+    if temperature != 1.0:
+        logits = logits / temperature
+    
+    if top_k > 0:
+        top_k = min(top_k, logits.size(-1))
+        indices_to_remove = logits < torch.topk(logits, top_k, dim=-1)[0][..., -1, None]
+        logits[indices_to_remove] = filter_value
+    
+    if top_p < 1.0:
+        sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+        cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
+        
+        sorted_indices_to_remove = cumulative_probs > top_p
+        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+        sorted_indices_to_remove[..., 0] = 0
+        
+        indices_to_remove = torch.zeros_like(logits, dtype=torch.bool)
+        indices_to_remove.scatter_(
+            dim=1,
+            index=sorted_indices,
+            src=sorted_indices_to_remove
+        )
+        
+        logits[indices_to_remove] = filter_value
+    
+    return logits
+
 
 class KVCacher:
     def __init__(
@@ -74,6 +108,32 @@ class GeneratorCore:
         self.model = parameter.model
         self.tokenizer = parameter.tokenizer
         self.config = parameter.config
+
+    def prefill(
+        self,
+        input_ids: Tensor,
+        attn_mask: Optional[Tensor] = None,
+        past_key_value: Optional[List[Tuple[Tensor, Tensor]]] = None
+    ):
+        with torch.inference_mode():
+            outputs = self.model(input_ids, attn_mask, past_key_value)
+            logits = outputs["logits"][:, -1, :]
+            cache_increase = input_ids.size(-1)   
+        
+        return logits, cache_increase
+    
+    def decoding(
+        self,
+        input_ids: Tensor,
+        attn_mask: Optional[Tensor] = None,
+        past_key_value: Optional[List[Tuple[Tensor, Tensor]]] = None,
+    ):
+        with torch.inference_mode():
+            outputs = self.model(input_ids, attn_mask, past_key_value)
+            logits = outputs["logits"][:, -1, :]
+            cache_increase = input_ids.size(-1)
+            
+        return logits, cache_increase
     
 
     def sample_next_token(
@@ -97,22 +157,9 @@ class GeneratorCore:
         
         with torch.inference_mode():
             logits = self.model(input_tensor, attn_mask, past_key_value)["logits"][:, -1, :]
+            logits = apply_sampling_strategies_batch(logits, temperature, top_k, top_p, filter_value)
         
-        if top_k > 0:
-            indices_to_remove = logits < torch.topk(logits, top_k).values[:, -1, None]
-            logits[indices_to_remove] = filter_value
-            
-        if top_p < 1.0:
-            sorted_logits, sorted_indices = torch.sort(logits, dim=-1, descending=True)
-            cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
-            sorted_indices_to_remove = cumulative_probs > top_p
-            sorted_indices_to_remove[:, 0] = False
-
-            batch_indices, sorted_pos = torch.where(sorted_indices_to_remove)
-            original_col_indices = sorted_indices[batch_indices, sorted_pos]
-            logits[batch_indices, original_col_indices] = filter_value
-        
-        probabilities = torch.softmax(logits / temperature, dim=-1)
+        probabilities = torch.softmax(logits, dim=-1)
         next_token_ids = torch.multinomial(probabilities, num_samples=1)
         
         return next_token_ids.item() if not with_batch else next_token_ids.flatten().tolist()
