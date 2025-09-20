@@ -25,6 +25,8 @@ def apply_sampling_strategies(
     top_p: float,
     filter_value: float = -float("inf")
 ) -> Tensor:
+    original_logits = logits.clone()
+    
     if temperature != 1.0:
         logits = logits / temperature
     
@@ -49,6 +51,11 @@ def apply_sampling_strategies(
         )
         
         logits[indices_to_remove] = filter_value
+    
+    if torch.all(logits == filter_value):
+        max_index = torch.argmax(original_logits, dim=-1, keepdim=True)
+        logits = torch.full_like(logits, filter_value)
+        logits.scatter_(-1, max_index, 0.0) 
     
     return logits
 
