@@ -18,12 +18,12 @@ def build_prompt(query: str, history: List[Tuple[str, str]]) -> str:
     
     return "\n".join(prompt_parts)
 
-def apply_sampling_strategies_batch(
+def apply_sampling_strategies(
     logits: Tensor,
     temperature: float,
     top_k: int,
     top_p: float,
-    filter_value: float
+    filter_value: float = -float("inf")
 ) -> Tensor:
     if temperature != 1.0:
         logits = logits / temperature
@@ -53,7 +53,7 @@ def apply_sampling_strategies_batch(
     return logits
 
 
-class KVCacher:
+class KVCacheManager:
     def __init__(
         self, 
         num_layers: int, 
@@ -72,36 +72,30 @@ class KVCacher:
         self.device = device
         self.dtype = dtype
         
-        self.kv_cache: List[Tuple[Tensor, Tensor]] = None
-        self.cache_pos = 0
+        self._kv_cache: List[Tuple[Tensor, Tensor]] = None
         self._initialize_cache()
 
     def _initialize_cache(self):
-        self.kv_cache = []
+        self._kv_cache = []
         for _ in range(self.num_layers):
             k_cache = torch.zeros(
-                (self.batch_size, self.num_heads, self.max_len, self.head_dim),
-                device=self.device, dtype=self.dtype
+                (self.batch_size, self.max_len, self.num_heads, self.head_dim),
+                device=self.device, 
+                dtype=self.dtype
             )
             v_cache = torch.zeros(
-                (self.batch_size, self.num_heads, self.max_len, self.head_dim),
-                device=self.device, dtype=self.dtype
+                (self.batch_size, self.max_len, self.num_heads, self.head_dim),
+                device=self.device, 
+                dtype=self.dtype
             )
-            self.kv_cache.append((k_cache, v_cache))
+            self._kv_cache.append((k_cache, v_cache))
             
     def reset(self):
-        self.kv_cache = None
-        self.cache_pos = 0
-        
-    def set_cache_pos(self, pos: int):
-        self.cache_pos = pos
+        self._kv_cache = None
     
-    def get_current_length(self) -> int:
-        return self.cache_pos
+    def get_kvcache(self) -> List[Tuple[Tensor, Tensor]]:
+        return self._kv_cache
     
-    def get_max_remaining_length(self) -> int:
-        return self.max_len - self.cache_pos
-
 
 class GeneratorCore:
     def __init__(self, parameter: ModelParameter):
@@ -109,32 +103,19 @@ class GeneratorCore:
         self.tokenizer = parameter.tokenizer
         self.config = parameter.config
 
-    def prefill(
+    def compute_logits(
         self,
         input_ids: Tensor,
         attn_mask: Optional[Tensor] = None,
-        past_key_value: Optional[List[Tuple[Tensor, Tensor]]] = None
+        kv_caches: Optional[List[Tuple[Tensor, Tensor]]] = None,
+        start_pos: int = 0
     ):
         with torch.inference_mode():
-            outputs = self.model(input_ids, attn_mask, past_key_value)
+            outputs = self.model(input_ids, attn_mask, kv_caches, start_pos)
             logits = outputs["logits"][:, -1, :]
             cache_increase = input_ids.size(-1)   
         
         return logits, cache_increase
-    
-    def decoding(
-        self,
-        input_ids: Tensor,
-        attn_mask: Optional[Tensor] = None,
-        past_key_value: Optional[List[Tuple[Tensor, Tensor]]] = None,
-    ):
-        with torch.inference_mode():
-            outputs = self.model(input_ids, attn_mask, past_key_value)
-            logits = outputs["logits"][:, -1, :]
-            cache_increase = input_ids.size(-1)
-            
-        return logits, cache_increase
-    
 
     def sample_next_token(
         self, 
@@ -153,11 +134,10 @@ class GeneratorCore:
         with_batch = (input_tensor.ndim == 2)
         input_tensor = input_tensor.unsqueeze(0) if not with_batch else input_tensor
         attn_mask = torch.as_tensor(attn_mask, dtype=torch.bool, device=device) if attn_mask is not None else None
-        top_k = min(top_k, self.config.vocab_size) if top_k > 0 else 0
         
         with torch.inference_mode():
             logits = self.model(input_tensor, attn_mask, past_key_value)["logits"][:, -1, :]
-            logits = apply_sampling_strategies_batch(logits, temperature, top_k, top_p, filter_value)
+            logits = apply_sampling_strategies(logits, temperature, top_k, top_p, filter_value)
         
         probabilities = torch.softmax(logits, dim=-1)
         next_token_ids = torch.multinomial(probabilities, num_samples=1)

@@ -36,14 +36,15 @@ def get_rotary_emb(
 def apply_rotary_emb(
     xq: Tensor, 
     xk: Tensor, 
-    freqs_cis: Tensor
+    freqs_cis: Tensor,
 ) -> Tuple[Tensor, Tensor]:
     dtype = xq.dtype
+    seq_len = xq.size(1)
 
     xq = torch.view_as_complex(xq.view(*xq.shape[:-1], -1, 2).float())
     xk = torch.view_as_complex(xk.view(*xk.shape[:-1], -1, 2).float())
-    
-    freqs_cis = freqs_cis.reshape(1, freqs_cis.size(0), 1, -1)
+    freqs_cis = freqs_cis.reshape(1, seq_len, 1, -1)
+    # (1, seq_len, 1, dim//2)
     
     xq_out = torch.view_as_real(xq * freqs_cis).flatten(3)
     xk_out = torch.view_as_real(xk * freqs_cis).flatten(3)
@@ -199,18 +200,19 @@ class GQA(nn.Module):
         q = self._split_heads(self.q_proj(x), self.n_heads)
         k = self._split_heads(self.k_proj(x), self.n_kvheads)
         v = self._split_heads(self.v_proj(x), self.n_kvheads)
+        
         q, k = apply_rotary_emb(q, k, freqs_cis)
         
         if kv_cache is not None:
             k_cache, v_cache = kv_cache
-            
+
             # copy to cache
-            k_cache[:bsz, start_pos: start_pos + seq_len] = k
-            v_cache[:bsz, start_pos: start_pos + seq_len] = v
+            k_cache[:bsz, start_pos:start_pos + seq_len] = k
+            v_cache[:bsz, start_pos:start_pos + seq_len] = v
             
             # get cache
-            k = k_cache[:bsz, : start_pos + seq_len]
-            v = v_cache[:bsz, : start_pos + seq_len]
+            k = k_cache[:bsz, :start_pos + seq_len]
+            v = v_cache[:bsz, :start_pos + seq_len]
         
         k, v = repeat_kv(k, self.n_rep), repeat_kv(v, self.n_rep)
         
@@ -359,10 +361,11 @@ class Transformer(nn.Module):
         start_pos: int = 0
     ) -> Tensor:
         assert input_ids.ndim == 2
+        seq_len = input_ids.size(-1)
         x = F.embedding(input_ids, self.embedding)
         
         self.freq_cis = self.freq_cis.to(x.device)
-        freq_cis = self.freq_cis[:x.size(1)]
+        freqs_cis = self.freq_cis[start_pos:start_pos+seq_len]
         
         format_mask = create_seq_mask(
             attention_mask, 
@@ -373,7 +376,7 @@ class Transformer(nn.Module):
         
         for i, layer in enumerate(self.layers):
             kv_cache = persistent_key_values[i] if persistent_key_values else None
-            x = layer(x, freq_cis, format_mask, kv_cache, start_pos)
+            x = layer(x, freqs_cis, format_mask, kv_cache, start_pos)
         
         hidden_states = self.norm(x)        
         logits = F.linear(hidden_states,  self.embedding)
