@@ -1,0 +1,22 @@
+# cache
+__pycache__
+.pytest_cache
+
+# params
+*.safetensors
+*.json
+*.pkl
+*.db
+
+# train_log
+*.log
+
+# ignore file
+-*
+
+# vscode file
+.vscode
+
+# build file
+build
+*.egg-info
