@@ -46,10 +46,10 @@ def test_env():
             return self.length
             
         def __getitem__(self, idx):
-            return (
-                torch.randint(0, 1000, (64,)),
-                torch.randint(0, 1000, (64,))
-            )
+            return {
+                "input_ids": torch.randint(0, 1000, (64,)),
+                "target_ids": torch.randint(0, 1000, (64,))
+            }
     
     dataset = DummyDataset()
     

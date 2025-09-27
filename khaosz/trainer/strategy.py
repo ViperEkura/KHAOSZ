@@ -32,42 +32,13 @@ def get_logprobs(model:nn.Module, input_ids: Tensor, mask: Tensor, pad_token_id:
     
     return (token_logprobs * valid_mask).sum(dim=-1)
 
-def build_loss_mask(input_ids: Tensor, bos_token_id: int, eos_token_id: int) -> Tensor:
-    token_markers = torch.zeros_like(input_ids, dtype=torch.int8)
-    
-    is_bos_token = input_ids.eq(bos_token_id)
-    is_eos_token = input_ids.eq(eos_token_id)
-    
-    token_markers[is_bos_token] = 1
-    token_markers[is_eos_token] = -1 
-    
-    cumulative_markers = torch.cumsum(token_markers, dim=-1)
-    min_cumulative = cumulative_markers.min(dim=-1, keepdim=True).values
-    loss_mask = cumulative_markers - min_cumulative
-
-    return loss_mask.to(dtype=torch.bool)
-
-def build_attention_mask(input_ids: Tensor, user_token_id: int, multi_turn: bool) -> Tensor:
-    bsz, seq_len = input_ids.size()
-    is_user_token = input_ids.eq(user_token_id)
-    turn_id = is_user_token.cumsum(dim=-1)
-    
-    iq = turn_id.view(bsz, seq_len, 1)
-    ik = turn_id.view(bsz, 1, seq_len)
-    
-    seq_mask = (iq <= ik) if multi_turn else (iq == ik)
-    causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=input_ids.device)).bool()
-    attention_mask = seq_mask & causal_mask
-    
-    return attention_mask
-
 
 class BaseStrategy(ABC):
     def __init__(self, model: nn.Module):
         self.model = model
     
     @abstractmethod
-    def compute_loss(self, batch: Tuple[Tensor, ...]) -> Tensor:
+    def compute_loss(self, batch: Dict[str, Tensor]) -> Tensor:
         raise NotImplementedError
     
     def __call__(self, batch: Tuple[Tensor, ...]) -> Tensor:
@@ -78,46 +49,44 @@ class SeqStrategy(BaseStrategy):
     def __init__(self, model):
         super().__init__(model)
     
-    def compute_loss(self, batch: Tuple[Tensor, ...]) -> Tensor:
-        x, y = batch
-        B, L = x.size()
-        logits: Tensor = self.model(x)["logits"]
+    def compute_loss(self, batch: Dict[str, Tensor]) -> Tensor:
+        input_ids, target_ids = batch["input_ids"], batch["target_ids"]
+        B, L = input_ids.size()
+        logits: Tensor = self.model(input_ids=input_ids)["logits"]
         
         loss = F.cross_entropy(
-            logits.view(B * L, -1), y.flatten()
+            input=logits.view(B * L, -1),
+            target=target_ids.flatten()
         )
         return loss
     
 
 class SftStrategy(BaseStrategy):
-    def __init__(
-            self, 
-            model: nn.Module, 
-            bos_id: int, 
-            eos_id: int, 
-            user_token_id: int,
-            multi_turn: bool
-        ):
+    def __init__(self, model: nn.Module):
         super().__init__(model)
-
-        self.loss_mask_builder = lambda x: build_loss_mask(x, bos_id, eos_id)
-        self.attn_mask_builder = lambda x: build_attention_mask(x, user_token_id, multi_turn)
     
-    def compute_loss(self, batch: Tuple[Tensor, ...]) -> Tensor:
-        x, y, loss_mask = batch
-        B, L = x.size()
-        ignore_idx = -1
+    def compute_loss(self, batch: Dict[str, Tensor]) -> Tensor:
+        input_ids, target_ids = batch["input_ids"], batch["target_ids"]
+        loss_mask, attn_mask = batch["loss_mask"], batch["attn_mask"]
         
-        logits: Tensor = self.model(x)["logits"]
-        masked_y = y.masked_fill(loss_mask == 0, ignore_idx)
+        ignore_index = -100
+        B, L = input_ids.size()
+        
+        logits: Tensor = self.model(
+            input_ids=input_ids, 
+            input_mask=attn_mask
+        )["logits"]
+        
+        target_ids = target_ids.masked_fill(loss_mask == 0, ignore_index)
         
         loss = F.cross_entropy(
-            logits.view(B * L, -1),
-            masked_y.flatten(), 
-            ignore_index=ignore_idx
+            input=logits.view(B * L, -1),
+            target=target_ids.flatten(),
+            ignore_index=ignore_index
         )
-
+        
         return loss
+
 
 class DpoStrategy(BaseStrategy):
     def __init__(self, model, pad_token_id, beta):
@@ -131,7 +100,8 @@ class DpoStrategy(BaseStrategy):
         self.beta = beta
         
     def compute_loss(self, batch: Tuple[Tensor, ...]) -> Tensor:
-        good_ids, bad_ids, good_mask, bad_mask = batch
+        good_ids, bad_ids = batch["chosen"], batch["rejected"]
+        good_mask, bad_mask = batch["chosen_mask"], batch["rejected_mask"]
         
         log_pi_good = get_logprobs(self.model, good_ids, good_mask, self.pad_token_id)
         log_pi_bad = get_logprobs(self.model, bad_ids, bad_mask, self.pad_token_id)
