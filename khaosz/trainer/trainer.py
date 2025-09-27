@@ -86,9 +86,11 @@ class Trainer:
         
         strategy = StrategyFactory.load(
             self.model, 
-            train_config.train_type, 
-            self.tokenizer.pad_id, 
-            train_config.dpo_beta
+            train_type=train_config.train_type,
+            bos_token_id=self.tokenizer.bos_id,
+            eos_token_id=self.tokenizer.eos_id,
+            pad_token_id=self.tokenizer.pad_id,
+            dpo_beta=train_config.dpo_beta
         )
         
         scheduler = LambdaLR(
