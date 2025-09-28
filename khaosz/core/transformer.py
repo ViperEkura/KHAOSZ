@@ -99,6 +99,8 @@ def process_attention_mask(
         return None
     
     if seq_mask.dim() > 2:
+        # shape (bsz, seq_len) or (bsz,n_heads, seq_len, seq_len + start_pos)
+        # if ndim > 2, it's 4D tensor
         return seq_mask
     
     batch_size = seq_mask.size(0)

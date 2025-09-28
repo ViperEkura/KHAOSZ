@@ -48,7 +48,8 @@ def build_attention_mask(input_ids: Tensor, user_token_id: int, multi_turn: bool
     iq = turn_id.view(seq_len, 1)
     ik = turn_id.view(1, seq_len)
     
-    seq_mask = (iq <= ik) if multi_turn else (iq == ik)
+    # fix the causual attention mask
+    seq_mask = (iq >= ik) if multi_turn else (iq == ik)
     causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=input_ids.device)).bool()
     attention_mask = seq_mask & causal_mask
     
