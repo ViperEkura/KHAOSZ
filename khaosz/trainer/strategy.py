@@ -177,9 +177,10 @@ class StrategyFactory:
 
 @dataclass
 class TrainConfig:
-    train_type: str = field(
-        default_factory=["seq", "sft", "dpo"],
-        metadata={"help": "Type of training."}
+    
+    strategy: BaseStrategy = field(
+        default=None,
+        metadata={"help": "Training strategy."}
     )
     dataset: Dataset = field(
         default=None,
@@ -217,10 +218,6 @@ class TrainConfig:
         default=3407,
         metadata={"help": "Random seed."}
     )
-    dpo_beta: float = field(
-        default=0.1,
-        metadata={"help": "DPO beta."}
-    )
 
     def get_kwargs(self)-> Dict[str, Any]:
         config_dict = asdict(self)
@@ -228,117 +225,191 @@ class TrainConfig:
     
 
 @dataclass
-class ScheduleConfig:
+class ScheduleConfig(ABC):
     schedule_type: str = field(
-        default_factory=["cosine", "sgdr"],
-        metadata={"help": "Type of learning rate schedule."}
+        default="cosine",
+        metadata={
+            "help": "Type of learning rate schedule.", 
+            "choices": ["cosine", "sgdr"]
+        }
     )
-    warning_step: int = field(
+    warmup_steps: int = field(
         default=1000,
-        metadata= {"help": "Warning up step."}
-    )
-    @abstractmethod
-    def get_kwargs(self)-> Dict[str, Any]:
-        raise NotImplementedError
-
-
-@dataclass   
-class CosineScheduleConfig(ScheduleConfig):
-    total_iters: int = field(
-        default=None,
-        metadata={"help": "Total iterations for cosine schedule."}
+        metadata={"help": "Number of warmup steps."}
     )
     min_rate: float = field(
         default=0.05,
-        metadata={"help": "Minimum rate for cosine schedule."}
+        metadata={"help": "Minimum learning rate multiplier."}
+    )
+    
+    @abstractmethod
+    def get_kwargs(self) -> Dict[str, Any]:
+        raise NotImplementedError
+    
+    def validate(self) -> None:
+        """Validate configuration parameters."""
+        if self.warmup_steps < 0:
+            raise ValueError(f"warmup_steps must be non-negative, got {self.warmup_steps}")
+        if not 0 <= self.min_rate <= 1:
+            raise ValueError(f"min_rate must be between 0 and 1, got {self.min_rate}")
+
+
+@dataclass
+class CosineScheduleConfig(ScheduleConfig):
+    total_steps: int = field(  # 更准确的命名
+        default=None,
+        metadata={"help": "Total training steps for cosine schedule."}
     )
     schedule_type: Literal["cosine"] = "cosine"
     
     def get_kwargs(self) -> Dict[str, Any]:
+        if self.total_steps is None:
+            raise ValueError("total_steps must be specified for cosine schedule")
+            
         return {
             "schedule_type": self.schedule_type,
-            "warning_step": self.warning_step,
-            "lr_decay_iters": self.total_iters - self.warning_step,
+            "warmup_steps": self.warmup_steps,
+            "lr_decay_steps": self.total_steps - self.warmup_steps,
             "min_rate": self.min_rate
         }
+    
+    def validate(self) -> None:
+        super().validate()
+        if self.total_steps is not None and self.total_steps <= self.warmup_steps:
+            raise ValueError(f"total_steps ({self.total_steps}) must be greater than warmup_steps ({self.warmup_steps})")
+
 
 @dataclass
 class SgdrScheduleConfig(ScheduleConfig):
     cycle_length: int = field(
         default=1000,
-        metadata={"help": "Cycle length for sgdr schedule."}
+        metadata={"help": "Length of the first cycle in steps."}
     )
-    min_rate: float = field(
-        default=0.05,
-        metadata={"help": "Minimum rate for sgdr schedule."}
-    )
-    T_mult: int = field(
+    t_mult: int = field( 
         default=2,
-        metadata={"help": "T_mult for sgdr schedule."}
+        metadata={"help": "Multiplier for cycle length growth."}
     )
     schedule_type: Literal["sgdr"] = "sgdr"
 
     def get_kwargs(self) -> Dict[str, Any]:
         return {
             "schedule_type": self.schedule_type,
-            "warning_step": self.warning_step,
+            "warmup_steps": self.warmup_steps,
             "cycle_length": self.cycle_length,
             "min_rate": self.min_rate,
-            "T_mult": self.T_mult
+            "t_mult": self.t_mult
         }
+    
+    def validate(self) -> None:
+        super().validate()
+        if self.cycle_length <= 0:
+            raise ValueError(f"cycle_length must be positive, got {self.cycle_length}")
+        if self.t_mult < 1:
+            raise ValueError(f"t_mult must be >= 1, got {self.t_mult}")
 
 
 class SchedulerFactory:
-
+    """Factory for creating learning rate schedule functions."""
+    
     @staticmethod
     def get_sgdr_schedule(
-        warning_step: int, 
+        warmup_steps: int, 
         cycle_length: int, 
-        min_rate: float = 0.1, 
-        T_mult: int = 2
+        min_rate: float = 0.05, 
+        t_mult: int = 2
     ) -> Callable[[int], float]:
-
-        def sgdr_schedule(now_iter: int) -> float:
-            if now_iter < warning_step:
-                return max(min_rate, now_iter / warning_step)
-                
-            adjusted_iter = now_iter - warning_step
-            total_cycles, current_cycle = 0, 0
-            while adjusted_iter >= cycle_length * (T_mult ** total_cycles):
-                current_cycle += 1
-                total_cycles += 1
+        """
+        Create SGDR (Stochastic Gradient Descent with Warm Restarts) schedule.
+        
+        Args:
+            warmup_steps: Number of warmup steps
+            cycle_length: Length of the first cycle
+            min_rate: Minimum learning rate multiplier
+            t_mult: Cycle length multiplier
             
-            cycle_start = sum(cycle_length * (T_mult ** i) for i in range(current_cycle))
-            cycle_pos = adjusted_iter - cycle_start
+        Returns:
+            Schedule function that takes current step and returns LR multiplier
+        """
+        
+        def sgdr_schedule(current_step: int) -> float:
+            # Warmup phase
+            if current_step < warmup_steps:
+                return max(min_rate, current_step / warmup_steps)
             
-            cycle_length_current = cycle_length * (T_mult ** current_cycle)
-            return max(min_rate, 0.5 * (1 + math.cos(math.pi * cycle_pos / cycle_length_current)))
+            # SGDR phase
+            steps_since_warmup = current_step - warmup_steps
+            
+            # Find current cycle and position within cycle
+            cycle_start = 0
+            current_cycle_length = cycle_length
+            cycle_index = 0
+            
+            while steps_since_warmup >= cycle_start + current_cycle_length:
+                cycle_start += current_cycle_length
+                current_cycle_length *= t_mult
+                cycle_index += 1
+            
+            position_in_cycle = steps_since_warmup - cycle_start
+            progress = position_in_cycle / current_cycle_length
+            
+            # Cosine annealing within cycle
+            return max(min_rate, 0.5 * (1 + math.cos(math.pi * progress)))
         
         return sgdr_schedule
 
     @staticmethod
-    def get_cosine_warmup_schedule(
-        warning_step: int, 
-        lr_decay_iters: int, 
-        min_rate: float = 0.1
+    def get_cosine_schedule(
+        warmup_steps: int, 
+        lr_decay_steps: int, 
+        min_rate: float = 0.05
     ) -> Callable[[int], float]:
-
-        def cosine_warmup_schedule(now_iter: int) -> float:
-            if now_iter <= warning_step:
-                return max(min_rate, now_iter / warning_step)
-            else:
-                rate = (now_iter - warning_step) / (lr_decay_iters - warning_step)
-                return max(min_rate, 0.5 * (1.0 + math.cos(math.pi * rate)))
+        """
+        Create cosine decay schedule with warmup.
         
-        return cosine_warmup_schedule
+        Args:
+            warmup_steps: Number of warmup steps
+            lr_decay_steps: Number of steps for cosine decay after warmup
+            min_rate: Minimum learning rate multiplier
+            
+        Returns:
+            Schedule function that takes current step and returns LR multiplier
+        """
+        
+        def cosine_schedule(current_step: int) -> float:
+            if current_step < warmup_steps:
+                # Linear warmup
+                return max(min_rate, current_step / warmup_steps)
+            else:
+                # Cosine decay
+                decay_progress = (current_step - warmup_steps) / lr_decay_steps
+                decay_progress = min(decay_progress, 1.0)  # Clamp at 1.0
+                return max(min_rate, 0.5 * (1.0 + math.cos(math.pi * decay_progress)))
+        
+        return cosine_schedule
     
     @staticmethod
-    def load_schedule_fn(**kwargs):
-        strategy = kwargs.pop("schedule_type")
-        if strategy == "cosine":
-            return SchedulerFactory.get_cosine_warmup_schedule(**kwargs)
-        elif strategy == "sgdr":
+    def create_schedule(config: ScheduleConfig) -> Callable[[int], float]:
+        """
+        Create schedule from configuration.
+        
+        Args:
+            config: Schedule configuration instance
+            
+        Returns:
+            Schedule function
+        """
+        config.validate()
+        kwargs = config.get_kwargs()
+        return SchedulerFactory.load_schedule_fn(**kwargs)
+    
+    @staticmethod
+    def load_schedule_fn(**kwargs) -> Callable[[int], float]:
+        schedule_type = kwargs.pop("schedule_type")
+        
+        if schedule_type == "cosine":
+            return SchedulerFactory.get_cosine_schedule(**kwargs)
+        elif schedule_type == "sgdr":
             return SchedulerFactory.get_sgdr_schedule(**kwargs)
         else:
-            raise ValueError(f"Invalid schedule type: {strategy}")
+            raise ValueError(f"Unsupported schedule type: {schedule_type}")
         

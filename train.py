@@ -5,6 +5,7 @@ import torch
 from torch.optim import AdamW
 from khaosz.core import ParameterLoader
 from khaosz.trainer import Trainer, DatasetLoader, TrainConfig, CosineScheduleConfig
+from khaosz.trainer import StrategyFactory
 
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -46,19 +47,26 @@ def train(
     
     cache_files = get_files(data_root_path)
     
-    dataset_kwargs = {
+    strategy_kwargs = {
         "multi_turn": multi_turn,
         "bos_token_id": parameter.tokenizer.bos_id,
         "eos_token_id": parameter.tokenizer.eos_id,
-        "user_token_id":parameter.tokenizer.encode("<|user|>")[0]
+        "user_token_id":parameter.tokenizer.encode("<|user|>")[0],
+        "dpo_beta": dpo_beta
     }
     
+    strategy = StrategyFactory.load(
+        model, 
+        train_type
+        **strategy_kwargs
+    )
+
     dataset = DatasetLoader.load(
         train_type=train_type,
         load_path=cache_files,
         max_len=parameter.config.m_len,
         device=device,
-        dataset_kwargs=dataset_kwargs
+        dataset_kwargs=strategy_kwargs
     )
     
     param_groups = [
@@ -73,7 +81,7 @@ def train(
     )
     
     train_config = TrainConfig(
-        train_type=train_type,
+        strategy=strategy,
         dataset=dataset,
         optimizer=optim,
         ckpt_dir=ckpt_dir,
@@ -83,7 +91,6 @@ def train(
         n_iter_step=n_iter_step,
         max_grad_norm=max_grad_norm,
         random_seed=random_seed,
-        dpo_beta=dpo_beta
     )
     
     schedule_config = CosineScheduleConfig(
@@ -91,11 +98,13 @@ def train(
         total_iters=len(dataset) * n_epoch // batch_size, 
     )
     
-    trainer = Trainer(parameter)
-    trainer.train(
+    trainer = Trainer(
+        parameter=parameter,
         train_config=train_config,
         schedule_config=schedule_config,
     )
+    trainer.train()
+    
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the Transformer model.")

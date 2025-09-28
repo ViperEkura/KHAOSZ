@@ -18,9 +18,13 @@ from khaosz.core.generator import (
     RetrievalGenerator, 
     EmbeddingEncoder
 )
-from khaosz.trainer.trainer import Trainer
-from khaosz.trainer.dataset import SeqDataset, SftDataset, DpoDataset, BaseDataset
-
+from khaosz.trainer import (
+    Trainer,
+    DatasetLoader,
+    TrainConfig,
+    StrategyFactory,
+    SchedulerFactory
+)
 
 __all__ = [
     # model
@@ -40,10 +44,10 @@ __all__ = [
     
     # trainer
     "Trainer",
-    "SeqDataset",
-    "SftDataset",
-    "DpoDataset",
-    "BaseDataset",
+    "DatasetLoader",
+    "TrainConfig",
+    "StrategyFactory",
+    "SchedulerFactory",
     
     # utils
     "Retriever",

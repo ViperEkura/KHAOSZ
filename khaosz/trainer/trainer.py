@@ -8,19 +8,23 @@ from torch.utils.data import DataLoader, RandomSampler
 from tqdm import tqdm
 
 from khaosz.core import ModelParameter, Checkpoint
-from khaosz.trainer.strategy import SchedulerFactory, StrategyFactory, TrainConfig, ScheduleConfig
+from khaosz.trainer.strategy import SchedulerFactory, TrainConfig, ScheduleConfig
 
 
 class Trainer:
     def __init__(
         self,
-        parameter: ModelParameter
+        parameter: ModelParameter,
+        train_config: TrainConfig,
+        schedule_config: ScheduleConfig
     ):
         self.checkpoint = Checkpoint(
             model=parameter.model,
             tokenizer=parameter.tokenizer,
             config=parameter.config,
         )
+        self.train_config = train_config
+        self.schedule_config = schedule_config
         
     def save_checkpoint(
         self, 
@@ -35,12 +39,11 @@ class Trainer:
 
     def train(
         self,
-        train_config: TrainConfig,
-        schedule_config: ScheduleConfig,
         train_checkpoint: Optional[Checkpoint] = None
     ) -> Checkpoint:
+        train_config = self.train_config
+        schedule_config = self.schedule_config
         assert schedule_config.schedule_type in ["cosine", "sgdr"]
-        assert train_config.train_type in ["seq", "sft", "dpo"]
         
         if train_checkpoint:
             self.checkpoint = train_checkpoint
@@ -58,19 +61,6 @@ class Trainer:
         
         lambda_scheduler_fn  = SchedulerFactory.load_schedule_fn(
             **schedule_config.get_kwargs()
-        )
-        
-        strategy_kwargs = {
-            "bos_token_id": self.checkpoint.tokenizer.bos_id,
-            "eos_token_id": self.checkpoint.tokenizer.eos_id,
-            "pad_token_id": self.checkpoint.tokenizer.pad_id,
-            "dpo_beta": train_config.dpo_beta
-        }
-        
-        strategy = StrategyFactory.load(
-            self.checkpoint.model, 
-            train_config.train_type,
-            **strategy_kwargs
         )
         
         scheduler = LambdaLR(
@@ -98,7 +88,7 @@ class Trainer:
             )
             for batch in progress_bar:
                 #forward
-                loss = strategy(batch)
+                loss = train_config.strategy(batch)
                 loss_list.append(loss.item())
                 #backward
                 loss.backward()

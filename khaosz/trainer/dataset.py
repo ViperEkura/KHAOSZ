@@ -257,7 +257,7 @@ class DatasetLoader:
                 bos_token_id=kwargs.get("bos_token_id"),
                 eos_token_id=kwargs.get("eos_token_id"),
                 user_token_id=kwargs.get("user_token_id"),
-                multi_turn=kwargs.get("multi_turn", False)
+                multi_turn=kwargs.get("multi_turn")
             ),
             "dpo": lambda m_len, device: DpoDataset(m_len, device=device),
         }
