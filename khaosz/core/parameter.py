@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 from dataclasses import dataclass, field
-from typing import Optional, Self, Union
+from typing import Any, Dict, List, Optional, Self, Union
 from pathlib import Path
 
 from khaosz.core.tokenizer import BpeTokenizer
@@ -84,11 +84,9 @@ class ModelParameter(BaseModelIO):
     )
     
     def save(self, save_dir: Union[str, Path]):
-        """Save model parameters."""
         self.save_components(save_dir)
     
     def load(self, load_dir: Union[str, Path]) -> Self:
-        """Load model parameters."""
         return self.load_components(load_dir)
 
 
@@ -108,26 +106,16 @@ class Checkpoint(BaseModelIO):
         default_factory=TransformerConfig,
         metadata={"help": "Transformer model configuration."}
     )
-    loss_list: list[float] = field(
-        default_factory=list,
-        metadata={"help": "List of training losses."}
-    )
-    current_iter: int = field(
-        default=0,
-        metadata={"help": "Current training iteration."}
-    )
-    optimizer: Optional[optim.Optimizer] = field(
+    optim_state: Dict[str, Any] = field(
         default=None,
         metadata={"help": "Optimizer state."}
     )
-    
-    def __post_init__(self):
-        # Ensure current_iter matches loss list length if not explicitly set
-        if self.current_iter == 0 and self.loss_list:
-            self.current_iter = len(self.loss_list)
+    loss_list: List[float] = field(
+        default_factory=list,
+        metadata={"help": "List of training losses."}
+    )
     
     def _get_training_paths(self, directory: Union[str, Path]) -> dict[str, Path]:
-        """Get file paths for training-specific files."""
         paths = self._get_file_paths(directory)
         paths.update({
             "loss_list": paths["model"].parent / "loss.pkl",
@@ -137,7 +125,6 @@ class Checkpoint(BaseModelIO):
         return paths
     
     def save_training_state(self, save_dir: Union[str, Path]):
-        """Save training-specific state."""
         paths = self._get_training_paths(save_dir)
         
         # Save loss plot
@@ -148,25 +135,21 @@ class Checkpoint(BaseModelIO):
             pkl.dump(self.loss_list, f)
         
         # Save optimizer state
-        if self.optimizer is not None:
-            with open(str(paths["optimizer"]), "wb") as f:
-                pkl.dump(self.optimizer.state_dict(), f)
+        with open(str(paths["optimizer"]), "wb") as f:
+            pkl.dump(self.optim_state, f)
     
     def load_training_state(self, load_dir: Union[str, Path]) -> Self:
-        """Load training-specific state."""
         paths = self._get_training_paths(load_dir)
         
         # Load loss list
         if paths["loss_list"].exists():
             with open(str(paths["loss_list"]), "rb") as f:
                 self.loss_list = pkl.load(f)
-            self.current_iter = len(self.loss_list)
         
         # Load optimizer state
-        if paths["optimizer"].exists() and self.optimizer is not None:
+        if paths["optimizer"].exists():
             with open(str(paths["optimizer"]), "rb") as f:
-                optim_state = pkl.load(f)
-            self.optimizer.load_state_dict(optim_state)
+                self.optim_state = pkl.load(f)
         
         return self
     
@@ -174,10 +157,12 @@ class Checkpoint(BaseModelIO):
         """Plot and save loss curve."""
         if not self.loss_list:
             return
+        
+        current_iter = len(self.loss_list)
             
         plt.figure(figsize=(10, 6))
         plt.plot(self.loss_list)
-        plt.title(f"Training Loss - Iteration {self.current_iter}")
+        plt.title(f"Training Loss - Iteration {current_iter}")
         plt.xlabel("Batch")
         plt.ylabel("Loss")
         plt.grid(True)
@@ -224,7 +209,7 @@ class ParameterLoader:
         tokenizer: BpeTokenizer,
         config: TransformerConfig,
         loss_list: Optional[list[float]] = None,
-        optimizer: Optional[optim.Optimizer] = None
+        optimizer: Optional[optim.Optimizer] = None,
     ) -> Checkpoint:
         """Convenience method to create a training checkpoint."""
         return Checkpoint(
@@ -232,7 +217,7 @@ class ParameterLoader:
             tokenizer=tokenizer,
             config=config,
             loss_list=loss_list or [],
-            optimizer=optimizer
+            optimizer_state=optimizer
         )
 
 
