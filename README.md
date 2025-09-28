@@ -54,8 +54,8 @@ python train.py \
 --n_epoch=5 \
 --batch_size=8 \
 --max_lr=2e-4 \
---n_iter_ckpt=10000 \
---ckpt_dir=checkpoints
+--checkpoint_interval=10000 \
+--checkpoint_dir=checkpoints
 ```
 
 **Parameters Explanation:**
@@ -64,11 +64,11 @@ python train.py \
 - `--param_path`: Path to the model training parameters
 - `--n_epoch`: Total number of training epochs
 - `--batch_size`: Batch size
-- `--n_iter_step`: Number of batches per training step
-- `--warning_step`: Number of warmup steps
+- `--accumulation_steps`: Number of batches per training step
+- `--warmup_steps`: Number of warmup steps
 - `--max_lr`: Maximum learning rate (using warmup + cosine decay)
-- `--n_iter_ckpt`: Checkpoint saving interval
-- `--ckpt_dir`: Directory to save checkpoints
+- `--checkpoint_interval`: Checkpoint saving interval
+- `--checkpoint_dir`: Directory to save checkpoints
 - `--resume_dir`: Resume training from the specified path
 
 Training logs will be saved in `train_log.txt`. Checkpoints will be saved in the specified directory for resuming training or evaluation.
@@ -214,8 +214,8 @@ python train.py \
 --n_epoch=5 \
 --batch_size=8 \
 --max_lr=2e-4 \
---n_iter_ckpt=10000 \
---ckpt_dir=checkpoints 
+--checkpoint_interval=10000 \
+--checkpoint_dir=checkpoints 
 ```
 
 **参数说明：**
@@ -224,11 +224,11 @@ python train.py \
 - `--param_path`: 模型训练参数路径
 - `--n_epoch`: 总训练轮数
 - `--batch_size`: 批量大小
-- `--n_iter_step`: 每个训练步骤的 batch 数量
-- `--warning_step`: 预热步数（warmup steps）
+- `--accumulation_steps`: 每个训练步骤的 batch 数量
+- `--warmup_steps`: 预热步数（warmup steps）
 - `--max_lr`: 最大学习率（使用预热 + 余弦衰减）
-- `--n_iter_ckpt`: 检查点保存间隔
-- `--ckpt_dir`: 检查点保存目录
+- `--checkpoint_interval`: 检查点保存间隔
+- `--checkpoint_dir`: 检查点保存目录
 - `--resume_dir`: 从指定路径恢复训练
 
 训练日志将保存在 `train_log.txt` 中。检查点将保存在指定目录，用于恢复训练或评估。

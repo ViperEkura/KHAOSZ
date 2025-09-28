@@ -190,7 +190,7 @@ class TrainConfig:
         default=None,
         metadata={"help": "Optimizer for training."}
     )
-    ckpt_dir: str = field(
+    checkpoint_dir: str = field(
         default="./checkpoint",
         metadata={"help": "Checkpoint directory."}
     )
@@ -202,11 +202,11 @@ class TrainConfig:
         default=4,
         metadata={"help": "Batch size for training."}
     )
-    n_iter_ckpt: int = field(
+    checkpoint_interval: int = field(
         default=5000,
         metadata={"help": "Number of iterations between checkpoints."}
     )
-    n_iter_step: int = field(
+    accumulation_steps: int = field(
         default=1,
         metadata={"help": "Number of iterations between steps."}
     )
@@ -256,7 +256,7 @@ class ScheduleConfig(ABC):
 
 @dataclass
 class CosineScheduleConfig(ScheduleConfig):
-    total_steps: int = field(  # 更准确的命名
+    total_steps: int = field(
         default=None,
         metadata={"help": "Total training steps for cosine schedule."}
     )

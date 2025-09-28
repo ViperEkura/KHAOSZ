@@ -32,7 +32,7 @@ class Trainer:
         train_config: TrainConfig
     ):
         current_iter = len(loss_list)
-        save_path = os.path.join(train_config.ckpt_dir, f"iter_{current_iter}")
+        save_path = os.path.join(train_config.checkpoint_dir, f"iter_{current_iter}")
         self.checkpoint.loss_list = loss_list
         self.checkpoint.optim_state = train_config.optimizer.state_dict()
         self.checkpoint.save(save_path)
@@ -93,7 +93,7 @@ class Trainer:
                 #backward
                 loss.backward()
                 #step
-                if current_iter % train_config.n_iter_step == 0:
+                if current_iter % train_config.accumulation_steps == 0:
                     clip_grad_norm_(
                         self.checkpoint.model.parameters(),
                         train_config.max_grad_norm
@@ -108,7 +108,7 @@ class Trainer:
                     "lr": f"{train_config.optimizer.param_groups[0]['lr']:.2e}"
                 })
                 #save checkpotint
-                if current_iter - last_ckpt_iter >= train_config.n_iter_ckpt:
+                if current_iter - last_ckpt_iter >= train_config.checkpoint_interval:
                     self.save_checkpoint(loss_list, train_config)
                     last_ckpt_iter = current_iter
 
