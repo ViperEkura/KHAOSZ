@@ -1,12 +1,17 @@
 import os
 import torch
 from typing import Optional, List
-from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader, RandomSampler
 
 from khaosz.core import ModelParameter, Checkpoint
-from khaosz.trainer.strategy import SchedulerFactory, TrainConfig, ScheduleConfig
-from khaosz.trainer.callback import TrainerCallback, ProgressBarCallback, CheckpointCallback, GradientClippingCallback
+from khaosz.trainer.strategy import TrainConfig, ScheduleConfig
+from khaosz.trainer.callback import (
+    TrainerCallback, 
+    ProgressBarCallback, 
+    CheckpointCallback, 
+    GradientClippingCallback,
+    SchedulerCallback
+)
 
 
 class Trainer:
@@ -32,6 +37,7 @@ class Trainer:
             ProgressBarCallback(),
             CheckpointCallback(self.train_config.checkpoint_interval),
             GradientClippingCallback(),
+            SchedulerCallback(self.schedule_config),
         ]
         
     def _create_dataloader(self) -> DataLoader:
@@ -72,16 +78,6 @@ class Trainer:
         for group in self.train_config.optimizer.param_groups:
             if "initial_lr" not in group:
                 group["initial_lr"] = group["lr"] 
-            
-        lambda_scheduler_fn = SchedulerFactory.load_schedule_fn(
-            **self.schedule_config.get_kwargs()
-        )
-        
-        scheduler = LambdaLR(
-            self.train_config.optimizer,
-            lambda_scheduler_fn,
-            last_epoch=current_iter - 1 if train_checkpoint else -1
-        )
         
         reamining_steps = self.train_config.n_epoch - current_iter
         total_steps = len(self.train_config.dataset) // self.train_config.batch_size
@@ -114,7 +110,6 @@ class Trainer:
                         self._call_callbacks('on_step_end', current_iter=current_iter)
                     
                     current_iter += 1
-                    scheduler.step()
                 
                 self._call_callbacks('on_epoch_end', epoch=epoch, loss_list=self.checkpoint.loss_list)
                 

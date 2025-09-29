@@ -1,7 +1,9 @@
 from tqdm import tqdm
 from khaosz.core.parameter import Checkpoint
 from torch.nn.utils import clip_grad_norm_
-from typing import cast, TYPE_CHECKING
+from torch.optim.lr_scheduler import LambdaLR
+from typing import Optional, cast, TYPE_CHECKING
+from khaosz.trainer.strategy import ScheduleConfig, SchedulerFactory
 
 if TYPE_CHECKING:
     from khaosz.trainer.trainer import Trainer
@@ -130,3 +132,34 @@ class GradientClippingCallback(TrainerCallback):
             trainer.checkpoint.model.parameters(),
             trainer.train_config.max_grad_norm
         )
+
+
+class SchedulerCallback(TrainerCallback):
+    """
+    Scheduler callback for trainer.
+    """
+    def __init__(self, schedule_config: ScheduleConfig):
+        self.schedule_config = schedule_config
+        self.scheduler: Optional[LambdaLR] = None
+        self.current_iter = 0
+    
+    def on_train_begin(self, trainer: 'Trainer', **kwargs):
+        checkpoint = cast(Checkpoint, kwargs.get('checkpoint'))
+        self.current_iter = len(checkpoint.loss_list)
+        
+        lambda_scheduler_fn = SchedulerFactory.load_schedule_fn(
+            **self.schedule_config.get_kwargs()
+        )
+        
+        self.scheduler = LambdaLR(
+            trainer.train_config.optimizer,
+            lambda_scheduler_fn,
+            last_epoch=self.current_iter - 1
+        )
+    
+    def on_step_end(self, trainer: 'Trainer', **kwargs):
+        _ =  trainer, kwargs
+        
+        if self.scheduler:
+            self.scheduler.step()
+            self.current_iter += 1
