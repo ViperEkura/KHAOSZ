@@ -1,4 +1,3 @@
-import os
 import torch
 from typing import Optional, List
 from torch.utils.data import DataLoader, RandomSampler
@@ -29,7 +28,6 @@ class Trainer:
         )
         self.train_config = train_config
         self.schedule_config = schedule_config
-        
         self.callbacks = callbacks or self._get_default_callbacks()
         
     def _get_default_callbacks(self) -> List[TrainerCallback]:
@@ -49,19 +47,13 @@ class Trainer:
             batch_size=self.train_config.batch_size, 
             sampler=sampler
         )
-        
-    def _save_checkpoint(self):
-        current_iter = len(self.checkpoint.loss_list)
-        save_path = os.path.join(self.train_config.checkpoint_dir, f"iter_{current_iter}")
-        self.checkpoint.optim_state = self.train_config.optimizer.state_dict()
-        self.checkpoint.save(save_path)
 
     def _call_callbacks(self, method_name: str, **kwargs):
         for callback in self.callbacks:
             method = getattr(callback, method_name, None)
             if method:
                 method(self, **kwargs)
-
+        
     def train(
         self,
         train_checkpoint: Optional[Checkpoint] = None

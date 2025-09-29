@@ -1,3 +1,4 @@
+import os
 from tqdm import tqdm
 from khaosz.core.parameter import Checkpoint
 from torch.nn.utils import clip_grad_norm_
@@ -104,6 +105,13 @@ class CheckpointCallback(TrainerCallback):
         self.checkpoint_interval = checkpoint_interval
         self.last_ckpt_iter = 0
     
+    @staticmethod
+    def _save_checkpoint(trainer: 'Trainer'):
+        current_iter = len(trainer.checkpoint.loss_list)
+        save_path = os.path.join(trainer.train_config.checkpoint_dir, f"iter_{current_iter}")
+        trainer.checkpoint.optim_state = trainer.train_config.optimizer.state_dict()
+        trainer.checkpoint.save(save_path)
+    
     def on_train_begin(self, trainer: 'Trainer', **kwargs):
         _ = trainer
         checkpoint = cast(Checkpoint, kwargs.get('checkpoint'))
@@ -112,14 +120,14 @@ class CheckpointCallback(TrainerCallback):
     def on_batch_end(self, trainer: 'Trainer', **kwargs):
         current_iter = kwargs.get('current_iter')
         if current_iter - self.last_ckpt_iter >= self.checkpoint_interval:
-            trainer._save_checkpoint()
+            CheckpointCallback._save_checkpoint(trainer)
             self.last_ckpt_iter = current_iter
     
     def on_train_end(self, trainer: 'Trainer', **kwargs):
         checkpoint = cast(Checkpoint, kwargs.get('checkpoint'))
         current_iter = len(checkpoint.loss_list)
         if current_iter != self.last_ckpt_iter:
-            trainer._save_checkpoint()
+            CheckpointCallback._save_checkpoint(trainer)
 
 
 class GradientClippingCallback(TrainerCallback):
