@@ -109,3 +109,11 @@ class BpeTokenizer:
     @property
     def pad_id(self) -> int:
         return self._tokenizer.token_to_id("<pad>")
+    
+    @property
+    def user_id(self) -> int:
+        return self._tokenizer.token_to_id("<|user|>")
+    
+    @property
+    def system_id(self) -> int:
+        return self._tokenizer.token_to_id("<|system|>")

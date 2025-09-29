@@ -51,7 +51,7 @@ def train(
         "multi_turn": multi_turn,
         "bos_token_id": parameter.tokenizer.bos_id,
         "eos_token_id": parameter.tokenizer.eos_id,
-        "user_token_id":parameter.tokenizer.encode("<|user|>")[0],
+        "user_token_id":parameter.tokenizer.user_id,
         "dpo_beta": dpo_beta
     }
     
