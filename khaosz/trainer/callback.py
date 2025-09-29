@@ -1,8 +1,10 @@
 from tqdm import tqdm
 from khaosz.core.parameter import Checkpoint
-from khaosz.trainer.trainer import Trainer
 from torch.nn.utils import clip_grad_norm_
-from typing import cast
+from typing import cast, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from khaosz.trainer.trainer import Trainer
 
 
 class TrainerCallback:
