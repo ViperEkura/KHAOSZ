@@ -204,9 +204,9 @@ def test_checkpoint_train(test_env):
         dataset=dataset,
         optimizer=optimizer,
         checkpoint_dir=test_env["test_dir"],
-        n_epoch=2,
+        n_epoch=1,
         batch_size=2,
-        checkpoint_interval=5,
+        checkpoint_interval=1,
         accumulation_steps=1,
         max_grad_norm=1.0,
         random_seed=42
@@ -218,13 +218,18 @@ def test_checkpoint_train(test_env):
         pad_token_id=test_env["tokenizer"].pad_id
     )
     schedule_config = CosineScheduleConfig(
-        warmup_steps=100,
-        total_steps=1000
+        warmup_steps=1,
+        total_steps=5
     )
     trainer = Trainer(param, train_config, schedule_config)
     
+    checkpoint = None
+    
     try:
-        trainer.train()
+        checkpoint = trainer.train()
     except Exception:
-        checkpoint = trainer.checkpoint
-        trainer.train(train_checkpoint=checkpoint)
+        pass
+
+    checkpoint = trainer.train(train_checkpoint=checkpoint)
+    assert len(checkpoint.loss_list) == 5 - 1
+    
