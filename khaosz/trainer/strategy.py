@@ -386,24 +386,10 @@ class SchedulerFactory:
                 return max(min_rate, 0.5 * (1.0 + math.cos(math.pi * decay_progress)))
         
         return cosine_schedule
-    
+
     @staticmethod
-    def create_schedule(config: ScheduleConfig) -> Callable[[int], float]:
-        """
-        Create schedule from configuration.
-        
-        Args:
-            config: Schedule configuration instance
-            
-        Returns:
-            Schedule function
-        """
-        config.validate()
-        kwargs = config.get_kwargs()
-        return SchedulerFactory.load_schedule_fn(**kwargs)
-    
-    @staticmethod
-    def load_schedule_fn(**kwargs) -> Callable[[int], float]:
+    def load_schedule_fn(scedule_config: ScheduleConfig) -> Callable[[int], float]:
+        kwargs = scedule_config.get_kwargs()
         schedule_type = kwargs.pop("schedule_type")
         
         if schedule_type == "cosine":

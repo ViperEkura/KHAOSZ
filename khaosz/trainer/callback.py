@@ -154,9 +154,9 @@ class SchedulerCallback(TrainerCallback):
     def on_train_begin(self, trainer: 'Trainer', **kwargs):
         checkpoint = cast(Checkpoint, kwargs.get('checkpoint'))
         self.current_iter = len(checkpoint.loss_list)
-        
+        self.schedule_config.validate()
         lambda_scheduler_fn = SchedulerFactory.load_schedule_fn(
-            **self.schedule_config.get_kwargs()
+            self.schedule_config
         )
         
         self.scheduler = LambdaLR(
