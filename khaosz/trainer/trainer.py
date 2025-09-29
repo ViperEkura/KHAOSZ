@@ -1,11 +1,12 @@
 import torch
 import itertools
 from typing import Optional, List
-from torch.utils.data import DataLoader, RandomSampler
+from torch.utils.data import DataLoader
 
 from khaosz.core import ModelParameter, Checkpoint
+from khaosz.trainer.data_util import RandomSampler
 from khaosz.trainer.strategy import TrainConfig, ScheduleConfig
-from khaosz.trainer.callback import (
+from khaosz.trainer.trainer_callback import (
     TrainerCallback, 
     ProgressBarCallback, 
     CheckpointCallback, 
@@ -42,7 +43,11 @@ class Trainer:
     def _create_dataloader(self, start_index: int = 0) -> DataLoader:
         seed = self.train_config.random_seed
         generator = torch.Generator().manual_seed(seed)
-        sampler = RandomSampler(self.train_config.dataset, generator=generator)
+        sampler = RandomSampler(
+            self.train_config.dataset, 
+            generator=generator,
+            seed=seed
+        )
         dataloader = DataLoader(
             self.train_config.dataset, 
             batch_size=self.train_config.batch_size, 

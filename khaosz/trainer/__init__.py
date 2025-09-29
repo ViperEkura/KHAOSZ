@@ -1,4 +1,4 @@
-from khaosz.trainer.dataset import DatasetLoader
+from khaosz.trainer.data_util import DatasetLoader
 from khaosz.trainer.trainer import Trainer
 from khaosz.trainer.strategy import (
     TrainConfig, 
@@ -7,7 +7,7 @@ from khaosz.trainer.strategy import (
     StrategyFactory,
     SchedulerFactory
 )
-from khaosz.trainer.callback import (
+from khaosz.trainer.trainer_callback import (
     ProgressBarCallback,
     CheckpointCallback,
     TrainerCallback,

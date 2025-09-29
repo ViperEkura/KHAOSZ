@@ -3,7 +3,7 @@ import bisect
 import pickle as pkl
 from abc import ABC, abstractmethod
 from torch import Tensor
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Sampler
 from typing import Callable, List, Dict, Literal, Union
 
 MutiSeg = Dict[str, List[Tensor]]
@@ -265,3 +265,57 @@ class DatasetLoader:
         dataset.load(load_path)
         
         return dataset
+    
+
+class RandomSampler(Sampler[int]):
+    def __init__(self, data_source, generator=None, seed=42):
+        self.data_source = data_source
+        self.seed = seed
+        self.epoch = 0
+        self.current_index = 0
+        self._indices = None
+        
+        if generator is None:
+            self.generator = torch.Generator()
+            self.generator.manual_seed(seed)
+        else:
+            self.generator = generator
+    
+    def _generate_indices(self):
+        n = len(self.data_source)
+        self._indices = torch.randperm(n, generator=self.generator).tolist()
+    
+    def __iter__(self):
+        n = len(self.data_source)
+        
+        if self._indices is None:
+            self._generate_indices()
+        
+        for i in range(self.current_index, n):
+            yield self._indices[i]
+        
+        self.epoch += 1
+        self.current_index = 0
+        self._indices = None
+    
+    def __len__(self):
+        return len(self.data_source) - self.current_index
+    
+    def state_dict(self):
+        return {
+            'epoch': self.epoch,
+            'current_index': self.current_index,
+            'seed': self.seed,
+            'generator_state': self.generator.get_state() if self.generator else None,
+            'indices': self._indices
+        }
+    
+    def load_state_dict(self, state_dict):
+        self.epoch = state_dict['epoch']
+        self.current_index = state_dict['current_index']
+        self.seed = state_dict['seed']
+        
+        if self.generator and state_dict['generator_state'] is not None:
+            self.generator.set_state(state_dict['generator_state'])
+        
+        self._indices = state_dict['indices']
