@@ -87,10 +87,12 @@ class ProgressBarCallback(TrainerCallback):
         )
     
     def on_batch_end(self, trainer: 'Trainer', **kwargs):
+        _ = trainer
         loss = kwargs.get('loss')
+        optimizer = cast(optim.Optimizer, kwargs.get('optimizer'))
         self.progress_bar.set_postfix({
             "loss": f"{loss:.4f}",
-            "lr": f"{trainer.train_config.optimizer.param_groups[0]['lr']:.2e}"
+            "lr": f"{optimizer.param_groups[-1]['lr']:.2e}"
         })
         self.progress_bar.update(1)
     
@@ -180,7 +182,7 @@ class SchedulerCallback(TrainerCallback):
             last_epoch=self.current_iter - 1
         )
     
-    def on_step_end(self, trainer: 'Trainer', **kwargs):
+    def on_batch_end(self, trainer: 'Trainer', **kwargs):
         _ =  trainer, kwargs
         
         if self.scheduler:

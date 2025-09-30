@@ -1,3 +1,4 @@
+import logging
 from typing import Optional, List, cast
 from torch.utils.data import DataLoader
 
@@ -12,6 +13,7 @@ from khaosz.trainer.trainer_callback import (
     SchedulerCallback
 )
 
+logger = logging.getLogger(__name__)
 
 class Trainer:
     def __init__(
@@ -115,12 +117,6 @@ class Trainer:
                 train_kwargs["epoch"] = epoch
                 self._call_callbacks('on_epoch_begin', **train_kwargs)
                 for batch in dataloader:
-                    # batch
-                    self._call_callbacks('on_batch_begin', **train_kwargs)
-                    loss = self.train_config.strategy(batch)
-                    loss.backward()
-                    train_kwargs["loss"] = loss.item()
-                    self._call_callbacks('on_batch_end', **train_kwargs)
                     
                     if train_kwargs["current_iter"] % self.train_config.accumulation_steps == 0:
                         # step
@@ -128,13 +124,21 @@ class Trainer:
                         self.train_config.optimizer.step()
                         self.train_config.optimizer.zero_grad()
                         self._call_callbacks('on_step_end', **train_kwargs)
-                    
+                        
+                    # batch
+                    self._call_callbacks('on_batch_begin', **train_kwargs)
+                    loss = self.train_config.strategy(batch)
+                    train_kwargs["loss"] = loss.item()
                     train_kwargs["current_iter"] += 1
-                
+                    loss.backward()
+                    
+                    self._call_callbacks('on_batch_end', **train_kwargs)
+
                 self._call_callbacks('on_epoch_end', **train_kwargs)
-                
+        
         except Exception as e:
-            raise e
+            logger.error(f"Training failed: {str(e)}", exc_info=True)
+            raise
         finally:
             self._call_callbacks('on_train_end', **train_kwargs)
             return checkpoint
