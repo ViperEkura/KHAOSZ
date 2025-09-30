@@ -159,12 +159,7 @@ class StrategyFactory:
     def load(model, train_type, **kwargs):
         train_strategy: Dict[str, Callable[[], BaseStrategy]] = {
             "seq": lambda: SeqStrategy(model),
-            "sft": lambda: SftStrategy(
-                model, 
-                kwargs.get("bos_token_id"), 
-                kwargs.get("eos_token_id"), 
-                kwargs.get("multi_turn")
-            ),
+            "sft": lambda: SftStrategy(model),
             "dpo": lambda: DpoStrategy(
                 model, 
                 kwargs.get("pad_token_id"), 

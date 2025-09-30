@@ -1,9 +1,12 @@
 import os
+import torch.optim as optim
+
 from tqdm import tqdm
-from khaosz.core.parameter import Checkpoint
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import LambdaLR
 from typing import Optional, cast, TYPE_CHECKING
+from khaosz.core.parameter import Checkpoint
+from khaosz.trainer.data_util import RandomSampler
 from khaosz.trainer.strategy import ScheduleConfig, SchedulerFactory
 
 if TYPE_CHECKING:
@@ -76,7 +79,7 @@ class ProgressBarCallback(TrainerCallback):
     
     def on_epoch_begin(self, trainer: 'Trainer', **kwargs):
         epoch = kwargs.get('epoch')
-        dataloader = trainer._create_dataloader()
+        dataloader = kwargs.get('dataloader')
         self.progress_bar = tqdm(
             dataloader, 
             desc=f"Epoch {epoch+1}/{trainer.train_config.n_epoch}", 
@@ -106,28 +109,36 @@ class CheckpointCallback(TrainerCallback):
         self.last_ckpt_iter = 0
     
     @staticmethod
-    def _save_checkpoint(trainer: 'Trainer'):
-        current_iter = len(trainer.checkpoint.loss_list)
-        save_path = os.path.join(trainer.train_config.checkpoint_dir, f"iter_{current_iter}")
-        trainer.checkpoint.optim_state = trainer.train_config.optimizer.state_dict()
-        trainer.checkpoint.save(save_path)
-    
-    def on_train_begin(self, trainer: 'Trainer', **kwargs):
-        _ = trainer
+    def _save_checkpoint(trainer: 'Trainer', **kwargs):
+        current_iter = kwargs.get('current_iter')
+        random_sampler = cast(RandomSampler, kwargs.get('sampler'))
+        optimizer = cast(optim.Optimizer, kwargs.get('optimizer'))
         checkpoint = cast(Checkpoint, kwargs.get('checkpoint'))
-        self.last_ckpt_iter = len(checkpoint.loss_list)
+        
+        save_path = os.path.join(trainer.train_config.checkpoint_dir, f"iter_{current_iter}")
+        checkpoint.sampler_state = random_sampler.state_dict()
+        checkpoint.optim_state = optimizer.state_dict()
+        
+        checkpoint.sampler_state['epoch'] = kwargs.get('epoch', 0)
+        checkpoint.sampler_state['current_iter'] = kwargs.get('current_iter', 0)
+        
+        checkpoint.save(save_path)
     
     def on_batch_end(self, trainer: 'Trainer', **kwargs):
         current_iter = kwargs.get('current_iter')
+        checkpoint = cast(Checkpoint, kwargs.get('checkpoint'))
+        loss = kwargs.get('loss')
+        checkpoint.loss_list.append(loss)
+        
         if current_iter - self.last_ckpt_iter >= self.checkpoint_interval:
-            CheckpointCallback._save_checkpoint(trainer)
+            CheckpointCallback._save_checkpoint(trainer, **kwargs)
             self.last_ckpt_iter = current_iter
     
     def on_train_end(self, trainer: 'Trainer', **kwargs):
-        checkpoint = cast(Checkpoint, kwargs.get('checkpoint'))
-        current_iter = len(checkpoint.loss_list)
+        current_iter = kwargs.get('current_iter')
         if current_iter != self.last_ckpt_iter:
-            CheckpointCallback._save_checkpoint(trainer)
+            CheckpointCallback._save_checkpoint(trainer, **kwargs)
+            self.last_ckpt_iter = current_iter
 
 
 class GradientClippingCallback(TrainerCallback):
@@ -137,7 +148,7 @@ class GradientClippingCallback(TrainerCallback):
     def on_step_begin(self, trainer: 'Trainer', **kwargs):
         _ = kwargs
         clip_grad_norm_(
-            trainer.checkpoint.model.parameters(),
+            trainer.parameter.model.parameters(),
             trainer.train_config.max_grad_norm
         )
 
@@ -152,8 +163,7 @@ class SchedulerCallback(TrainerCallback):
         self.current_iter = 0
     
     def on_train_begin(self, trainer: 'Trainer', **kwargs):
-        checkpoint = cast(Checkpoint, kwargs.get('checkpoint'))
-        self.current_iter = len(checkpoint.loss_list)
+        self.current_iter = kwargs.get('current_iter')
 
         for group in trainer.train_config.optimizer.param_groups:
             if "initial_lr" not in group:

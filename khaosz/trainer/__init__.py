@@ -8,6 +8,7 @@ from khaosz.trainer.strategy import (
     SchedulerFactory
 )
 from khaosz.trainer.trainer_callback import (
+    TrainerCallback,
     ProgressBarCallback,
     CheckpointCallback,
     TrainerCallback,
@@ -25,6 +26,7 @@ __all__ = [
     "SchedulerFactory",
     
     # callback
+    "TrainerCallback",
     "ProgressBarCallback",
     "CheckpointCallback",
     "TrainerCallback",

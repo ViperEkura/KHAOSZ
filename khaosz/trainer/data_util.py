@@ -53,7 +53,8 @@ def build_attention_mask(input_ids: Tensor, user_token_id: int, multi_turn: bool
     causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=input_ids.device)).bool()
     attention_mask = seq_mask & causal_mask
     
-    return attention_mask
+    # fix the shape  (bsz, 1, seq_len, seq_len) unsqueeze for broadcast
+    return attention_mask.unsqueeze(0)
 
 
 class BaseSegmentFetcher:
@@ -117,10 +118,13 @@ class BaseDataset(Dataset, ABC):
         self.total_samples = 0
         self.device = device
 
-    def save(self, save_path: str):      
+    def save(self, save_path: str):
+        keys = list(self.segments.keys())
+        if not keys:
+            return
+        
         first_item = self.segments[keys[0]]
         segment_size = len(first_item)
-        keys = list(self.segments.keys())
         
         for i in range(segment_size):
             formated_segment = {key: self.segments[key][i] for key in keys}
@@ -272,7 +276,7 @@ class RandomSampler(Sampler[int]):
         self.data_source = data_source
         self.seed = seed
         self.epoch = 0
-        self.current_index = 0
+        self.current_iter = 0
         self._indices = None
         
         if generator is None:
@@ -291,20 +295,21 @@ class RandomSampler(Sampler[int]):
         if self._indices is None:
             self._generate_indices()
         
-        for i in range(self.current_index, n):
+        for i in range(self.current_iter, n):
             yield self._indices[i]
+            self.current_iter += 1
         
         self.epoch += 1
-        self.current_index = 0
         self._indices = None
     
     def __len__(self):
-        return len(self.data_source) - self.current_index
+        n = len(self.data_source)
+        return n - self.current_iter % n
     
     def state_dict(self):
         return {
             'epoch': self.epoch,
-            'current_index': self.current_index,
+            'current_iter': self.current_iter,
             'seed': self.seed,
             'generator_state': self.generator.get_state() if self.generator else None,
             'indices': self._indices
@@ -312,7 +317,7 @@ class RandomSampler(Sampler[int]):
     
     def load_state_dict(self, state_dict):
         self.epoch = state_dict['epoch']
-        self.current_index = state_dict['current_index']
+        self.current_iter = state_dict['current_iter']
         self.seed = state_dict['seed']
         
         if self.generator and state_dict['generator_state'] is not None:
