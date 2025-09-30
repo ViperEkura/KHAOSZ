@@ -20,53 +20,35 @@ class TrainerCallback:
     """
 
     def on_train_begin(self, trainer: 'Trainer', **kwargs):
-        """ 
-        Called at the beginning of training.
-        """
+        """ Called at the beginning of training. """
         _ = trainer, kwargs
     
     def on_train_end(self, trainer: 'Trainer', **kwargs):
-        """ 
-        Called at the end of training.
-        """
+        """ Called at the end of training. """
         _ = trainer, kwargs
 
     def on_epoch_begin(self, trainer: 'Trainer', **kwargs):
-        """ 
-        Called at the beginning of each epoch.
-        """
+        """ Called at the beginning of each epoch. """
         _ = trainer, kwargs
 
     def on_epoch_end(self, trainer: 'Trainer', **kwargs):
-        """ 
-        Called at the end of each epoch.
-        """
+        """  Called at the end of each epoch. """
         _ = trainer, kwargs
 
     def on_batch_begin(self, trainer: 'Trainer', **kwargs):
-        """ 
-        Called at the beginning of each batch.
-        """
+        """ Called at the beginning of each batch. """
         _ = trainer, kwargs
 
     def on_batch_end(self, trainer: 'Trainer', **kwargs):
-        """ 
-        Called at the end of each batch.
-        """
+        """ Called at the end of each batch. """
         _ = trainer, kwargs
 
     def on_step_begin(self, trainer: 'Trainer', **kwargs):
-        """ 
-        Called at the beginning of each step.
-        """
-
+        """ Called at the beginning of each step. """
         _ = trainer, kwargs
 
     def on_step_end(self, trainer: 'Trainer', **kwargs):
-        """ 
-        Called at the end of each step.
-        """
-
+        """ Called at the end of each step."""
         _ = trainer, kwargs
 
 
