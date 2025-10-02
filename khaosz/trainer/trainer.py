@@ -37,8 +37,6 @@ class Trainer:
         ]
 
     def _set_train_kwargs(self, kwargs: dict):
-        used_epochs = 0
-        used_iters = 0
         seed = self.train_config.random_seed
         sampler = RandomSampler(data_source=self.train_config.dataset, seed=seed)
         optim = self.train_config.optimizer
@@ -59,8 +57,6 @@ class Trainer:
         
         if sampler_state: 
             sampler.load_state_dict(sampler_state)
-            used_epochs = sampler_state.get('epoch', 0)
-            used_iters = sampler_state.get('iter', 0)
         
         if optim_state: 
             optim.load_state_dict(optim_state)
@@ -76,8 +72,8 @@ class Trainer:
         
         kwargs["dataloader"] = dataloader
         kwargs["optimizer"] = self.train_config.optimizer
-        kwargs["epoch"] = used_epochs
-        kwargs["current_iter"] = used_iters
+        kwargs["epoch"] = sampler.epoch
+        kwargs["current_iter"] = sampler.current_iter
         kwargs["sampler"] = sampler
         kwargs["checkpoint"] = checkpoint
         

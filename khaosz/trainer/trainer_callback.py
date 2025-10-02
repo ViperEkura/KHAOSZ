@@ -103,9 +103,6 @@ class CheckpointCallback(TrainerCallback):
         checkpoint.sampler_state = random_sampler.state_dict()
         checkpoint.optim_state = optimizer.state_dict()
         
-        checkpoint.sampler_state['epoch'] = kwargs.get('epoch', 0)
-        checkpoint.sampler_state['current_iter'] = kwargs.get('current_iter', 0)
-        
         checkpoint.save(save_path)
     
     def on_batch_end(self, trainer: 'Trainer', **kwargs):

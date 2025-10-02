@@ -295,7 +295,8 @@ class RandomSampler(Sampler[int]):
         if self._indices is None:
             self._generate_indices()
         
-        for i in range(self.current_iter, n):
+        start = self.current_iter % n
+        for i in range(start, n):
             yield self._indices[i]
             self.current_iter += 1
         
@@ -303,8 +304,7 @@ class RandomSampler(Sampler[int]):
         self._indices = None
     
     def __len__(self):
-        n = len(self.data_source)
-        return n - self.current_iter % n
+        return len(self.data_source)
     
     def state_dict(self):
         return {
