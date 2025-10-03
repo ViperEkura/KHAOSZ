@@ -297,8 +297,8 @@ class RandomSampler(Sampler[int]):
         
         start = self.current_iter % n
         for i in range(start, n):
-            yield self._indices[i]
             self.current_iter += 1
+            yield self._indices[i]
         
         self.epoch += 1
         self._indices = None
