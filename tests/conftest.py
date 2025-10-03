@@ -6,11 +6,14 @@ import shutil
 import torch
 
 import pytest
+import matplotlib
 from torch.utils.data import Dataset
 
 from khaosz.core import *
 from khaosz.trainer import *
 from khaosz.trainer.data_util import *
+
+matplotlib.use("Agg")
 
 @pytest.fixture
 def base_test_env():
