@@ -10,8 +10,9 @@ from khaosz.core.generator import EmbeddingEncoderCore, GeneratorCore
 from tokenizers import pre_tokenizers
 
 @pytest.fixture
-def test_env():
-    test_dir = tempfile.mkdtemp()
+def test_env(request: pytest.FixtureRequest):
+    func_name = request.function.__name__
+    test_dir = tempfile.mkdtemp(prefix=f"{func_name}_")
     config_path = os.path.join(test_dir, "config.json")
     tokenizer_path = os.path.join(test_dir, "tokenizer.json")
     model_path = os.path.join(test_dir, "model.safetensors")

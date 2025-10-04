@@ -16,8 +16,9 @@ from khaosz.trainer.data_util import *
 matplotlib.use("Agg")
 
 @pytest.fixture
-def base_test_env():
-    test_dir = tempfile.mkdtemp()
+def base_test_env(request: pytest.FixtureRequest):
+    func_name = request.function.__name__
+    test_dir = tempfile.mkdtemp(prefix=f"{func_name}_")
     config_path = os.path.join(test_dir, "config.json")
     
     n_dim_choices = [8, 16, 32]
@@ -41,12 +42,13 @@ def base_test_env():
     
     with open(config_path, 'w') as f:
         json.dump(config, f)
-    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     transformer_config = TransformerConfig().load(config_path)
-    model = Transformer(transformer_config)
+    model = Transformer(transformer_config).to(device=device)
     tokenizer = BpeTokenizer()
     
     yield {
+        "device": device,
         "test_dir": test_dir,
         "config_path": config_path,
         "transformer_config": transformer_config,

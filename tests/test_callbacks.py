@@ -37,7 +37,7 @@ def test_callback_integration(base_test_env, random_dataset):
         def on_epoch_end(self, trainer, **kwargs):
             callback_calls.append('on_epoch_end')
     
-    train_config.strategy = StrategyFactory.load(base_test_env["model"], "seq")
+    train_config.strategy = StrategyFactory.load(base_test_env["model"], "seq", base_test_env["device"])
     model_parameter = ModelParameter(
         base_test_env["model"], 
         base_test_env["tokenizer"], 

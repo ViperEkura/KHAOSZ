@@ -41,7 +41,7 @@ def test_early_stopping_simulation(base_test_env):
         random_seed=42
     )
     
-    train_config.strategy = StrategyFactory.load(base_test_env["model"], "seq")
+    train_config.strategy = StrategyFactory.load(base_test_env["model"], "seq", base_test_env["device"])
     model_parameter = ModelParameter(
         base_test_env["model"], 
         base_test_env["tokenizer"], 

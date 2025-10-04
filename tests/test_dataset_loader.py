@@ -34,7 +34,6 @@ def test_dataset_loader_random_paths(base_test_env):
         train_type="seq", 
         load_path=pkl_paths, 
         max_len=64, 
-        device="cpu"
     )
     assert loaded_dataset is not None
     assert len(loaded_dataset) > 0
@@ -62,7 +61,6 @@ def test_dpo_strategy_with_random_data(base_test_env):
         train_type="dpo", 
         load_path=pkl_path, 
         max_len=64, 
-        device="cpu"
     )
     
     assert dpo_dataset is not None

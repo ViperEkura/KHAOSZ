@@ -47,12 +47,7 @@ def test_gradient_accumulation(base_test_env, random_dataset):
             warmup_steps=10,
             total_steps=20
         )
-        
-        train_config.strategy = StrategyFactory.load(
-            base_test_env["model"], 
-            "seq"
-        )
-        
+        train_config.strategy = StrategyFactory.load(base_test_env["model"], "seq", base_test_env["device"])
         model_parameter = ModelParameter(
             base_test_env["model"], 
             base_test_env["tokenizer"], 
