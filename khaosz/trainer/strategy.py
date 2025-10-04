@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.optim import Optimizer
 from torch.utils.data import Dataset
-from typing import Any, Literal, Tuple, Callable, Dict
+from typing import Any, Literal, Optional, Tuple, Callable, Dict
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
 
@@ -176,56 +176,7 @@ class StrategyFactory:
         }
         strategy = train_strategy[train_type]()
         return strategy
-    
 
-@dataclass
-class TrainConfig:
-    
-    strategy: BaseStrategy = field(
-        default=None,
-        metadata={"help": "Training strategy."}
-    )
-    dataset: Dataset = field(
-        default=None,
-        metadata={"help": "Dataset for training."}
-    )
-    optimizer: Optimizer = field(
-        default=None,
-        metadata={"help": "Optimizer for training."}
-    )
-    checkpoint_dir: str = field(
-        default="./checkpoint",
-        metadata={"help": "Checkpoint directory."}
-    )
-    n_epoch: int = field(
-        default=1,
-        metadata={"help": "Number of epochs for training."}
-    )
-    batch_size: int = field(
-        default=4,
-        metadata={"help": "Batch size for training."}
-    )
-    checkpoint_interval: int = field(
-        default=5000,
-        metadata={"help": "Number of iterations between checkpoints."}
-    )
-    accumulation_steps: int = field(
-        default=1,
-        metadata={"help": "Number of iterations between steps."}
-    )
-    max_grad_norm: float = field(
-        default=1.0,
-        metadata={"help": "Maximum gradient norm."}
-    )
-    random_seed: int = field(
-        default=3407,
-        metadata={"help": "Random seed."}
-    )
-
-    def get_kwargs(self)-> Dict[str, Any]:
-        config_dict = asdict(self)
-        return {k: v for k, v in config_dict.items() if v is not None}
-    
 
 @dataclass
 class ScheduleConfig(ABC):

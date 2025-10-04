@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from khaosz.trainer.trainer import Trainer
 
 
-class TrainerCallback:
+class TrainCallback:
     """ 
     Callback interface for trainer.
     and we use '_' to ignore unused parameters.
@@ -52,7 +52,7 @@ class TrainerCallback:
         _ = trainer, kwargs
 
 
-class ProgressBarCallback(TrainerCallback):
+class ProgressBarCallback(TrainCallback):
     """ 
     Progress bar callback for trainer.
     """
@@ -84,7 +84,7 @@ class ProgressBarCallback(TrainerCallback):
             self.progress_bar.close()
 
 
-class CheckpointCallback(TrainerCallback):
+class CheckpointCallback(TrainCallback):
     """ 
     Checkpoint callback for trainer.
     """
@@ -122,7 +122,7 @@ class CheckpointCallback(TrainerCallback):
             self.last_ckpt_iter = current_iter
 
 
-class GradientClippingCallback(TrainerCallback):
+class GradientClippingCallback(TrainCallback):
     """ 
     Gradient clipping callback for trainer.
     """
@@ -134,7 +134,7 @@ class GradientClippingCallback(TrainerCallback):
         )
 
 
-class SchedulerCallback(TrainerCallback):
+class SchedulerCallback(TrainCallback):
     """
     Scheduler callback for trainer.
     """

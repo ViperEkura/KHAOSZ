@@ -2,9 +2,10 @@ import logging
 from typing import Optional, List
 
 from khaosz.core import ModelParameter, Checkpoint
-from khaosz.trainer.strategy import TrainConfig, ScheduleConfig
-from khaosz.trainer.trainer_callback import (
-    TrainerCallback, 
+from khaosz.trainer.strategy import ScheduleConfig
+from khaosz.trainer.train_config import TrainConfig
+from khaosz.trainer.train_callback import (
+    TrainCallback, 
     ProgressBarCallback, 
     CheckpointCallback, 
     GradientClippingCallback,
@@ -20,14 +21,14 @@ class Trainer:
         parameter: ModelParameter,
         train_config: TrainConfig,
         schedule_config: ScheduleConfig,
-        callbacks: Optional[List[TrainerCallback]] = None
+        callbacks: Optional[List[TrainCallback]] = None
     ):
         self.parameter = parameter
         self.train_config = train_config
         self.schedule_config = schedule_config
         self.callbacks = callbacks or self._get_default_callbacks()
 
-    def _get_default_callbacks(self) -> List[TrainerCallback]:
+    def _get_default_callbacks(self) -> List[TrainCallback]:
         return [
             ProgressBarCallback(),
             CheckpointCallback(self.train_config.checkpoint_interval),
@@ -44,16 +45,7 @@ class Trainer:
                 .build())
     
     def _call_callbacks(self, method_name: str, context: TrainContext):
-        kwargs = {
-            'dataloader': context.dataloader,
-            'optimizer': context.optimizer,
-            'sampler': context.sampler,
-            'epoch': context.epoch,
-            'current_iter': context.current_iter,
-            'loss': context.loss,
-            'checkpoint': context.checkpoint
-        }
-        
+        kwargs = context.asdict()
         for callback in self.callbacks:
             method = getattr(callback, method_name, None)
             if method:

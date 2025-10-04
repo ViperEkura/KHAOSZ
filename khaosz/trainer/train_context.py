@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields
 from typing import Optional, Self, TYPE_CHECKING
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
@@ -11,13 +11,17 @@ if TYPE_CHECKING:
 
 @dataclass
 class TrainContext:
-    dataloader: DataLoader
-    optimizer: Optimizer
-    sampler: RandomSampler
-    epoch: int
-    current_iter: int
-    loss: float
-    checkpoint: Checkpoint
+    dataloader: DataLoader = field(default=None)
+    optimizer: Optimizer = field(default=None)
+    sampler: RandomSampler = field(default=None)
+    epoch: int = field(default=0)
+    current_iter: int = field(default=0)
+    loss: float = field(default=0.0)
+    checkpoint: Checkpoint = field(default=None)
+    
+    def asdict(self) -> dict:
+        return {field.name: getattr(self, field.name) 
+                for field in fields(self)}
 
 
 class TrainContextBuilder:
@@ -82,7 +86,10 @@ class TrainContextBuilder:
         dataloader = DataLoader(
             self.trainer.train_config.dataset, 
             batch_size=self.trainer.train_config.batch_size, 
-            sampler=self._context.sampler
+            sampler=self._context.sampler,
+            num_workers=self.trainer.train_config.num_workers,
+            pin_memory=self.trainer.train_config.pin_memory,
+            prefetch_factor=self.trainer.train_config.prefetch_factor
         )
         self._context.dataloader = dataloader
         return self

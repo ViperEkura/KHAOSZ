@@ -1,22 +1,21 @@
 from khaosz.trainer.data_util import DatasetLoader
 from khaosz.trainer.trainer import Trainer
+from khaosz.trainer.train_config import TrainConfig
 from khaosz.trainer.strategy import (
-    TrainConfig, 
     CosineScheduleConfig, 
     SgdrScheduleConfig,
     StrategyFactory,
     SchedulerFactory
 )
-from khaosz.trainer.trainer_callback import (
-    TrainerCallback,
+from khaosz.trainer.train_callback import (
+    TrainCallback,
     ProgressBarCallback,
     CheckpointCallback,
-    TrainerCallback,
+    TrainCallback,
     SchedulerCallback
 )
 
 __all__ = [
-    # strategy
     "DatasetLoader",
     "Trainer",
     "TrainConfig",
@@ -26,9 +25,9 @@ __all__ = [
     "SchedulerFactory",
     
     # callback
-    "TrainerCallback",
+    "TrainCallback",
     "ProgressBarCallback",
     "CheckpointCallback",
-    "TrainerCallback",
+    "TrainCallback",
     "SchedulerCallback",
 ]
