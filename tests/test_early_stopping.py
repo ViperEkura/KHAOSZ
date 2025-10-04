@@ -5,32 +5,12 @@ from khaosz.core import *
 from khaosz.trainer import *
 from khaosz.trainer.data_util import *
 
-def test_early_stopping_simulation(base_test_env):
+def test_early_stopping_simulation(base_test_env, early_stopping_dataset):
     """Simulate early stopping behavior"""
-    class EarlyStoppingDataset(Dataset):
-        def __init__(self, length=10, stop_after=5):
-            self.length = length
-            self.stop_after = stop_after
-            self.count = 0
-            
-        def __len__(self):
-            return self.length
-            
-        def __getitem__(self, idx):
-            self.count += 1
-            if self.count == self.stop_after:
-                raise RuntimeError("Simulated early stopping")
-            
-            return {
-                "input_ids": torch.randint(0, 1000, (64,)),
-                "target_ids": torch.randint(0, 1000, (64,))
-            }
-    
-    dataset = EarlyStoppingDataset()
     
     optimizer = torch.optim.AdamW(base_test_env["model"].parameters())
     train_config = TrainConfig(
-        dataset=dataset,
+        dataset=early_stopping_dataset,
         optimizer=optimizer,
         checkpoint_dir=base_test_env["test_dir"],
         n_epoch=2,

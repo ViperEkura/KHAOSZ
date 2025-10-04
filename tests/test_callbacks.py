@@ -27,7 +27,7 @@ def test_callback_integration(base_test_env, random_dataset):
     # Create custom callbacks to track calls
     callback_calls = []
     
-    class TrackingCallback(TrainerCallback):
+    class TrackingCallback(TrainCallback):
         def on_train_begin(self, trainer, **kwargs):
             callback_calls.append('on_train_begin')
         
