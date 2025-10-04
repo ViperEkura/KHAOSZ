@@ -110,12 +110,11 @@ class MutiSegmentFetcher:
 
 
 class BaseDataset(Dataset, ABC):
-    def __init__(self, chunk_size: int, device: str):
+    def __init__(self, chunk_size: int):
         super().__init__()
         self.segments: MutiSeg = {}
         self.chunk_size = chunk_size
         self.total_samples = 0
-        self.device = device
 
     def save(self, save_path: str):
         keys = list(self.segments.keys())
@@ -148,9 +147,8 @@ class SeqDataset(BaseDataset):
     def __init__(
         self, 
         chunk_size, 
-        device='cuda'
     ):
-        super().__init__(chunk_size, device)
+        super().__init__(chunk_size)
         self.fetcher = MutiSegmentFetcher(self.segments)
 
     def _fetch_data(self, begin_idx: int, end_idx: int) -> Tensor:
@@ -160,8 +158,8 @@ class SeqDataset(BaseDataset):
         begin_idx = index * self.chunk_size 
         end_idx = min(begin_idx + self.chunk_size, self.total_samples - 1)
         
-        x = self._fetch_data(begin_idx, end_idx).to(device=self.device, dtype=torch.long)
-        y = self._fetch_data(begin_idx + 1, end_idx + 1).to(device=self.device, dtype=torch.long)
+        x = self._fetch_data(begin_idx, end_idx).to(dtype=torch.long)
+        y = self._fetch_data(begin_idx + 1, end_idx + 1).to(dtype=torch.long)
         
         return {"input_ids": x, "target_ids": y}
     
@@ -175,9 +173,8 @@ class SftDataset(BaseDataset):
         eos_token_id, 
         user_token_id, 
         multi_turn=False, 
-        device='cuda'
     ):
-        super().__init__(chunk_size, device)
+        super().__init__(chunk_size)
         self.fetcher = MutiSegmentFetcher(self.segments)
         self.bos_token_id = bos_token_id
         self.eos_token_id = eos_token_id
@@ -191,8 +188,8 @@ class SftDataset(BaseDataset):
         begin_idx = index * self.chunk_size 
         end_idx = min(begin_idx + self.chunk_size, self.total_samples - 1)
         
-        x = self._fetch_data(begin_idx, end_idx, "sequence").to(device=self.device, dtype=torch.long)
-        y = self._fetch_data(begin_idx + 1, end_idx + 1, "sequence").to(device=self.device, dtype=torch.long)
+        x = self._fetch_data(begin_idx, end_idx, "sequence").to(dtype=torch.long)
+        y = self._fetch_data(begin_idx + 1, end_idx + 1, "sequence").to(dtype=torch.long)
         
         # fix the eos_token_id bug(change target_ids to input_ids)
         loss_mask = build_loss_mask(x, self.bos_token_id, self.eos_token_id)
@@ -202,8 +199,8 @@ class SftDataset(BaseDataset):
 
 
 class DpoDataset(BaseDataset):
-    def __init__(self, chunk_size: int, device="cuda"):
-        super().__init__(chunk_size, device)
+    def __init__(self, chunk_size: int):
+        super().__init__(chunk_size)
         self.fetcher = MutiSegmentFetcher(self.segments)
 
     def _fetch_data(self, begin_idx: int, end_idx: int, key: str) -> Tensor:
@@ -213,17 +210,17 @@ class DpoDataset(BaseDataset):
         start_idx = index * self.chunk_size
         end_idx = min(start_idx + self.chunk_size, self.total_samples - 1)
         
-        chosen = self._fetch_data(start_idx, end_idx, "chosen").to(device=self.device, dtype=torch.long)
-        rejected = self._fetch_data(start_idx, end_idx, "rejected").to(device=self.device, dtype=torch.long)
-        chosen_mask = self._fetch_data(start_idx, end_idx, "chosen_mask").to(device=self.device, dtype=torch.bool)
-        rejected_mask = self._fetch_data(start_idx, end_idx, "rejected_mask").to(device=self.device, dtype=torch.bool)
+        chosen = self._fetch_data(start_idx, end_idx, "chosen").to(dtype=torch.long)
+        rejected = self._fetch_data(start_idx, end_idx, "rejected").to(dtype=torch.long)
+        chosen_mask = self._fetch_data(start_idx, end_idx, "chosen_mask").to(dtype=torch.bool)
+        rejected_mask = self._fetch_data(start_idx, end_idx, "rejected_mask").to(dtype=torch.bool)
 
         return {"chosen": chosen, "rejected": rejected, "chosen_mask": chosen_mask, "rejected_mask": rejected_mask}
 
 
 class PpoDataset(BaseDataset):
-    def __init__(self, chunk_size: int, device="cuda"):
-        super().__init__(chunk_size, device)
+    def __init__(self, chunk_size: int):
+        super().__init__(chunk_size)
         self.fetcher = MutiSegmentFetcher(self.segments)
 
     def _fetch_data(self, begin_idx: int, end_idx: int, key: str) -> Tensor:
@@ -233,12 +230,11 @@ class PpoDataset(BaseDataset):
 
         begin_idx = index * self.chunk_size
         end_idx = min(begin_idx + self.chunk_size, self.total_samples - 1)
-        
 
-        input_ids =  self._fetch_data(begin_idx, end_idx, "input_ids").to(self.device),
-        actions = self._fetch_data(begin_idx, end_idx, "actions").to(self.device),
-        logprobs = self._fetch_data(begin_idx, end_idx, "logprobs").to(self.device),
-        rewards =  self._fetch_data(begin_idx, end_idx, "rewards").to(self.device)
+        input_ids =  self._fetch_data(begin_idx, end_idx, "input_ids"),
+        actions = self._fetch_data(begin_idx, end_idx, "actions"),
+        logprobs = self._fetch_data(begin_idx, end_idx, "logprobs"),
+        rewards =  self._fetch_data(begin_idx, end_idx, "rewards")
         
         return {"input_ids": input_ids, "actions": actions, "logprobs": logprobs, "rewards": rewards}
     
@@ -249,23 +245,21 @@ class DatasetLoader:
         train_type: Literal["seq", "sft", "dpo"],
         load_path: Union[str, List[str]],
         max_len: int, 
-        device: str,
         **kwargs
         ) -> BaseDataset:
         
-        dataset_router: Dict[str, Callable[[int, torch.device], BaseDataset]] = {
-            "seq": lambda m_len, device: SeqDataset(m_len, device=device),
-            "sft": lambda m_len, device: SftDataset(
-                m_len, 
-                device=device,
+        dataset_router: Dict[str, Callable[[int], BaseDataset]] = {
+            "seq": lambda max_len: SeqDataset(max_len),
+            "sft": lambda max_len: SftDataset(
+                max_len, 
                 bos_token_id=kwargs.get("bos_token_id"),
                 eos_token_id=kwargs.get("eos_token_id"),
                 user_token_id=kwargs.get("user_token_id"),
                 multi_turn=kwargs.get("multi_turn")
             ),
-            "dpo": lambda m_len, device: DpoDataset(m_len, device=device),
+            "dpo": lambda max_len: DpoDataset(max_len),
         }
-        dataset = dataset_router[train_type](max_len, device)
+        dataset = dataset_router[train_type](max_len)
         dataset.load(load_path)
         
         return dataset

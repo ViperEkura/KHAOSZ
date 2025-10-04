@@ -32,10 +32,14 @@ def get_logprobs(model:nn.Module, input_ids: Tensor, mask: Tensor, pad_token_id:
     
     return (token_logprobs * valid_mask).sum(dim=-1)
 
+def move_to_device(batch:Dict[str, Tensor], device: str) -> Any:
+    return {key: value.to(device, non_blocking=True) for key, value in batch.items()}
+
 
 class BaseStrategy(ABC):
-    def __init__(self, model: nn.Module):
+    def __init__(self, model: nn.Module, device: str):
         self.model = model
+        self.device = device
     
     @abstractmethod
     def compute_loss(self, batch: Dict[str, Tensor]) -> Tensor:
@@ -46,10 +50,11 @@ class BaseStrategy(ABC):
 
 
 class SeqStrategy(BaseStrategy):
-    def __init__(self, model):
-        super().__init__(model)
+    def __init__(self, model, device):
+        super().__init__(model, device)
     
     def compute_loss(self, batch: Dict[str, Tensor]) -> Tensor:
+        batch = move_to_device(batch, self.device)
         input_ids, target_ids = batch["input_ids"], batch["target_ids"]
         B, L = input_ids.size()
         logits: Tensor = self.model(input_ids=input_ids)["logits"]
@@ -62,10 +67,11 @@ class SeqStrategy(BaseStrategy):
     
 
 class SftStrategy(BaseStrategy):
-    def __init__(self, model: nn.Module):
-        super().__init__(model)
+    def __init__(self, model, device):
+        super().__init__(model, device)
     
     def compute_loss(self, batch: Dict[str, Tensor]) -> Tensor:
+        batch = move_to_device(batch, self.device)
         input_ids, target_ids = batch["input_ids"], batch["target_ids"]
         loss_mask, attn_mask = batch["loss_mask"], batch["attn_mask"]
         
@@ -89,8 +95,8 @@ class SftStrategy(BaseStrategy):
 
 
 class DpoStrategy(BaseStrategy):
-    def __init__(self, model, pad_token_id, beta):
-        super().__init__(model)
+    def __init__(self, model, device, pad_token_id, beta):
+        super().__init__(model, device)
         ref_model = copy.deepcopy(self.model)
         ref_model.requires_grad_(False)
         ref_model.eval()
@@ -100,6 +106,7 @@ class DpoStrategy(BaseStrategy):
         self.beta = beta
         
     def compute_loss(self, batch: Tuple[Tensor, ...]) -> Tensor:
+        batch = move_to_device(batch, self.device)
         good_ids, bad_ids = batch["chosen"], batch["rejected"]
         good_mask, bad_mask = batch["chosen_mask"], batch["rejected_mask"]
         
@@ -156,12 +163,13 @@ class PpoStrategy(BaseStrategy):
 
 class StrategyFactory:
     
-    def load(model, train_type, **kwargs):
+    def load(model, train_type, device, **kwargs):
         train_strategy: Dict[str, Callable[[], BaseStrategy]] = {
-            "seq": lambda: SeqStrategy(model),
-            "sft": lambda: SftStrategy(model),
+            "seq": lambda: SeqStrategy(model, device),
+            "sft": lambda: SftStrategy(model, device),
             "dpo": lambda: DpoStrategy(
                 model, 
+                device,
                 kwargs.get("pad_token_id"), 
                 kwargs.get("dpo_beta")
             )
