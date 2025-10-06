@@ -66,7 +66,7 @@ def train(
     dataset = DatasetLoader.load(
         train_type=train_type,
         load_path=cache_files,
-        max_len=parameter.config.m_len
+        max_len=parameter.config.m_len,
         **kwargs
     )
     
