@@ -28,13 +28,13 @@ def test_callback_integration(base_test_env, random_dataset):
     callback_calls = []
     
     class TrackingCallback(TrainCallback):
-        def on_train_begin(self, trainer, **kwargs):
+        def on_train_begin(self, trainer, context):
             callback_calls.append('on_train_begin')
         
-        def on_batch_end(self, trainer, **kwargs):
+        def on_batch_end(self, trainer, context):
             callback_calls.append('on_batch_end')
         
-        def on_epoch_end(self, trainer, **kwargs):
+        def on_epoch_end(self, trainer, context):
             callback_calls.append('on_epoch_end')
     
     train_config.strategy = StrategyFactory.load(base_test_env["model"], "seq", base_test_env["device"])

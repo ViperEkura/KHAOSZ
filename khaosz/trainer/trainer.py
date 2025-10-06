@@ -45,11 +45,10 @@ class Trainer:
                 .build())
     
     def _call_callbacks(self, method_name: str, context: TrainContext):
-        kwargs = context.asdict()
         for callback in self.callbacks:
             method = getattr(callback, method_name, None)
             if method:
-                method(self, **kwargs)
+                method(self, context)
 
     def train(self, checkpoint: Optional[Checkpoint] = None) -> Checkpoint:
         context = self._build_train_context(checkpoint)

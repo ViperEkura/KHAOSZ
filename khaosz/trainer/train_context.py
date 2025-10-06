@@ -44,7 +44,7 @@ class TrainContextBuilder:
                 tokenizer=self.trainer.parameter.tokenizer,
                 config=self.trainer.parameter.config,
                 sampler_state=None,
-                optim_state=None,
+                optimizer_state=None,
                 loss_list=[]
             )
         self._context.checkpoint = checkpoint
@@ -72,13 +72,13 @@ class TrainContextBuilder:
     def with_optimizer(self) -> Self:
         optimizer = self.trainer.train_config.optimizer
         
-        if self._context.checkpoint and self._context.checkpoint.optim_state:
-            optimizer.load_state_dict(self._context.checkpoint.optim_state)
+        if self._context.checkpoint and self._context.checkpoint.optimizer_state:
+            optimizer.load_state_dict(self._context.checkpoint.optimizer_state)
         
         self._context.optimizer = optimizer
         
         if self._context.checkpoint:
-            self._context.checkpoint.optim_state = optimizer.state_dict()
+            self._context.checkpoint.optimizer_state = optimizer.state_dict()
         
         return self
     
