@@ -1,6 +1,5 @@
 import torch
 
-from torch.utils.data import Dataset
 from khaosz.core import *
 from khaosz.trainer import *
 from khaosz.trainer.data_util import *
