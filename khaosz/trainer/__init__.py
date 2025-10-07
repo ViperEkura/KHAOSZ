@@ -12,7 +12,8 @@ from khaosz.trainer.train_callback import (
     ProgressBarCallback,
     CheckpointCallback,
     TrainCallback,
-    SchedulerCallback
+    SchedulerCallback,
+    StepMonitorCallback
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "CheckpointCallback",
     "TrainCallback",
     "SchedulerCallback",
+    "StepMonitorCallback"
 ]

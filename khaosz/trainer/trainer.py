@@ -86,6 +86,7 @@ class Trainer:
         
         except Exception as e:
             logger.error(f"Training failed: {str(e)}", exc_info=True)
+            self._call_callbacks('on_error', context)
             raise
         finally:
             self._call_callbacks('on_train_end', context)
