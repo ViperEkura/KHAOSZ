@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 from khaosz.config import *
 from khaosz.trainer import *
 
@@ -13,10 +14,9 @@ def test_early_stopping_simulation(base_test_env, early_stopping_dataset):
         checkpoint_dir=base_test_env["test_dir"],
         n_epoch=2,
         batch_size=2,
-        checkpoint_interval=1,
-        accumulation_steps=1,
-        max_grad_norm=1.0,
-        random_seed=42
+        checkpoint_interval=2,
+        accumulation_steps=2,
+        random_seed=np.random.randint(1e4),
     )
     
     train_config.strategy = StrategyFactory.load(base_test_env["model"], "seq", base_test_env["device"])
