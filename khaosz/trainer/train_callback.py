@@ -8,7 +8,7 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import LambdaLR
 from typing import List, Optional, Protocol, TYPE_CHECKING
 
-from khaosz.trainer.strategy import ScheduleConfig, SchedulerFactory
+from khaosz.config import ScheduleConfig
 from khaosz.trainer.metric_util import (
     grad_max,
     grad_min,
@@ -78,17 +78,8 @@ class SchedulerCallback(TrainCallback):
         for group in trainer.train_config.optimizer.param_groups:
             if "initial_lr" not in group:
                 group["initial_lr"] = group["lr"] 
-
-        self.schedule_config.validate()
-        lambda_scheduler_fn = SchedulerFactory.load_schedule_fn(
-            self.schedule_config
-        )
         
-        self.scheduler = LambdaLR(
-            trainer.train_config.optimizer,
-            lambda_scheduler_fn,
-            last_epoch=context.current_iter - 1
-        )
+        self.scheduler = context.scheduler
     
     def on_batch_end(self, trainer: 'Trainer', context: 'TrainContext'):
         _ = trainer, context
@@ -106,8 +97,8 @@ class CheckpointCallback(TrainCallback):
     
     def _save_checkpoint(self, trainer: 'Trainer', context: 'TrainContext'):
         save_path = os.path.join(trainer.train_config.checkpoint_dir, f"iter_{context.current_iter}")
-        # context.checkpoint.scheduler_state = context.sampler.state_dict()
         context.checkpoint.optimizer_state = context.optimizer.state_dict()
+        context.checkpoint.scheduler_state = context.scheduler.state_dict()
         context.checkpoint.save(save_path)
         self.last_ckpt_iter = context.current_iter
     

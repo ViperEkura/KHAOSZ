@@ -3,9 +3,9 @@ import argparse
 import torch
 
 from torch.optim import AdamW
-from khaosz.core import ParameterLoader, Checkpoint
-from khaosz.trainer import Trainer, DatasetLoader, TrainConfig, CosineScheduleConfig
-from khaosz.trainer import StrategyFactory
+from khaosz.config import ParameterLoader, Checkpoint, TrainConfig, CosineScheduleConfig
+from khaosz.trainer import Trainer, StrategyFactory
+from khaosz.data import DatasetLoader
 
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))

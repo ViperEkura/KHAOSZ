@@ -1,9 +1,11 @@
 import logging
 from typing import Optional, List
-
-from khaosz.config import ModelParameter, Checkpoint
-from khaosz.trainer.strategy import ScheduleConfig
-from khaosz.config.train_config import TrainConfig
+from khaosz.config import (
+    ModelParameter, 
+    Checkpoint, 
+    ScheduleConfig,
+    TrainConfig
+)
 from khaosz.trainer.train_callback import (
     TrainCallback, 
     ProgressBarCallback, 
@@ -14,6 +16,7 @@ from khaosz.trainer.train_callback import (
 from khaosz.trainer.train_context import TrainContext, TrainContextBuilder
 
 logger = logging.getLogger(__name__)
+
 
 class Trainer:
     def __init__(
@@ -36,7 +39,7 @@ class Trainer:
             SchedulerCallback(self.schedule_config),
         ]
         
-    def _build_train_context(self, checkpoint: Optional[Checkpoint]) -> TrainContext:
+    def _build_context(self, checkpoint: Optional[Checkpoint]) -> TrainContext:
         return (TrainContextBuilder(self)
                 .with_checkpoint(checkpoint)
                 .with_optimizer()
@@ -51,8 +54,7 @@ class Trainer:
                 method(self, context)
 
     def train(self, checkpoint: Optional[Checkpoint] = None) -> Checkpoint:
-        context = self._build_train_context(checkpoint)
-        
+        context = self._build_context(checkpoint)
         self._call_callbacks('on_train_begin', context)
         
         try:

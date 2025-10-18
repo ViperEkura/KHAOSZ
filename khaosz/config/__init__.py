@@ -1,6 +1,8 @@
 from khaosz.config.model_config import TransformerConfig
 from khaosz.config.param_config import BaseModelIO, ModelParameter, Checkpoint, ParameterLoader
+from khaosz.config.schedule_config import ScheduleConfig, CosineScheduleConfig, SgdrScheduleConfig
 from khaosz.config.train_config import TrainConfig
+
 
 __all__ = [
     "BaseModelIO",
@@ -8,5 +10,9 @@ __all__ = [
     "Checkpoint",
     "ParameterLoader",
     "TransformerConfig",
-    "TrainConfig"
+    "TrainConfig",
+    
+    "ScheduleConfig",
+    "CosineScheduleConfig",
+    "SgdrScheduleConfig",
 ]
