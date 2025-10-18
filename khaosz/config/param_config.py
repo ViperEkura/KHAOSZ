@@ -8,8 +8,9 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Self, Union
 from pathlib import Path
 
-from khaosz.core.tokenizer import BpeTokenizer
-from khaosz.core.transformer import TransformerConfig, Transformer
+from khaosz.data.tokenizer import BpeTokenizer
+from khaosz.config.model_config import TransformerConfig
+from khaosz.model.transformer import Transformer
 
 
 class BaseModelIO:
@@ -99,18 +100,18 @@ class Checkpoint(BaseModelIO):
         metadata={"help": "Transformer model."}
     )
     tokenizer: BpeTokenizer = field(
-        default_factory=BpeTokenizer,
+        default=None,
         metadata={"help": "Tokenizer for the model."}
     )
     config: TransformerConfig = field(
-        default_factory=TransformerConfig,
+        default=None,
         metadata={"help": "Transformer model configuration."}
     )
     optimizer_state: Dict[str, Any] = field(
         default=None,
         metadata={"help": "Optimizer state."}
     )
-    sampler_state: Dict[str, Any] = field(
+    scheduler_state: Dict[str, Any] = field(
         default=None,
         metadata={"help": "Sampler state."}
     )
@@ -142,10 +143,10 @@ class Checkpoint(BaseModelIO):
         # Save optimizer state
         with open(str(paths["optimizer_state"]), "wb") as f:
             pkl.dump(self.optimizer_state, f)
-            
+        
         # Save sampler state
         with open(str(paths["sampler_state"]), "wb") as f:
-            pkl.dump(self.sampler_state, f)
+            pkl.dump(self.scheduler_state, f)
     
     def load_training_state(self, load_dir: Union[str, Path]) -> Self:
         paths = self._get_training_paths(load_dir)
@@ -163,7 +164,7 @@ class Checkpoint(BaseModelIO):
         # Load sampler state
         if paths["sampler_state"].exists():
             with open(str(paths["sampler_state"]), "rb") as f:
-                self.sampler_state = pkl.load(f)
+                self.scheduler_state = pkl.load(f)
         
         return self
     
@@ -173,7 +174,7 @@ class Checkpoint(BaseModelIO):
             return
         
         current_iter = len(self.loss_list)
-            
+        
         plt.figure(figsize=(10, 6))
         plt.plot(self.loss_list)
         plt.title(f"Training Loss - Iteration {current_iter}")

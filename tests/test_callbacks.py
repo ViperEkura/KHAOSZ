@@ -1,8 +1,7 @@
 import torch
 
-from khaosz.core import *
+from khaosz.config import *
 from khaosz.trainer import *
-from khaosz.trainer.data_util import *
 
 def test_callback_integration(base_test_env, random_dataset):
     """Test that all callbacks are properly integrated"""

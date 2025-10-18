@@ -1,9 +1,10 @@
 import torch
 import numpy as np
 
-from khaosz.core import *
+
+from khaosz.config import *
 from khaosz.trainer import *
-from khaosz.trainer.data_util import *
+from khaosz.data.data_util import *
 
 def test_different_batch_sizes(base_test_env, random_dataset):
     """Test training with different batch sizes"""

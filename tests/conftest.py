@@ -9,9 +9,11 @@ import pytest
 import matplotlib
 from torch.utils.data import Dataset
 
-from khaosz.core import *
-from khaosz.trainer import *
-from khaosz.trainer.data_util import *
+from khaosz.config.model_config import TransformerConfig
+from khaosz.data.data_util import build_attention_mask, build_loss_mask
+from khaosz.data.tokenizer import BpeTokenizer
+from khaosz.model.transformer import Transformer
+
 
 matplotlib.use("Agg")
 

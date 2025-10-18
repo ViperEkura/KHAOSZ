@@ -1,14 +1,16 @@
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from torch.utils.data import Dataset
 from torch.optim import Optimizer
-from khaosz.trainer.strategy import BaseStrategy
+
+if TYPE_CHECKING:
+    from khaosz.trainer.strategy import BaseStrategy
 
 
 @dataclass
 class TrainConfig:
     
-    strategy: BaseStrategy = field(
+    strategy: "BaseStrategy" = field(
         default=None,
         metadata={"help": "Training strategy."}
     )

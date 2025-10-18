@@ -263,58 +263,39 @@ class DatasetLoader:
         dataset.load(load_path)
         
         return dataset
-    
 
-class RandomSampler(Sampler[int]):
-    def __init__(self, data_source, generator=None, seed=42):
-        self.data_source = data_source
-        self.seed = seed
-        self.epoch = 0
-        self.current_iter = 0
-        self._indices = None
+
+class ResumeableRandomSampler(Sampler[int]):
+    def __init__(self, data_source, start_epoch=0, start_iter=0, seed=42):
+        self.num_samples = len(data_source)
+        self.epoch = start_epoch
+        self.iter = start_iter
         
-        if generator is None:
-            self.generator = torch.Generator()
-            self.generator.manual_seed(seed)
-        else:
-            self.generator = generator
+        generator = torch.Generator()
+        generator.manual_seed(seed)
+        
+        self.generator = generator
+        self._indices = None 
     
-    def _generate_indices(self):
-        n = len(self.data_source)
-        self._indices = torch.randperm(n, generator=self.generator).tolist()
+    def _get_indices(self):
+        for _ in range(self.epoch):
+            _ = torch.randperm(self.num_samples, generator=self.generator)
+        
+        current_epoch_indices = torch.randperm(self.num_samples, generator=self.generator).tolist()
+        self._indices = current_epoch_indices[self.iter % self.num_samples:]
     
     def __iter__(self):
-        n = len(self.data_source)
-        
         if self._indices is None:
-            self._generate_indices()
+            self._get_indices()
         
-        start = self.current_iter % n
-        for i in range(start, n):
-            self.current_iter += 1
-            yield self._indices[i]
+        for i in self._indices:
+            self.iter += 1
+            yield i
         
         self.epoch += 1
         self._indices = None
     
     def __len__(self):
-        return len(self.data_source)
-    
-    def state_dict(self):
-        return {
-            'epoch': self.epoch,
-            'current_iter': self.current_iter,
-            'seed': self.seed,
-            'generator_state': self.generator.get_state() if self.generator else None,
-            'indices': self._indices
-        }
-    
-    def load_state_dict(self, state_dict):
-        self.epoch = state_dict['epoch']
-        self.current_iter = state_dict['current_iter']
-        self.seed = state_dict['seed']
-        
-        if self.generator and state_dict['generator_state'] is not None:
-            self.generator.set_state(state_dict['generator_state'])
-        
-        self._indices = state_dict['indices']
+        if self._indices is None:
+            self._get_indices()
+        return len(self._indices)

@@ -5,8 +5,11 @@ import shutil
 import pytest
 import tempfile
 import safetensors.torch as st
-from khaosz.core import *
-from khaosz.core.generator import EmbeddingEncoderCore, GeneratorCore
+from khaosz.trainer import *
+from khaosz.config import *
+from khaosz.model import *
+from khaosz.data import *
+from khaosz.inference.generator import EmbeddingEncoderCore, GeneratorCore
 from tokenizers import pre_tokenizers
 
 @pytest.fixture

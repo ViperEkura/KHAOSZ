@@ -1,8 +1,7 @@
 import torch
-
-from khaosz.core import *
+from khaosz.config import *
 from khaosz.trainer import *
-from khaosz.trainer.data_util import *
+
 
 def test_early_stopping_simulation(base_test_env, early_stopping_dataset):
     """Simulate early stopping behavior"""

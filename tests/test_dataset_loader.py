@@ -3,9 +3,9 @@ import torch
 import pickle
 import numpy as np
 
-from khaosz.core import *
 from khaosz.trainer import *
-from khaosz.trainer.data_util import *
+from khaosz.data.data_util import *
+
 
 def test_dataset_loader_random_paths(base_test_env):
     """Test dataset loader with multiple random paths"""

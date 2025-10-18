@@ -106,7 +106,7 @@ class CheckpointCallback(TrainCallback):
     
     def _save_checkpoint(self, trainer: 'Trainer', context: 'TrainContext'):
         save_path = os.path.join(trainer.train_config.checkpoint_dir, f"iter_{context.current_iter}")
-        context.checkpoint.sampler_state = context.sampler.state_dict()
+        # context.checkpoint.scheduler_state = context.sampler.state_dict()
         context.checkpoint.optimizer_state = context.optimizer.state_dict()
         context.checkpoint.save(save_path)
         self.last_ckpt_iter = context.current_iter
