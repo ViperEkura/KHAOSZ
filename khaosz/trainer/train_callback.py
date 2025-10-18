@@ -96,20 +96,22 @@ class CheckpointCallback(TrainCallback):
         self.last_ckpt_iter = 0
     
     def _save_checkpoint(self, trainer: 'Trainer', context: 'TrainContext'):
-        save_path = os.path.join(trainer.train_config.checkpoint_dir, f"iter_{context.current_iter}")
+        save_path = os.path.join(trainer.train_config.checkpoint_dir, f"iter_{context.batch_iter}")
         context.checkpoint.optimizer_state = context.optimizer.state_dict()
         context.checkpoint.scheduler_state = context.scheduler.state_dict()
+        context.checkpoint.epoch = context.epoch
+        context.checkpoint.batch_iter = context.batch_iter
         context.checkpoint.save(save_path)
-        self.last_ckpt_iter = context.current_iter
+        self.last_ckpt_iter = context.batch_iter
     
     def on_batch_end(self, trainer: 'Trainer', context: 'TrainContext'):
         context.checkpoint.loss_list.append(context.loss)
         
-        if context.current_iter - self.last_ckpt_iter >= self.checkpoint_interval:
+        if context.batch_iter - self.last_ckpt_iter >= self.checkpoint_interval:
             self._save_checkpoint(trainer, context)
             
     def on_train_end(self, trainer: 'Trainer', context: 'TrainContext'):
-        if context.current_iter != self.last_ckpt_iter:
+        if context.batch_iter != self.last_ckpt_iter:
             self._save_checkpoint(trainer, context)
 
 
@@ -177,7 +179,7 @@ class StepMonitorCallback(TrainCallback):
         log_data = {
             "timestamp": time.strftime('%Y-%m-%d %H:%M:%S'),
             "epoch": context.epoch,
-            "iter": context.current_iter,
+            "iter": context.batch_iter,
             "metrics": self.metrics,
         }
         
@@ -207,7 +209,7 @@ class StepMonitorCallback(TrainCallback):
         """ Logs training information to console and file. """
         log_data = self._handle_info(trainer, context)
         try:
-            log_file = self.log_dir / f"log_epoch_{context.epoch}_iter_{context.current_iter}.json"
+            log_file = self.log_dir / f"log_epoch_{context.epoch}_iter_{context.batch_iter}.json"
             with open(log_file, 'a') as f:
                 json.dump(log_data, f, indent=4)
         except Exception:
@@ -218,4 +220,3 @@ class StepMonitorCallback(TrainCallback):
             self._handle_log(trainer, context)
         
         self.step_num += 1
-        

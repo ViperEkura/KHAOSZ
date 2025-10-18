@@ -65,7 +65,7 @@ class Trainer:
                 self._call_callbacks('on_epoch_begin', context)
                 
                 for batch in context.dataloader:
-                    if context.current_iter % self.train_config.accumulation_steps == 0:
+                    if context.batch_iter % self.train_config.accumulation_steps == 0:
                         # 2. step
                         self._call_callbacks('on_step_begin', context)
                         self.train_config.optimizer.step()
@@ -76,7 +76,7 @@ class Trainer:
                     self._call_callbacks('on_batch_begin', context)
                     loss = self.train_config.strategy(batch)
                     context.loss = loss.item()
-                    context.current_iter += 1
+                    context.batch_iter += 1
                     
                     # to make the loss normalized by accumulation steps
                     normalized_loss = loss / self.train_config.accumulation_steps

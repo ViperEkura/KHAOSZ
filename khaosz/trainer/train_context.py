@@ -17,7 +17,7 @@ class TrainContext:
     scheduler: BaseScheduler = field(default=None)
     checkpoint: Checkpoint = field(default=None)
     epoch: int = field(default=0)
-    current_iter: int = field(default=0)
+    batch_iter: int = field(default=0)
     loss: float = field(default=0.0)
     
     def asdict(self) -> dict:
@@ -37,6 +37,10 @@ class TrainContextBuilder:
                 tokenizer=self.trainer.parameter.tokenizer,
                 config=self.trainer.parameter.config,
             )
+        else:
+            self._context.epoch = checkpoint.epoch
+            self._context.batch_iter = checkpoint.batch_iter
+        
         self._context.checkpoint = checkpoint
         return self
     
@@ -70,10 +74,12 @@ class TrainContextBuilder:
         return self
     
     def with_dataloader(self) -> Self:
+        # fix: change batch level batch_iter to sample level offset
+        sampler_offset = self._context.batch_iter * self.trainer.train_config.batch_size
         resumeable_sampler = ResumeableRandomSampler(
             data_source=self.trainer.train_config.dataset,
             start_epoch=self._context.epoch,
-            start_iter=self._context.current_iter,
+            start_iter=sampler_offset,
             seed=self.trainer.train_config.random_seed
         )
         

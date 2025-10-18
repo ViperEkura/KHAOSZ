@@ -273,14 +273,15 @@ class ResumeableRandomSampler(Sampler[int]):
         
         generator = torch.Generator()
         generator.manual_seed(seed)
+
+        # consume  previous epochs
+        for _ in range(start_epoch):
+            torch.randperm(self.num_samples, generator=generator)
         
         self.generator = generator
-        self._indices = None 
+        self._indices = None
     
     def _get_indices(self):
-        for _ in range(self.epoch):
-            _ = torch.randperm(self.num_samples, generator=self.generator)
-        
         current_epoch_indices = torch.randperm(self.num_samples, generator=self.generator).tolist()
         self._indices = current_epoch_indices[self.iter % self.num_samples:]
     

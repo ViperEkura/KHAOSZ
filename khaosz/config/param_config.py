@@ -119,6 +119,14 @@ class Checkpoint(BaseModelIO):
         default_factory=list,
         metadata={"help": "List of training losses."}
     )
+    epoch: int = field(
+        default=0,
+        metadata={"help": "Current epoch."}
+    )
+    batch_iter: int = field(
+        default=0,
+        metadata={"help": "Current iteration."}
+    )
     
     def _get_training_paths(self, directory: Union[str, Path]) -> dict[str, Path]:
         paths = self._get_file_paths(directory)
@@ -173,11 +181,11 @@ class Checkpoint(BaseModelIO):
         if not self.loss_list:
             return
         
-        current_iter = len(self.loss_list)
+        batch_iter = len(self.loss_list)
         
         plt.figure(figsize=(10, 6))
         plt.plot(self.loss_list)
-        plt.title(f"Training Loss - Iteration {current_iter}")
+        plt.title(f"Training Loss - Iteration {batch_iter}")
         plt.xlabel("Batch")
         plt.ylabel("Loss")
         plt.grid(True)
@@ -234,5 +242,3 @@ class ParameterLoader:
             loss_list=loss_list or [],
             optimizer_state=optimizer
         )
-
-
