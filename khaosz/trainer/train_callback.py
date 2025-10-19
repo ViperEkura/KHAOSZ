@@ -161,7 +161,8 @@ class StepMonitorCallback(TrainCallback):
         Args:
             log_dir: Directory to save log files. If None, logs won't be saved to file.
             log_interval: Log every N steps
-            metrics: List of metrics to log. Supported: ['loss', 'lr', 'grad_norm', 'grad_std', grad_max', 'grad_min', 'grad_mean', 'grad_nan_num']
+            metrics: List of metrics to log. Supported: ['loss', 'lr', 'grad_norm', 'grad_std',
+                    grad_max', 'grad_min', 'grad_mean', 'grad_nan_num']
             custom_handlers: List of custom log handler functions
             json_log: Whether to save logs in JSON format
         """

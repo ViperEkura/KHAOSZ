@@ -34,6 +34,14 @@ class TrainConfig:
         default=4,
         metadata={"help": "Batch size for training."}
     )
+    start_epoch: int = field(
+        default=0,
+        metadata={"help": "Start epoch for training."}
+    )
+    start_batch: int = field(
+        default=0,
+        metadata={"help": "Start batch iteration for training."}
+    )
     checkpoint_interval: int = field(
         default=5000,
         metadata={"help": "Number of iterations between checkpoints."}

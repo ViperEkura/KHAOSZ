@@ -28,9 +28,10 @@ class TrainContext:
 class TrainContextBuilder:
     def __init__(self, trainer: 'Trainer'):
         self.trainer = trainer
-        self._context = TrainContext()
+        self._context: TrainContext = None
     
     def with_checkpoint(self, checkpoint: Optional[Checkpoint]) -> Self:
+        self._context = TrainContext()
         if checkpoint is None:
             checkpoint = Checkpoint(
                 model=self.trainer.parameter.model,
@@ -38,13 +39,17 @@ class TrainContextBuilder:
                 config=self.trainer.parameter.config,
             )
         else:
-            self._context.epoch = checkpoint.epoch
-            self._context.batch_iter = checkpoint.batch_iter
+            # resume from the assigned checkpoint or assigned iteration
+            self._context.epoch = max(checkpoint.epoch, self.trainer.train_config.start_epoch)
+            self._context.batch_iter = max(checkpoint.batch_iter, self.trainer.train_config.start_batch)
         
         self._context.checkpoint = checkpoint
         return self
     
     def with_optimizer(self) -> Self:
+        if self._context is None:
+            raise RuntimeError("Must call with_checkpoint() before with_optimizer()")
+        
         optimizer = self.trainer.train_config.optimizer
         
         if self._context.checkpoint and self._context.checkpoint.optimizer_state:
@@ -58,7 +63,9 @@ class TrainContextBuilder:
         return self
     
     def with_scheduler(self) -> Self:
-        # the build order has any problem ?
+        if not hasattr(self._context, 'optimizer') or self._context.optimizer is None:
+            raise RuntimeError("Must call with_optimizer() before with_scheduler()")
+
         optimizer = self.trainer.train_config.optimizer
         schedule_config = self.trainer.schedule_config
         scheduler = SchedulerFactory.load_scheduler(optimizer, schedule_config)

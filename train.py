@@ -24,6 +24,8 @@ def train(
     max_lr: int,
     n_epoch: int,
     batch_size: int,
+    start_epoch: int,
+    start_batch: int,
     accumulation_steps: int,
     warmup_steps: int,
     checkpoint_interval: int,
@@ -94,6 +96,8 @@ def train(
         checkpoint_dir=checkpoint_dir,
         n_epoch=n_epoch,
         batch_size=batch_size,
+        start_epoch=start_epoch,
+        start_batch=start_batch,
         checkpoint_interval=checkpoint_interval,
         accumulation_steps=accumulation_steps,
         max_grad_norm=max_grad_norm,
@@ -135,6 +139,8 @@ if __name__ == "__main__":
     parser.add_argument("--random_seed", type=int, default=3407, help="Random seed for reproducibility.")
     
     # other configs
+    parser.add_argument("--start_epoch", type=int, default=0, help="Start epoch for training.")
+    parser.add_argument("--start_batch", type=int, default=0, help="Start batch for training.")
     parser.add_argument("--resume_from_checkpoint", type=bool, default=False, help="train from checkpoint or not.")
     parser.add_argument("--multi_turn", type=bool, default=False, help="Whether to use multi-turn convsersation training.")
     parser.add_argument("--dpo_beta", type=float, default=0.1, help="DPO beta value.")
