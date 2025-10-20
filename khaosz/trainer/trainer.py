@@ -35,7 +35,7 @@ class Trainer:
         return [
             ProgressBarCallback(),
             CheckpointCallback(self.train_config.checkpoint_interval),
-            GradientClippingCallback(),
+            GradientClippingCallback(self.train_config.max_grad_norm),
             SchedulerCallback(self.schedule_config),
         ]
         

@@ -60,9 +60,12 @@ class GradientClippingCallback(TrainCallback):
     """ 
     Gradient clipping callback for trainer.
     """
+    def __init__(self, max_grad_norm: float):
+        self.max_grad_norm = max_grad_norm
+    
     def on_step_begin(self, trainer: 'Trainer', context: 'TrainContext'):
         _ = context
-        clip_grad_norm_(trainer.parameter.model.parameters(), trainer.train_config.max_grad_norm)
+        clip_grad_norm_(trainer.parameter.model.parameters(), self.max_grad_norm)
 
 
 class SchedulerCallback(TrainCallback):
