@@ -55,7 +55,7 @@ def test_schedule_factory_random_configs():
             total_steps=np.random.randint(1000, 5000),
             min_rate=np.random.uniform(0.01, 0.1)
         ),
-        SgdrScheduleConfig(
+        SGDRScheduleConfig(
             warmup_steps=np.random.randint(50, 200),
             cycle_length=np.random.randint(500, 2000),
             t_mult=np.random.randint(1, 3),

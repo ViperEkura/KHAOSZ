@@ -59,7 +59,7 @@ class CosineScheduleConfig(ScheduleConfig):
 
 
 @dataclass
-class SgdrScheduleConfig(ScheduleConfig):
+class SGDRScheduleConfig(ScheduleConfig):
     cycle_length: int = field(
         default=1000,
         metadata={"help": "Length of the first cycle in steps."}
