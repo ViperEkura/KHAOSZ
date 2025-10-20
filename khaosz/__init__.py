@@ -1,7 +1,7 @@
 __version__ = "1.3.0"
 __author__ = "ViperEkura"
 
-from khaosz.khaosz import Khaosz
+from khaosz.api import Khaosz
 from khaosz.config import (
     TransformerConfig,
     ParameterLoader,
@@ -33,14 +33,21 @@ from khaosz.trainer import (
 )
 
 __all__ = [
-    # model
     "Khaosz",
     
-    # module
     "Transformer",
+    
+    "Retriever",
+    "SemanticTextSplitter",
+    "PriorityTextSplitter",
+    
     "TransformerConfig",
-    "BpeTokenizer",
     "ParameterLoader",
+    "TrainConfig",
+    
+    "DatasetLoader",
+    "BpeTokenizer",
+    
     "TextGenerator",
     "ChatGenerator",
     "StreamGenerator",
@@ -48,15 +55,7 @@ __all__ = [
     "RetrievalGenerator",
     "EmbeddingEncoder",
     
-    # trainer
     "Trainer",
-    "DatasetLoader",  # 保持在 __all__ 中，但来源是 khaosz.data
-    "TrainConfig",
     "StrategyFactory",
-    "SchedulerFactory",
-    
-    # utils
-    "Retriever",
-    "SemanticTextSplitter",
-    "PriorityTextSplitter",
+    "SchedulerFactory"
 ]
