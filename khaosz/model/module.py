@@ -117,12 +117,14 @@ class GQA(nn.Module):
         n_dim: int, 
         n_head: int, 
         n_kvhead: int, 
+        layer_id: int
     ):
         super().__init__()
         assert n_dim % n_head == 0
         assert n_head % n_kvhead == 0
         
         self.head_dim = n_dim // n_head
+        self.layer_id = layer_id
         self.n_dim = n_dim
         self.n_heads = n_head
         self.n_kvheads = n_kvhead
@@ -150,14 +152,14 @@ class GQA(nn.Module):
         
         if kv_cache is not None:
             k_cache, v_cache = kv_cache
-
+            
             # copy to cache
-            k_cache[:bsz, start_pos:start_pos + seq_len] = k
-            v_cache[:bsz, start_pos:start_pos + seq_len] = v
+            k_cache[:bsz, self.layer_id, start_pos:start_pos + seq_len] = k
+            v_cache[:bsz, self.layer_id, start_pos:start_pos + seq_len] = v
             
             # get cache
-            k = k_cache[:bsz, :start_pos + seq_len]
-            v = v_cache[:bsz, :start_pos + seq_len]
+            k = k_cache[:bsz, self.layer_id, :start_pos + seq_len]
+            v = v_cache[:bsz, self.layer_id, :start_pos + seq_len]
         
         k, v = repeat_kv(k, self.n_rep), repeat_kv(v, self.n_rep)
         
@@ -175,9 +177,9 @@ class GQA(nn.Module):
     
 
 class DecoderBlock(nn.Module):
-    def __init__(self, n_dim, n_head, d_ffn, n_kvhead, norm_eps):
+    def __init__(self, n_dim, n_head, d_ffn, n_kvhead, norm_eps, layer_id):
         super().__init__()
-        self.attention = GQA(n_dim, n_head, n_kvhead)
+        self.attention = GQA(n_dim, n_head, n_kvhead, layer_id)
         self.norm_attn = RMSNorm(n_dim, norm_eps)
         self.ffn = MLP(n_dim, d_ffn)
         self.norm_ffn = RMSNorm(n_dim, norm_eps)

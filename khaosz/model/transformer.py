@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 from torch import Tensor
 from torch.nn import init
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 from khaosz.config.model_config import TransformerConfig
 from khaosz.model.module import DecoderBlock, RMSNorm, get_rotary_emb
@@ -68,14 +68,8 @@ class Transformer(nn.Module):
         super().__init__()
         self.embedding = nn.Parameter(torch.empty(config.vocab_size, config.n_dim))
         self.layers = nn.ModuleList([
-            DecoderBlock(
-                config.n_dim, 
-                config.n_head, 
-                config.d_ffn, 
-                config.n_kvhead, 
-                config.norm_eps
-            )
-            for _ in range(config.n_layer)
+            DecoderBlock(config.n_dim, config.n_head, config.d_ffn, config.n_kvhead, config.norm_eps, layer_id)
+            for layer_id in range(config.n_layer)
         ])
         self.norm = RMSNorm(config.n_dim, config.norm_eps)
         self.freq_cis = get_rotary_emb(config.n_dim // config.n_head, config.m_len)
@@ -85,7 +79,7 @@ class Transformer(nn.Module):
         self, 
         input_ids: Tensor, 
         input_mask: Optional[Tensor]=None,
-        persistent_key_values: Optional[List[Tuple[Tensor, Tensor]]]=None,
+        persistent_key_values: Optional[Tuple[Tensor, Tensor]]=None,
         start_pos: int = 0
     ) -> Tensor:
         assert input_ids.ndim == 2
@@ -105,9 +99,8 @@ class Transformer(nn.Module):
             dtype=x.dtype
         )
         
-        for i, layer in enumerate(self.layers):
-            kv_cache = persistent_key_values[i] if persistent_key_values else None
-            x = layer(x, freqs_cis, attn_mask, kv_cache, start_pos)
+        for layer in self.layers:
+            x = layer(x, freqs_cis, attn_mask, persistent_key_values, start_pos)
         
         hidden_states = self.norm(x)        
         logits = F.linear(hidden_states,  self.embedding)

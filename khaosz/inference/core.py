@@ -173,34 +173,25 @@ class KVCacheManager:
         self.device = device
         self.dtype = dtype
         
-        self._kv_cache: List[Tuple[Tensor, Tensor]] = None
+        self._kv_cache: Tuple[Tensor, Tensor] = None
         self._seq_mask: Tensor = None
         self._initialize()
 
     def _initialize(self):
-        self._kv_cache = []
-        for _ in range(self.num_layers):
-            k_cache = torch.zeros(
-                (self.batch_size, self.max_len, self.num_heads, self.head_dim),
-                device=self.device, dtype=self.dtype
-            )
-            v_cache = torch.zeros(
-                (self.batch_size, self.max_len, self.num_heads, self.head_dim),
-                device=self.device, dtype=self.dtype
-            )
-            self._kv_cache.append((k_cache, v_cache))
-        
-        self._seq_mask = torch.ones(
-            (self.batch_size, self.max_len),
-            device=self.device, dtype=torch.bool
+        k_cache = torch.zeros(
+            (self.batch_size, self.num_layers, self.max_len, self.num_heads, self.head_dim),
+            device=self.device, dtype=self.dtype
         )
+        v_cache = torch.zeros(
+            (self.batch_size, self.num_layers, self.max_len, self.num_heads, self.head_dim),
+            device=self.device, dtype=self.dtype
+        )
+        self._kv_cache = (k_cache, v_cache)
+        self._seq_mask = torch.ones((self.batch_size, self.max_len), device=self.device, dtype=torch.bool)
 
-    def update(self, active_mask: Tensor):
-        for i in range(self.num_layers):
-            k_cache, v_cache = self._kv_cache[i]
-            new_k_cache, new_v_cache = k_cache[active_mask], v_cache[active_mask]
-            self._kv_cache[i] = (new_k_cache, new_v_cache)
-        
+    def update(self, active_mask: Tensor):        
+        k_cache, v_cache = self._kv_cache
+        self._kv_cache = (k_cache[active_mask], v_cache[active_mask])
         self._seq_mask = self._seq_mask[active_mask]
 
     def reset(self, full_reset=False):
@@ -215,7 +206,7 @@ class KVCacheManager:
         bool_mask = (input_ids != pad_id)
         self._seq_mask[: batch_size, : seq_len] = bool_mask
 
-    def get_kvcache(self) -> List[Tuple[Tensor, Tensor]]:
+    def get_kvcache(self) -> Tuple[Tensor, Tensor]:
         return self._kv_cache
     
     def get_seq_mask(self) -> Tensor:        
