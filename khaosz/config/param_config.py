@@ -100,11 +100,11 @@ class Checkpoint(BaseModelIO):
         metadata={"help": "Transformer model."}
     )
     tokenizer: BpeTokenizer = field(
-        default=None,
+        default_factory=BpeTokenizer,
         metadata={"help": "Tokenizer for the model."}
     )
     config: TransformerConfig = field(
-        default=None,
+        default_factory=TransformerConfig,
         metadata={"help": "Transformer model configuration."}
     )
     optimizer_state: Dict[str, Any] = field(
