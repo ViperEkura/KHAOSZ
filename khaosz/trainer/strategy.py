@@ -68,11 +68,10 @@ class SftStrategy(BaseStrategy):
     
     def compute_loss(self, batch: Dict[str, Tensor]) -> Tensor:
         batch = move_to_device(batch, self.device)
-        input_ids, target_ids = batch["input_ids"], batch["target_ids"]
-        loss_mask, attn_mask = batch["loss_mask"], batch["attn_mask"]
+        input_ids, target_ids, loss_mask = batch["input_ids"], batch["target_ids"], batch["loss_mask"]
         
         ignore_index = -100
-        logits = self.model(input_ids=input_ids, input_mask=attn_mask)["logits"]
+        logits = self.model(input_ids=input_ids)["logits"]
         target_ids = target_ids.masked_fill(loss_mask == 0, ignore_index)
         
         loss = F.cross_entropy(

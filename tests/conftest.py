@@ -10,7 +10,6 @@ import matplotlib
 from torch.utils.data import Dataset
 
 from khaosz.config.model_config import TransformerConfig
-from khaosz.data.data_util import build_attention_mask, build_loss_mask
 from khaosz.data.tokenizer import BpeTokenizer
 from khaosz.model.transformer import Transformer
 
@@ -46,14 +45,12 @@ class MultiTurnDataset(Dataset):
     def __getitem__(self, idx):
         input_ids = torch.randint(0, self.vocab_size, (self.max_length,))
         target_ids = torch.randint(0, self.vocab_size, (self.max_length,))
-        loss_mask = build_loss_mask(input_ids, 0, 1)
-        attn_mask = build_attention_mask(input_ids, 2, True)
+        loss_mask = torch.randint(0, 1, (self.max_length,))
 
         return {
             "input_ids": input_ids,
             "target_ids": target_ids,
             "loss_mask": loss_mask,
-            "attn_mask": attn_mask,
         }
 
 

@@ -61,7 +61,6 @@ def train(
         "bos_token_id": parameter.tokenizer.bos_id,
         "eos_token_id": parameter.tokenizer.eos_id,
         "pad_token_id": parameter.tokenizer.pad_id,
-        "user_token_id":parameter.tokenizer.user_id,
     }
     
     strategy = StrategyFactory.load(

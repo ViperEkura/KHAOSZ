@@ -31,7 +31,6 @@ def test_multi_turn_training(base_test_env, multi_turn_dataset):
         base_test_env["device"],
         bos_token_id=2,
         eos_token_id=3,
-        user_token_id=1,
         multi_turn=True
     )
     

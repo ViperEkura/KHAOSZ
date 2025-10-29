@@ -4,7 +4,7 @@ import pickle as pkl
 from abc import ABC, abstractmethod
 from torch import Tensor
 from torch.utils.data import Dataset, Sampler
-from typing import Callable, List, Dict, Literal, Union
+from typing import Callable, List, Dict, Literal, Optional, Union
 
 MutiSeg = Dict[str, List[Tensor]]
 Seg = Dict[str, Tensor]
@@ -24,36 +24,6 @@ def load_pkl_files(paths: List[str]):
         total_samples += pkl_file[first_key].numel()
     
     return segments, total_samples
-
-def build_attention_mask(input_ids: Tensor, user_token_id: int, multi_turn: bool) -> Tensor:
-    seq_len = input_ids.size(0)
-    turn_id = input_ids.eq(user_token_id).cumsum(dim=-1)
-    
-    iq = turn_id.view(seq_len, 1)
-    ik = turn_id.view(1, seq_len)
-    
-    # fix the causual attention mask(iq >= ik condition)
-    seq_mask = (iq >= ik) if multi_turn else (iq == ik)
-    attention_mask = torch.tril(seq_mask)
-    
-    # fix the shape  (bsz, 1, seq_len, seq_len) unsqueeze for broadcast
-    return attention_mask.unsqueeze(0)
-
-def build_loss_mask(input_ids: Tensor, bos_token_id: int, eos_token_id: int) -> Tensor:
-    token_markers = torch.zeros_like(input_ids, dtype=torch.int8)
-    
-    is_bos_token = input_ids.eq(bos_token_id)
-    is_eos_token = input_ids.eq(eos_token_id)
-    
-    # fix the eos_token_id bug(change target_ids to input_ids)
-    token_markers[is_bos_token] = 1
-    token_markers[is_eos_token] = -1 
-    
-    cumulative_markers = torch.cumsum(token_markers, dim=-1)
-    min_cumulative = cumulative_markers.min(dim=-1, keepdim=True).values
-    loss_mask = cumulative_markers - min_cumulative
-    
-    return loss_mask.to(dtype=torch.bool)
 
 
 class BaseSegmentFetcher:
@@ -111,11 +81,12 @@ class MutiSegmentFetcher:
 
 
 class BaseDataset(Dataset, ABC):
-    def __init__(self, chunk_size: int):
+    def __init__(self, chunk_size: int, step_size: int):
         super().__init__()
         self.segments: MutiSeg = {}
         self.chunk_size = chunk_size
-        self.total_samples = 0
+        self.step_size = step_size
+        self.total_samples = None
 
     def save(self, save_path: str):
         keys = list(self.segments.keys())
@@ -140,16 +111,15 @@ class BaseDataset(Dataset, ABC):
         raise NotImplementedError
         
     def __len__(self) -> int:
-        assert self.total_samples // self.chunk_size > 0
-        return self.total_samples // self.chunk_size
+        assert self.total_samples is not None
+        if self.total_samples < self.chunk_size:
+            return 0
+        return (self.total_samples - self.chunk_size) // self.step_size + 1
     
 
 class SeqDataset(BaseDataset):
-    def __init__(
-        self, 
-        chunk_size, 
-    ):
-        super().__init__(chunk_size)
+    def __init__(self, chunk_size: int, step_size: int):
+        super().__init__(chunk_size, step_size)
         self.fetcher = MutiSegmentFetcher(self.segments)
 
     def _fetch_data(self, begin_idx: int, end_idx: int) -> Tensor:
@@ -167,41 +137,27 @@ class SeqDataset(BaseDataset):
     
     
 class SftDataset(BaseDataset):
-    def __init__(
-        self, 
-        chunk_size, 
-        bos_token_id, 
-        eos_token_id, 
-        user_token_id, 
-        multi_turn=False, 
-    ):
-        super().__init__(chunk_size)
+    def __init__(self, chunk_size: int, step_size: int):
+        super().__init__(chunk_size, step_size)
         self.fetcher = MutiSegmentFetcher(self.segments)
-        self.bos_token_id = bos_token_id
-        self.eos_token_id = eos_token_id
-        self.user_token_id = user_token_id
-        self.multi_turn = multi_turn
-    
-    def _fetch_data(self, begin_idx: int, end_idx: int) -> Tensor:
-        return self.fetcher.key_fetch(begin_idx, end_idx, "sequence")
+
+    def _fetch_data(self, begin_idx: int, end_idx: int, key: str) -> Tensor:
+        return self.fetcher.key_fetch(begin_idx, end_idx, key)
     
     def __getitem__(self, index):
         begin_idx = min(index * self.chunk_size, self.total_samples - self.chunk_size - 1)
         end_idx = begin_idx + self.chunk_size
         
-        x = self._fetch_data(begin_idx, end_idx).to(dtype=torch.long)
-        y = self._fetch_data(begin_idx + 1, end_idx + 1).to(dtype=torch.long)
+        x = self._fetch_data(begin_idx, end_idx, "sequence").to(dtype=torch.long)
+        y = self._fetch_data(begin_idx + 1, end_idx + 1, "sequence").to(dtype=torch.long)
+        loss_mask = self._fetch_data(begin_idx + 1, end_idx + 1, "loss_mask").to(dtype=torch.bool)
         
-        # fix the eos_token_id bug(change target_ids to input_ids)
-        loss_mask = build_loss_mask(x, self.bos_token_id, self.eos_token_id)
-        attn_mask = build_attention_mask(x, self.user_token_id, self.multi_turn)
-        
-        return {"input_ids": x, "target_ids": y, "loss_mask": loss_mask, "attn_mask": attn_mask}
+        return {"input_ids": x, "target_ids": y, "loss_mask": loss_mask}
 
 
 class DpoDataset(BaseDataset):
-    def __init__(self, chunk_size: int):
-        super().__init__(chunk_size)
+    def __init__(self, chunk_size: int, step_size: int):
+        super().__init__(chunk_size, step_size)
         self.fetcher = MutiSegmentFetcher(self.segments)
 
     def _fetch_data(self, begin_idx: int, end_idx: int, key: str) -> Tensor:
@@ -220,8 +176,8 @@ class DpoDataset(BaseDataset):
 
 
 class PpoDataset(BaseDataset):
-    def __init__(self, chunk_size: int):
-        super().__init__(chunk_size)
+    def __init__(self, chunk_size: int, step_size: int):
+        super().__init__(chunk_size, step_size)
         self.fetcher = MutiSegmentFetcher(self.segments)
 
     def _fetch_data(self, begin_idx: int, end_idx: int, key: str) -> Tensor:
@@ -245,19 +201,16 @@ class DatasetLoader:
         train_type: Literal["seq", "sft", "dpo"],
         load_path: Union[str, List[str]],
         max_len: int, 
+        step_size: Optional[int] = None,
         **kwargs
         ) -> BaseDataset:
+        if step_size is None:
+            step_size = max_len
         
         dataset_router: Dict[str, Callable[[int], BaseDataset]] = {
-            "seq": lambda max_len: SeqDataset(max_len),
-            "sft": lambda max_len: SftDataset(
-                max_len, 
-                bos_token_id=kwargs.get("bos_token_id"),
-                eos_token_id=kwargs.get("eos_token_id"),
-                user_token_id=kwargs.get("user_token_id"),
-                multi_turn=kwargs.get("multi_turn")
-            ),
-            "dpo": lambda max_len: DpoDataset(max_len),
+            "seq": lambda max_len: SeqDataset(max_len, step_size),
+            "sft": lambda max_len: SftDataset(max_len, step_size),
+            "dpo": lambda max_len: DpoDataset(max_len, step_size),
         }
         dataset = dataset_router[train_type](max_len)
         dataset.load(load_path)

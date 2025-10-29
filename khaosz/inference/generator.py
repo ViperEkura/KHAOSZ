@@ -5,30 +5,34 @@ from khaosz.inference.core import GeneratorCore, EmbeddingEncoderCore, KVCacheMa
 from khaosz.config.param_config import ModelParameter
 
 
-def build_prompt(query: str, history: Optional[List[Tuple[str, str]]] = None) -> str:
+def build_prompt(
+    query: str, 
+    init_prompt: Optional[str] = None,
+    history: Optional[List[Tuple[str, str]]] = None
+    ) -> str:
     """ 
-    Build prompt for query and history
+    Build prompt in ChatML format for query and history
     
     Args:
         query(str): query string
         history(Optional[List[Tuple[str, str]]]): history list of query and response
         
     Returns:
-        str: prompt string
+        str: prompt string in ChatML format
         
     """
-    prompt_parts = []
+    prompt = f"<|im_start|>system\n{init_prompt}<|im_end|>\n" if init_prompt else ""
     
-    if history is None:
-        history = []
+    # (convert tuple format to ChatML)
+    if history:
+        for user_msg, assistant_msg in history:
+            prompt += f"<|im_start|>user\n{user_msg}<|im_end|>\n"
+            prompt += f"<|im_start|>assistant\n{assistant_msg}<|im_end|>\n"
     
-    for his_query, his_response in history:
-        prompt_parts.append(f"<|user|> {his_query} <|system|> <bos>{his_response}<eos>")
-        
-    if query is not None:
-        prompt_parts.append(f"<|user|> {query} <|system|> <bos>")
+    prompt += f"<|im_start|>user\n{query}<|im_end|>\n"
+    prompt += "<|im_start|>assistant\n"
     
-    return "\n".join(prompt_parts)
+    return prompt
 
 def pad_sequence(ids_list: List[List[int]], max_ids_len: int, pad_id: int) -> List[List[int]]:
     """ 
