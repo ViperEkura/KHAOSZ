@@ -75,7 +75,7 @@ def train(
         train_type=train_type,
         load_path=cache_files,
         max_len=max_len,
-        step_size=step_size
+        step_size=step_size,
         **kwargs
     )
     
