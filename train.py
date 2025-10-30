@@ -36,8 +36,8 @@ def train(
     max_grad_norm: float,
     embdeding_lr_rate: int,
     random_seed: int,
-    max_len: int,
-    step_size: int,
+    window_size: int,
+    stride: int,
     resume_from_checkpoint: bool
 ):
     assert train_type in ["seq", "sft", "dpo"]
@@ -49,8 +49,8 @@ def train(
     if isinstance(parameter, Checkpoint) and resume_from_checkpoint:
         checkpoint = parameter
 
-    if max_len is None:
-        max_len = parameter.config.m_len
+    if window_size is None:
+        window_size = parameter.config.m_len
 
     model = parameter.model
     device = torch.device("cuda")
@@ -74,8 +74,8 @@ def train(
     dataset = DatasetLoader.load(
         train_type=train_type,
         load_path=cache_files,
-        max_len=max_len,
-        step_size=step_size,
+        window_size=window_size,
+        stride=stride,
         **kwargs
     )
     
@@ -140,8 +140,8 @@ if __name__ == "__main__":
     parser.add_argument("--random_seed", type=int, default=3407, help="Random seed for reproducibility.")
     
     # other configs
-    parser.add_argument("--max_len", type=int, default=None, help="the max length of the input sequence.")
-    parser.add_argument("--step_size", type=int, default=None, help="the step size of the input sequence.")
+    parser.add_argument("--window_size", type=int, default=None, help="the max length of the input sequence.")
+    parser.add_argument("--stride", type=int, default=None, help="the step size of the input sequence.")
     parser.add_argument("--start_epoch", type=int, default=0, help="Start epoch for training.")
     parser.add_argument("--start_batch", type=int, default=0, help="Start batch for training.")
     parser.add_argument("--resume_from_checkpoint", type=bool, default=False, help="train from checkpoint or not.")
