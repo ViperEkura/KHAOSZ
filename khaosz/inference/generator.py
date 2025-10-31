@@ -72,14 +72,7 @@ class TextGenerator(GeneratorCore):
         assert top_p >= 0.0 and top_p <= 1.0
         
         device = next(self.model.parameters()).device
-        cache_manager = KVCacheManager(
-            num_layers=self.config.n_layer, 
-            batch_size=1, 
-            max_len=self.config.m_len, 
-            num_heads=self.config.n_kvhead,
-            head_dim=self.config.n_dim // self.config.n_head,
-            device=device,
-        )
+        cache_manager = KVCacheManager(self.config, 1, device=device)
         
         ids = self.tokenizer.encode(query)
         input_ids = torch.tensor([ids], device=device, dtype=torch.long)
@@ -89,16 +82,11 @@ class TextGenerator(GeneratorCore):
         self.model.eval()
         kv_caches = cache_manager.get_kvcache()
         
-        for _ in range(len(ids), self.config.m_len):
-            next_token_id, cache_increase = self.generate_iterator(
-                input_ids, temperature, top_k, top_p, kv_caches=kv_caches, start_pos=cur_cache_pos)
-            
-            input_ids = next_token_id
-            ids.append(next_token_id.item())
-            cur_cache_pos += cache_increase
-
-            if next_token_id.item() in self.tokenizer.stop_ids:
-                break
+        ids = self.generate_loop(
+            input_ids, ids, temperature, top_k, top_p, 
+            kv_caches=kv_caches, 
+            start_pos=cur_cache_pos
+        )
         
         response = self.tokenizer.decode(ids[start_cache_pos:])
         
@@ -126,14 +114,8 @@ class ChatGenerator(GeneratorCore):
             history = []
         
         device = next(self.model.parameters()).device
-        cache_manager = KVCacheManager(
-            num_layers=self.config.n_layer, 
-            batch_size=1, 
-            max_len=self.config.m_len, 
-            num_heads=self.config.n_kvhead,
-            head_dim=self.config.n_dim // self.config.n_head,
-            device=device,
-        )
+        cache_manager = KVCacheManager(self.config, 1, device=device)
+        
         ids = self.tokenizer.encode(build_prompt(query, history))
         input_ids = torch.tensor([ids], device=device, dtype=torch.long)
         cpy_history = history.copy()
@@ -143,17 +125,12 @@ class ChatGenerator(GeneratorCore):
         self.model.eval()
         kv_caches = cache_manager.get_kvcache()
         
-        for _ in range(len(ids), self.config.m_len):
-            next_token_id, cache_increase = self.generate_iterator(
-                input_ids, temperature, top_k, top_p, kv_caches=kv_caches, start_pos=cur_cache_pos)
-            
-            input_ids = next_token_id
-            ids.append(next_token_id.item())
-            cur_cache_pos += cache_increase
-
-            if next_token_id.item() in self.tokenizer.stop_ids:
-                break
-            
+        ids = self.generate_loop(
+            input_ids, ids, temperature, top_k, top_p, 
+            kv_caches=kv_caches, 
+            start_pos=cur_cache_pos
+        )
+        
         response = self.tokenizer.decode(ids[start_cache_pos:])
         cpy_history.append((query, response))
         
@@ -181,14 +158,8 @@ class StreamGenerator(GeneratorCore):
             history = []
         
         device = next(self.model.parameters()).device
-        cache_manager = KVCacheManager(
-            num_layers=self.config.n_layer, 
-            batch_size=1, 
-            max_len=self.config.m_len, 
-            num_heads=self.config.n_kvhead,
-            head_dim=self.config.n_dim // self.config.n_head,
-            device=device,
-        )
+        cache_manager = KVCacheManager(self.config, 1, device=device)
+                
         ids = self.tokenizer.encode(build_prompt(query, history))
         input_ids = torch.tensor([ids], device=device, dtype=torch.long)
         cpy_history = history.copy()
@@ -241,14 +212,7 @@ class BatchGenerator(GeneratorCore):
         ids_list = pad_sequence(ids_list, max_ids_len, self.tokenizer.pad_id)
         
         device = next(self.model.parameters()).device
-        cache_manager = KVCacheManager(
-            num_layers=self.config.n_layer, 
-            batch_size=batch_size, 
-            max_len=self.config.m_len, 
-            num_heads=self.config.n_kvhead,
-            head_dim=self.config.n_dim // self.config.n_head,
-            device=device,
-        )
+        cache_manager = KVCacheManager(self.config, batch_size, device=device)
         
         input_tensor = torch.tensor(ids_list, device=device, dtype=torch.long)
         cache_manager.set_seq_mask(input_tensor, self.tokenizer.pad_id)

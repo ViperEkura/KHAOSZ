@@ -1,7 +1,7 @@
 import torch
 from torch import Tensor 
-from typing import List, Tuple, Union, Optional, Self
-from khaosz.config.param_config import ModelParameter
+from typing import Any, Callable, List, Tuple, Union, Optional, Self
+from khaosz.config import ModelParameter, TransformerConfig
 
 
 def apply_sampling_strategies(
@@ -86,6 +86,36 @@ class GeneratorCore:
         self.model.to(*args, **kargs)
         return self
 
+    def generate_loop(
+        self,
+        input_ids: Tensor,
+        ids: List[int],
+        temperature: float,
+        top_k: int,
+        top_p: float,
+        attn_mask: Optional[Tensor] = None,
+        kv_caches: Optional[List[Tuple[Tensor, Tensor]]] = None,
+        start_pos: int = 0,
+        callback: Optional[Callable[..., Any]] = None
+    ) -> List[int]:
+        cur_cache_pos = start_pos
+        
+        for _ in range(len(ids), self.config.m_len):
+            next_token_id, cache_increase = self.generate_iterator(
+                input_ids, temperature, top_k, top_p, attn_mask, kv_caches, cur_cache_pos)
+            
+            input_ids = next_token_id
+            ids.append(next_token_id.item())
+            cur_cache_pos += cache_increase
+
+            if callback:
+                callback(next_token_id.item(), ids.copy())
+
+            if next_token_id.item() in self.tokenizer.stop_ids:
+                break
+        
+        return ids
+
 
 class EmbeddingEncoderCore:
     def __init__(self, parameter: ModelParameter):
@@ -157,21 +187,18 @@ class EmbeddingEncoderCore:
 class KVCacheManager:
     def __init__(
         self, 
-        num_layers: int, 
+        config: TransformerConfig, 
         batch_size: int,
-        max_len: int, 
-        num_heads: int, 
-        head_dim: int, 
         device: torch.device = "cuda", 
         dtype: torch.dtype = torch.bfloat16
     ):
-        self.num_layers = num_layers
         self.batch_size = batch_size
-        self.max_len = max_len
-        self.num_heads = num_heads
-        self.head_dim = head_dim
         self.device = device
         self.dtype = dtype
+        self.num_layers = config.n_layer
+        self.max_len = config.m_len
+        self.num_heads = config.n_kvhead
+        self.head_dim = config.n_dim //config.n_head
         
         self._kv_cache: Tuple[Tensor, Tensor] = None
         self._seq_mask: Tensor = None
