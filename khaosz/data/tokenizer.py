@@ -93,7 +93,8 @@ class BpeTokenizer:
     
     @property
     def stop_ids(self) -> List[int]:
-        stop_ids = self._control_tokens + self._special_tokens
+        stop_token = self._control_tokens + self._special_tokens
+        stop_ids = [self._tokenizer.token_to_id(token) for token in stop_token]
         return stop_ids
     
     @property
