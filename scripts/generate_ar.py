@@ -14,9 +14,9 @@ def generate_text():
     
     response = model.text_generate(
         query=query, 
-        temperature=0.6,
+        temperature=0.8,
         top_p=0.95,
-        top_k=30
+        top_k=50
     )
     
     print(response)

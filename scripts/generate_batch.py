@@ -13,9 +13,9 @@ def batch_generate():
     
     responses = model.batch_generate(
         queries=inputs,
-        temperature=0.7,
+        temperature=0.8,
         top_p=0.95,
-        top_k=30
+        top_k=50
     )
     
     for q, r in zip(inputs, responses):
