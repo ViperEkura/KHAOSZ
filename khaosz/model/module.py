@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from torch import Tensor
-from torch.nn import init
 from typing import Optional, Tuple
 
 
@@ -30,7 +29,6 @@ def get_rotary_emb(
         dim: int, 
         max_len: int, 
         base: float = 10000, 
-        device: torch.device = "cuda",
     ) -> torch.Tensor:
     """ 
     Get the rotary embedding for the given dimension and maximum length.
@@ -43,8 +41,8 @@ def get_rotary_emb(
         Tensor: The rotary embedding tensor.
     """
 
-    theta = base ** (-torch.arange(0, dim, 2, device=device).float() / dim)
-    t = torch.arange(0, max_len, device=device).float()
+    theta = base ** (-torch.arange(0, dim, 2).float() / dim)
+    t = torch.arange(0, max_len).float()
     freqs = torch.outer(t, theta)
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
     
@@ -71,17 +69,17 @@ def apply_rotary_emb(x: Tensor, freqs_cis: Tensor) -> Tensor:
 
 
 class Linear(nn.Module):
-    def __init__(self, in_dim: int, out_dim: int, bias: bool=False, weight_param=None, bias_param=None):
+    def __init__(self, in_dim: int, out_dim: int, bias: bool = False, weight_param=None, bias_param=None):
         super().__init__()
-        self.weight = nn.Parameter(weight_param or torch.empty((out_dim, in_dim)))
-        self.bias = nn.Parameter(bias_param or torch.zeros(out_dim)) if bias else None
-    
-    def _reset_parameter(self):
-        init.normal_(self.weight, mean=0, std=0.006)
+        weight_param = torch.empty((out_dim, in_dim)) if weight_param is None else weight_param
+        bias_param = torch.zeros(out_dim) if bias_param is None else bias_param
         
+        self.weight = nn.Parameter(weight_param)
+        self.bias = nn.Parameter(bias_param) if bias else None
+
     def forward(self, x: Tensor) -> Tensor:
         return F.linear(x, self.weight, self.bias)
-        
+
 
 class RMSNorm(nn.Module):
     def __init__(self, n_dim, norm_eps):
@@ -212,10 +210,8 @@ class DecoderBlock(nn.Module):
 class Embedding(nn.Module):
     def __init__(self, vocab_size: int, embedding_dim: int, weight_param=None):
         super().__init__()
-        self.weight = nn.Parameter(weight_param or torch.empty((vocab_size, embedding_dim)))
-    
-    def _reset_parameter(self):
-        init.normal_(self.weight, mean=0, std=0.02)
+        weight_param = torch.empty((vocab_size, embedding_dim)) if weight_param is None else weight_param
+        self.weight = nn.Parameter(weight_param)
     
     def forward(self, x: Tensor) -> Tensor:
         return F.embedding(x, self.weight)

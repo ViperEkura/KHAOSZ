@@ -13,6 +13,7 @@ class TransformerConfig:
     m_len: Optional[int] = None
     norm_eps: Optional[float] = None
     d_ffn: Optional[int] = None
+    tie_weight: Optional[bool] = None
     
     # GQA
     n_kvhead: Optional[int] = None
