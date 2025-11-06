@@ -38,7 +38,7 @@ def test_env(request: pytest.FixtureRequest):
     tokenizer.train_from_iterator(sp_token_iter, config["vocab_size"], 1)
     tokenizer.save(tokenizer_path)
     
-    transformer_config = TransformerConfig().load(config_path)
+    transformer_config = ModelConfig().load(config_path)
     model = Transformer(transformer_config)
     st.save_file(model.state_dict(), model_path)
     

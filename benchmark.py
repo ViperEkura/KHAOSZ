@@ -1,7 +1,7 @@
 import torch
 from typing import Dict, Any
 from dataclasses import dataclass
-from khaosz.model.transformer import TransformerConfig, Transformer
+from khaosz.model.transformer import ModelConfig, Transformer
 
 
 @dataclass
@@ -15,7 +15,7 @@ class BenchmarkResult:
 class GenerationBenchmark:
     def __init__(
         self,
-        config: TransformerConfig,
+        config: ModelConfig,
         device: str = "cuda",
         dtype: torch.dtype = torch.float16
     ):
@@ -173,7 +173,7 @@ def print_benchmark_result(result: BenchmarkResult):
 
 
 if __name__ == "__main__":
-    config = TransformerConfig(
+    config = ModelConfig(
         vocab_size=10000,
         n_dim=1536,
         n_head=24,

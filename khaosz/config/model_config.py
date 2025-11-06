@@ -1,10 +1,10 @@
 import json
 
 from dataclasses import asdict, dataclass
-from typing import  Optional, Self
+from typing import Any, Dict, Optional, Self
 
 @dataclass
-class TransformerConfig:
+class ModelConfig:
     # basic config
     vocab_size: Optional[int] = None
     n_dim: Optional[int] = None
@@ -21,7 +21,7 @@ class TransformerConfig:
     
     def load(self, config_path: str) -> Self:
         with open(config_path, 'r') as f:
-            config: dict = json.load(f)
+            config: Dict[str, Any] = json.load(f)
         for key, value in config.items():
             if hasattr(self, key):
                 setattr(self, key, value)

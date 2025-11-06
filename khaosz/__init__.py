@@ -3,7 +3,7 @@ __author__ = "ViperEkura"
 
 from khaosz.api import Khaosz
 from khaosz.config import (
-    TransformerConfig,
+    ModelConfig,
     ParameterLoader,
     TrainConfig,
 )
@@ -41,7 +41,7 @@ __all__ = [
     "SemanticTextSplitter",
     "PriorityTextSplitter",
     
-    "TransformerConfig",
+    "ModelConfig",
     "ParameterLoader",
     "TrainConfig",
     

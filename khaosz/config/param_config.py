@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Self, Union
 from pathlib import Path
 
 from khaosz.data.tokenizer import BpeTokenizer
-from khaosz.config.model_config import TransformerConfig
+from khaosz.config.model_config import ModelConfig
 from khaosz.model.transformer import Transformer
 
 
@@ -20,11 +20,11 @@ class BaseModelIO:
         self, 
         model: Optional[nn.Module] = None, 
         tokenizer: Optional[BpeTokenizer] = None,
-        config: Optional[TransformerConfig] = None
+        config: Optional[ModelConfig] = None
     ):
         self.model = model
         self.tokenizer = tokenizer or BpeTokenizer()
-        self.config = config or TransformerConfig()
+        self.config = config or ModelConfig()
     
     def _get_file_paths(self, directory: Union[str, Path]) -> dict[str, Path]:
         """Get standardized file paths for model components."""
@@ -79,8 +79,8 @@ class ModelParameter(BaseModelIO):
         default_factory=BpeTokenizer,
         metadata={"help": "Tokenizer for the model."}
     )
-    config: TransformerConfig = field(
-        default_factory=TransformerConfig,
+    config: ModelConfig = field(
+        default_factory=ModelConfig,
         metadata={"help": "Transformer model configuration."}
     )
     
@@ -103,8 +103,8 @@ class Checkpoint(BaseModelIO):
         default_factory=BpeTokenizer,
         metadata={"help": "Tokenizer for the model."}
     )
-    config: TransformerConfig = field(
-        default_factory=TransformerConfig,
+    config: ModelConfig = field(
+        default_factory=ModelConfig,
         metadata={"help": "Transformer model configuration."}
     )
     optimizer_state: Dict[str, Any] = field(
@@ -230,7 +230,7 @@ class ParameterLoader:
     def create_checkpoint(
         model: nn.Module, 
         tokenizer: BpeTokenizer,
-        config: TransformerConfig,
+        config: ModelConfig,
         loss_list: Optional[list[float]] = None,
         optimizer: Optional[optim.Optimizer] = None,
     ) -> Checkpoint:

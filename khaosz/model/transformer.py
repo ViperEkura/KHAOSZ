@@ -3,7 +3,7 @@ import torch.nn as nn
 
 from torch import Tensor
 from typing import Any, Mapping, Optional, Tuple
-from khaosz.config.model_config import TransformerConfig
+from khaosz.config.model_config import ModelConfig
 from khaosz.model.module import Embedding, DecoderBlock, Linear, RMSNorm, RotaryEmbedding
 
 
@@ -61,7 +61,7 @@ def process_attention_mask(
 
 
 class Transformer(nn.Module):
-    def __init__(self, config: TransformerConfig):
+    def __init__(self, config: ModelConfig):
         super().__init__()
         self.config = config
         self.rotary_embeding = RotaryEmbedding(config.n_dim // config.n_head, config.m_len)

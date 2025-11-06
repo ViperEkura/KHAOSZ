@@ -9,7 +9,7 @@ import pytest
 import matplotlib
 from torch.utils.data import Dataset
 
-from khaosz.config.model_config import TransformerConfig
+from khaosz.config.model_config import ModelConfig
 from khaosz.data.tokenizer import BpeTokenizer
 from khaosz.model.transformer import Transformer
 
@@ -102,7 +102,7 @@ def base_test_env(request: pytest.FixtureRequest):
     with open(config_path, 'w') as f:
         json.dump(config, f)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    transformer_config = TransformerConfig().load(config_path)
+    transformer_config = ModelConfig().load(config_path)
     model = Transformer(transformer_config).to(device=device)
     tokenizer = BpeTokenizer()
     

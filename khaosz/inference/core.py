@@ -1,7 +1,7 @@
 import torch
 from torch import Tensor 
 from typing import Any, Callable, List, Tuple, Union, Optional, Self
-from khaosz.config import ModelParameter, TransformerConfig
+from khaosz.config import ModelParameter, ModelConfig
 
 
 def apply_sampling_strategies(
@@ -187,7 +187,7 @@ class EmbeddingEncoderCore:
 class KVCacheManager:
     def __init__(
         self, 
-        config: TransformerConfig, 
+        config: ModelConfig, 
         batch_size: int,
         device: torch.device = "cuda", 
         dtype: torch.dtype = torch.bfloat16
