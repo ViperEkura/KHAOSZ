@@ -29,43 +29,65 @@ def get_rotary_emb(
         dim: int, 
         max_len: int, 
         base: float = 10000, 
-    ) -> torch.Tensor:
+    ) -> Tuple[Tensor, Tensor]:
     """ 
     Get the rotary embedding for the given dimension and maximum length.
     Args:
         dim (int): The dimension of the input.
         max_len (int): The maximum length of the input.
         base (float, optional): The base for the frequency. Defaults to 10000.
-        device (torch.device, optional): The device to use. Defaults to "cuda".
     Returns:
         Tensor: The rotary embedding tensor.
     """
 
-    theta = base ** (-torch.arange(0, dim, 2).float() / dim)
-    t = torch.arange(0, max_len).float()
+    theta = base ** (-torch.arange(0, dim, 2, dtype=torch.float64) / dim)
+    t = torch.arange(0, max_len, dtype=torch.float64)
     freqs = torch.outer(t, theta)
-    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
-    
-    return freqs_cis
 
-def apply_rotary_emb(x: Tensor, freqs_cis: Tensor) -> Tensor:
+    return torch.cos(freqs).float(), torch.sin(freqs).float()
+
+def apply_rotary_emb(x: torch.Tensor, rotary_emb: Tuple[Tensor, Tensor]) -> Tensor:
     """
-    Apply rotary embedding to the input tensor.
+    Apply rotary embedding to the input tensor using cos/sin form.
     Args:
-        x (Tensor): The input tensor.
-        freqs_cis (Tensor): The rotary embedding tensor.
+        x (Tensor): The input tensor (shape [..., seq_len, dim]).
+        rotary_emb (Tuple[Tensor, Tensor]): The rotary embedding (shape [seq_len, dim//2]).
     Returns:
-        Tensor: The output tensor.
+        Tensor: The output tensor (rotated, same shape as input).
     """
     
     dtype = x.dtype
-    seq_len = x.size(1)
-
-    x_complex = torch.view_as_complex(x.view(*x.shape[:-1], -1, 2).float())
-    freqs_cis = freqs_cis.reshape(1, seq_len, 1, -1)
-    x_out = torch.view_as_real(x_complex * freqs_cis).flatten(3)
+    cos, sin = rotary_emb
+    
+    cos = cos.unsqueeze(0).unsqueeze(2)  # [1, seq_len, 1, dim//2]
+    sin = sin.unsqueeze(0).unsqueeze(2)  # [1, seq_len, 1, dim//2]
+    
+    x_real = x[..., 0::2]  # [batch, seq_len, dim//2]
+    x_imag = x[..., 1::2]  # [batch, seq_len, dim//2]
+    
+    x_real_rot = x_real * cos - x_imag * sin
+    x_imag_rot = x_real * sin + x_imag * cos
+    
+    x_out = torch.stack([x_real_rot, x_imag_rot], dim=-1)  # [batch, seq_len, dim//2, 2]
+    x_out = x_out.view(*x_out.shape[:-2], -1)              # [batch, seq_len, dim]
     
     return x_out.to(dtype)
+
+
+class RotaryEmbedding(nn.Module):
+    def __init__(self, dim: int, max_len: int, base: int=10000):
+        super().__init__()
+        cos_emb, sin_emb = get_rotary_emb(dim, max_len, base)
+        self.register_buffer("cos_emb", cos_emb, persistent=False)
+        self.register_buffer("sin_emb", sin_emb, persistent=False)
+        self._rotary_buffers = {"cos_emb", "sin_emb"}
+    
+    def forward(self, x: Tensor, start_pos: int=0) -> Tuple[Tensor, Tensor]:
+        seq_len = x.size(1)
+        cos = self.cos_emb[start_pos : start_pos + seq_len]
+        sin = self.sin_emb[start_pos : start_pos + seq_len]
+        
+        return (cos, sin)
 
 
 class Linear(nn.Module):
@@ -137,7 +159,7 @@ class GQA(nn.Module):
     def forward(
         self,
         x: Tensor, 
-        freqs_cis: Tensor, 
+        rotary_emb: Tuple[Tensor, Tensor], 
         mask: Tensor = None,
         kv_cache: Optional[Tuple[Tensor, Tensor]] = None,
         start_pos: int = 0
@@ -147,7 +169,7 @@ class GQA(nn.Module):
         q = self._split_heads(self.q_proj(x), self.n_heads)
         k = self._split_heads(self.k_proj(x), self.n_kvheads)
         v = self._split_heads(self.v_proj(x), self.n_kvheads)
-        q, k = apply_rotary_emb(q, freqs_cis), apply_rotary_emb(k, freqs_cis)
+        q, k = apply_rotary_emb(q, rotary_emb), apply_rotary_emb(k, rotary_emb)
         
         if kv_cache is not None:
             k_cache, v_cache = kv_cache
@@ -186,7 +208,7 @@ class DecoderBlock(nn.Module):
     def forward(
         self,
         x: Tensor,
-        freqs_cis: Tensor,
+        rotary_emb: Tuple[Tensor, Tensor], 
         attention_mask: Optional[Tensor] = None,
         kv_cache: Optional[Tuple[Tensor, Tensor]] = None,
         start_pos: int = 0
@@ -194,7 +216,7 @@ class DecoderBlock(nn.Module):
         # attention
         attn_output = self.attention(
             self.norm_attn(x), 
-            freqs_cis, 
+            rotary_emb, 
             attention_mask, 
             kv_cache, 
             start_pos

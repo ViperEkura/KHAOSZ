@@ -4,14 +4,13 @@ import torch.nn as nn
 from torch import Tensor
 from typing import Any, Mapping, Optional, Tuple
 from khaosz.config.model_config import TransformerConfig
-from khaosz.model.module import Embedding, DecoderBlock, Linear, RMSNorm, get_rotary_emb
+from khaosz.model.module import Embedding, DecoderBlock, Linear, RMSNorm, RotaryEmbedding
 
 
 def process_attention_mask(
         seq_mask: Tensor, 
         input_tensor: Tensor,
         start_pos: int = 0,
-        seq_len: int = 0,
         is_causal: bool = False,
     ) -> Tensor:
     """
@@ -20,13 +19,13 @@ def process_attention_mask(
         seq_mask (Tensor): A tensor indicating whether each position is valid or not.
         input_tensor (Tensor): The input tensor.
         start_pos (int): The starting position of the sequence.
-        seq_len (int): The length of the sequence.
         is_causal (bool): Whether the attention is causal or not.
     Returns:
         Tensor: The attention mask tensor.
     """
     device = input_tensor.device
     dtype = input_tensor.dtype
+    seq_len = input_tensor.size(1)
     
     if seq_mask is None:
         if start_pos != 0:
@@ -65,16 +64,18 @@ class Transformer(nn.Module):
     def __init__(self, config: TransformerConfig):
         super().__init__()
         self.config = config
+        self.rotary_embeding = RotaryEmbedding(config.n_dim // config.n_head, config.m_len)
         self.embed_tokens = Embedding(config.vocab_size, config.n_dim)
-        lm_head_init_weight = self.embed_tokens.weight if config.tie_weight == True else None
         
         self.layers = nn.ModuleList([
             DecoderBlock(config.n_dim, config.n_head, config.d_ffn, config.n_kvhead, config.norm_eps, layer_id)
             for layer_id in range(config.n_layer)
         ])
+        lm_head_init_weight = self.embed_tokens.weight if config.tie_weight == True else None
+        
         self.norm = RMSNorm(config.n_dim, config.norm_eps)
         self.lm_head = Linear(config.n_dim, config.vocab_size, weight_param=lm_head_init_weight)
-        self.freq_cis = get_rotary_emb(config.n_dim // config.n_head, config.m_len)
+
         self._init_parameters()
     
     def load_state_dict(self, state_dict: Mapping[str, Any], strict=True, assign=False):
@@ -115,20 +116,15 @@ class Transformer(nn.Module):
     ) -> Tensor:
         assert input_ids.ndim == 2
         
-        seq_len = input_ids.size(-1)
         x = self.embed_tokens(input_ids)
-        freqs_cis = self.freq_cis[start_pos:start_pos+seq_len].to(x.device)
+        rotary_emb = self.rotary_embeding(x, start_pos)
         
         attn_mask = process_attention_mask(
-            input_mask, 
-            x,
-            start_pos=start_pos,
-            seq_len=seq_len,
-            is_causal=True
+            input_mask, x, start_pos, is_causal=True
         )
         
         for layer in self.layers:
-            x = layer(x, freqs_cis, attn_mask, persistent_key_values, start_pos)
+            x = layer(x, rotary_emb, attn_mask, persistent_key_values, start_pos)
         
         hidden_states = self.norm(x)        
         logits = self.lm_head(hidden_states)
