@@ -71,10 +71,12 @@ class Transformer(nn.Module):
             DecoderBlock(config.n_dim, config.n_head, config.d_ffn, config.n_kvhead, config.norm_eps, layer_id)
             for layer_id in range(config.n_layer)
         ])
-        lm_head_init_weight = self.embed_tokens.weight if config.tie_weight == True else None
         
         self.norm = RMSNorm(config.n_dim, config.norm_eps)
-        self.lm_head = Linear(config.n_dim, config.vocab_size, weight_param=lm_head_init_weight)
+        self.lm_head = Linear(config.n_dim, config.vocab_size)
+        
+        if self.config.tie_weight == True:
+            self.lm_head.weight = self.embed_tokens.weight
 
         self._init_parameters()
     
