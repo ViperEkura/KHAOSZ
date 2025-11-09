@@ -1,4 +1,5 @@
 import re
+import khaosz
 from setuptools import find_packages, setup
 
 
@@ -8,11 +9,11 @@ with open("requirements.txt") as f:
 
 setup(
     name="khaosz", 
-    version="1.2.0", 
+    version=khaosz.__version__, 
     packages=find_packages(),
     install_requires=required,
     dependency_links=[
         "https://download.pytorch.org/whl/cu126",
     ],
-    python_requires="==3.12.*",
+    python_requires=">=3.12",
 )
