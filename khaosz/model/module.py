@@ -182,12 +182,12 @@ class GQA(nn.Module):
             k_cache, v_cache = kv_cache
             
             # copy to cache
-            k_cache[:bsz, self.layer_id, start_pos:start_pos + seq_len] = k
-            v_cache[:bsz, self.layer_id, start_pos:start_pos + seq_len] = v
+            k_cache[:bsz, start_pos:start_pos + seq_len, self.layer_id] = k
+            v_cache[:bsz, start_pos:start_pos + seq_len, self.layer_id] = v
             
             # get cache
-            k = k_cache[:bsz, self.layer_id, :start_pos + seq_len]
-            v = v_cache[:bsz, self.layer_id, :start_pos + seq_len]
+            k = k_cache[:bsz, :start_pos + seq_len, self.layer_id]
+            v = v_cache[:bsz, :start_pos + seq_len, self.layer_id]
         
         k, v = repeat_kv(k, self.n_rep), repeat_kv(v, self.n_rep)
         

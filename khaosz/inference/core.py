@@ -206,11 +206,11 @@ class KVCacheManager:
 
     def _initialize(self):
         k_cache = torch.zeros(
-            (self.batch_size, self.num_layers, self.max_len, self.num_heads, self.head_dim),
+            (self.batch_size, self.max_len, self.num_layers, self.num_heads, self.head_dim),
             device=self.device, dtype=self.dtype
         )
         v_cache = torch.zeros(
-            (self.batch_size, self.num_layers, self.max_len, self.num_heads, self.head_dim),
+            (self.batch_size, self.max_len, self.num_layers, self.num_heads, self.head_dim),
             device=self.device, dtype=self.dtype
         )
         self._kv_cache = (k_cache, v_cache)
