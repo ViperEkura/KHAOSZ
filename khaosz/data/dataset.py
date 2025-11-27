@@ -1,9 +1,10 @@
 import torch
 import bisect
 import pickle as pkl
+
 from abc import ABC, abstractmethod
 from torch import Tensor
-from torch.utils.data import Dataset, Sampler
+from torch.utils.data import Dataset
 from typing import Callable, List, Dict, Literal, Optional, Union
   
 MutiSeg = Dict[str, List[Tensor]]
@@ -217,40 +218,3 @@ class DatasetLoader:
         dataset.load(load_path)
         
         return dataset
-
-
-class ResumeableRandomSampler(Sampler[int]):
-    def __init__(self, data_source, start_epoch=0, start_iter=0, seed=42):
-        self.num_samples = len(data_source)
-        self.epoch = start_epoch
-        self.iter = start_iter
-        
-        generator = torch.Generator()
-        generator.manual_seed(seed)
-
-        # consume  previous epochs
-        for _ in range(start_epoch):
-            torch.randperm(self.num_samples, generator=generator)
-        
-        self.generator = generator
-        self._indices = None
-    
-    def _get_indices(self):
-        current_epoch_indices = torch.randperm(self.num_samples, generator=self.generator).tolist()
-        self._indices = current_epoch_indices[self.iter % self.num_samples:]
-    
-    def __iter__(self):
-        if self._indices is None:
-            self._get_indices()
-        
-        for i in self._indices:
-            self.iter += 1
-            yield i
-        
-        self.epoch += 1
-        self._indices = None
-    
-    def __len__(self):
-        if self._indices is None:
-            self._get_indices()
-        return len(self._indices)

@@ -4,7 +4,7 @@ import numpy as np
 
 from khaosz.config import *
 from khaosz.trainer import *
-from khaosz.data.data_util import *
+from khaosz.data.dataset import *
 
 def test_different_batch_sizes(base_test_env, random_dataset):
     """Test training with different batch sizes"""

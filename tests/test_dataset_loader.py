@@ -4,7 +4,7 @@ import pickle
 import numpy as np
 
 from khaosz.trainer import *
-from khaosz.data.data_util import *
+from khaosz.data.dataset import *
 
 
 def test_dataset_loader_random_paths(base_test_env):

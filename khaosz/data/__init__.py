@@ -1,16 +1,16 @@
-from khaosz.data.data_util import (
+from khaosz.data.dataset import (
     BaseDataset, 
     SeqDataset, 
     DpoDataset, 
     SftDataset, 
     PpoDataset, 
     MutiSegmentFetcher,
-    ResumeableRandomSampler,
     DatasetLoader,
     load_pkl_files, 
 )
 
 from khaosz.data.tokenizer import BpeTokenizer
+from khaosz.data.sampler import ResumeableRandomSampler
 
 __all__ = [
     "BaseDataset",
@@ -19,8 +19,8 @@ __all__ = [
     "SftDataset",
     "PpoDataset",
     "MutiSegmentFetcher",
-    "ResumeableRandomSampler",
     "DatasetLoader",
     "load_pkl_files",
-    "BpeTokenizer"
+    "BpeTokenizer",
+    "ResumeableRandomSampler"
 ]

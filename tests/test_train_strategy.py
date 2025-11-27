@@ -4,7 +4,7 @@ import pytest
 
 from khaosz.config import *
 from khaosz.trainer.schedule import *
-from khaosz.data.data_util import *
+from khaosz.data.dataset import *
 
 
 def test_schedule_factory_random_configs():

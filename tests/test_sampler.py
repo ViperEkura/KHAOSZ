@@ -1,5 +1,5 @@
 from khaosz.trainer import *
-from khaosz.data.data_util import *
+from khaosz.data import *
 
 def test_random_sampler_consistency(random_dataset):
     """Test RandomSampler produces consistent results with same seed"""
