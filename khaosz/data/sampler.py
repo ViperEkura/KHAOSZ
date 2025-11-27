@@ -5,7 +5,7 @@ from torch.utils.data import Dataset, Sampler
 from typing import Optional
 
 
-class ResumeableRandomSampler(Sampler[int]):
+class ResumableDistributedSampler(Sampler[int]):
     def __init__(
         self, 
         data_source: Dataset,
@@ -13,6 +13,7 @@ class ResumeableRandomSampler(Sampler[int]):
         start_iter: int=0, 
         seed: int=42,
         drop_last: bool=False,
+        shuffle: bool=True,
         process_group: Optional[dist.ProcessGroup]=None,
     ):
         self.epoch = start_epoch
@@ -37,6 +38,8 @@ class ResumeableRandomSampler(Sampler[int]):
             self.num_replicas = 1
         
         self.drop_last = drop_last
+        self.shuffle = shuffle
+        
         offset = 0 if drop_last else  self.num_replicas - 1
         self.num_samples_per_replica = (self.num_samples + offset) // self.num_replicas
         self.total_size = self.num_samples_per_replica * self.num_replicas
@@ -44,9 +47,12 @@ class ResumeableRandomSampler(Sampler[int]):
         self._indices = None
     
     def _get_indices(self):
-        generator = torch.Generator()
-        generator.manual_seed(self.seed + self.epoch)
-        indices = torch.randperm(self.num_samples, generator=generator).tolist()
+        if self.shuffle:
+            generator = torch.Generator()
+            generator.manual_seed(self.seed + self.epoch)
+            indices = torch.randperm(self.num_samples, generator=generator).tolist()
+        else:
+            indices = torch.arange(self.num_samples).tolist()
         
         if not self.drop_last and self.num_samples < self.total_size:
             padding_size = self.total_size - len(indices)

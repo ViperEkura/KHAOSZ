@@ -3,7 +3,7 @@ from typing import Optional, Self, TYPE_CHECKING
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from khaosz.config import Checkpoint
-from khaosz.data import ResumeableRandomSampler
+from khaosz.data import ResumableDistributedSampler
 from khaosz.trainer.schedule import BaseScheduler, SchedulerFactory
 
 if TYPE_CHECKING:
@@ -83,7 +83,7 @@ class TrainContextBuilder:
     def with_dataloader(self) -> Self:
         # fix: change batch level batch_iter to sample level offset
         sampler_offset = self._context.batch_iter * self.trainer.train_config.batch_size
-        resumeable_sampler = ResumeableRandomSampler(
+        resumeable_sampler = ResumableDistributedSampler(
             data_source=self.trainer.train_config.dataset,
             start_epoch=self._context.epoch,
             start_iter=sampler_offset,

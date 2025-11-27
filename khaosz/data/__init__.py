@@ -10,7 +10,7 @@ from khaosz.data.dataset import (
 )
 
 from khaosz.data.tokenizer import BpeTokenizer
-from khaosz.data.sampler import ResumeableRandomSampler
+from khaosz.data.sampler import ResumableDistributedSampler
 
 __all__ = [
     "BaseDataset",
@@ -22,5 +22,5 @@ __all__ = [
     "DatasetLoader",
     "load_pkl_files",
     "BpeTokenizer",
-    "ResumeableRandomSampler"
+    "ResumableDistributedSampler"
 ]
