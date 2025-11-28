@@ -4,7 +4,7 @@ from khaosz.data.dataset import (
     DpoDataset, 
     SftDataset, 
     PpoDataset, 
-    MutiSegmentFetcher,
+    MultiSegmentFetcher,
     DatasetLoader,
     load_pkl_files, 
 )
@@ -18,7 +18,7 @@ __all__ = [
     "DpoDataset",
     "SftDataset",
     "PpoDataset",
-    "MutiSegmentFetcher",
+    "MultiSegmentFetcher",
     "DatasetLoader",
     "load_pkl_files",
     "BpeTokenizer",
