@@ -19,6 +19,20 @@ def load_mmap_files(root_path: str, shared: bool=True) -> Tuple[MultiSeg, int]:
     corresponding binary files as memory-mapped tensors. Returns tensors grouped by key
     and total number of elements.
     
+    json metadata like this:
+    
+    ```
+    [
+        {
+            "file_name": "file1.bin",
+            "size": 1000,
+            "dtype": "float32",
+            "key": "key1"
+        },
+        ...
+    ]
+    ```
+    
     Args:
         root_path: Root directory path containing file_mapper.json and binary files
         shared: Whether to load tensors in shared mode. If True, tensors can be 
