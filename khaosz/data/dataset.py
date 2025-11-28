@@ -67,8 +67,6 @@ def load_mmap_files(root_path: str, shared: bool=True) -> Tuple[MultiSeg, int]:
     with open(file_mapper_path, "r") as f:
         metadata_list = json.load(f)
     
-    num_samples = sum(metadata["size"] for metadata in metadata_list)
-    
     for metadata in metadata_list:
         file_path = os.path.join(root_path, metadata["file_name"])
         if not os.path.exists(file_path):
@@ -83,6 +81,9 @@ def load_mmap_files(root_path: str, shared: bool=True) -> Tuple[MultiSeg, int]:
             mmap_shared_group[segment_key] = []
             
         mmap_shared_group[segment_key].append(mmap_tensor)
+    
+    num_samples = sum(metadata["size"] for metadata in metadata_list 
+                      if segment_key == metadata["key"])
     
     return mmap_shared_group, num_samples
 
@@ -142,16 +143,15 @@ class MultiSegmentFetcher:
 
 
 class BaseDataset(Dataset, ABC):
-    def __init__(self, window_size: int, stride: int, share_memory: bool=False):
+    def __init__(self, window_size: int, stride: int):
         super().__init__()
         self.segments: MultiSeg = {}
         self.window_size = window_size
         self.stride = stride
         self.total_samples = None
 
-    def load(self, load_path: Union[str, List[str]]):
-        paths = [load_path] if isinstance(load_path, str) else load_path
-        self.segments, self.total_samples = load_mmap_files(paths)
+    def load(self, load_path: str):
+        self.segments, self.total_samples = load_mmap_files(load_path)
         self.fetcher = MultiSegmentFetcher(self.segments)
         
     def get_index(self, index: int) -> int:

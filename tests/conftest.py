@@ -108,7 +108,7 @@ def base_test_env(request: pytest.FixtureRequest):
     
     yield {
         "device": device,
-        "test_dir": test_dir,
+        "test_dir": str(test_dir),
         "config_path": config_path,
         "transformer_config": transformer_config,
         "model": model,

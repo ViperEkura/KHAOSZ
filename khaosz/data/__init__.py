@@ -5,8 +5,7 @@ from khaosz.data.dataset import (
     SftDataset, 
     PpoDataset, 
     MultiSegmentFetcher,
-    DatasetLoader,
-    load_pkl_files, 
+    DatasetLoader
 )
 
 from khaosz.data.tokenizer import BpeTokenizer
@@ -20,7 +19,6 @@ __all__ = [
     "PpoDataset",
     "MultiSegmentFetcher",
     "DatasetLoader",
-    "load_pkl_files",
     "BpeTokenizer",
     "ResumableDistributedSampler"
 ]
