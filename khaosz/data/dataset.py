@@ -249,10 +249,9 @@ class DatasetLoader:
     @staticmethod       
     def load(
         train_type: Literal["seq", "sft", "dpo"],
-        load_path: Union[str, List[str]],
+        load_path: str,
         window_size: int, 
         stride: Optional[int] = None,
-        **kwargs
         ) -> BaseDataset:
         if stride is None:
             stride = window_size
