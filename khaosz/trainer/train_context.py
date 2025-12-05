@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader
 from khaosz.config import Checkpoint
 from khaosz.data import ResumableDistributedSampler
 from khaosz.trainer.schedule import BaseScheduler, SchedulerFactory
+from khaosz.parallel.utils import get_world_size, get_rank
 
 if TYPE_CHECKING:
     from khaosz.trainer.trainer import Trainer
@@ -19,6 +20,9 @@ class TrainContext:
     epoch: int = field(default=0)
     batch_iter: int = field(default=0)
     loss: float = field(default=0.0)
+    
+    wolrd_size: int = field(default=1)
+    rank: int = field(default=0)
     
     def asdict(self) -> dict:
         return {field.name: getattr(self, field.name) 
@@ -102,4 +106,9 @@ class TrainContextBuilder:
         return self
     
     def build(self) -> TrainContext:
+
+        if self.trainer.train_config.nprocs > 1:
+            self._context.wolrd_size = get_world_size()
+            self._context.rank = get_rank()
+            
         return self._context

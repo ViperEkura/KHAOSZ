@@ -9,7 +9,6 @@ if TYPE_CHECKING:
 
 @dataclass
 class TrainConfig:
-    
     strategy: "BaseStrategy" = field(
         default=None,
         metadata={"help": "Training strategy."}
@@ -54,6 +53,8 @@ class TrainConfig:
         default=1.0,
         metadata={"help": "Maximum gradient norm."}
     )
+    
+    # dataloader setting
     random_seed: int = field(
         default=3407,
         metadata={"help": "Random seed."}
@@ -69,4 +70,10 @@ class TrainConfig:
     pin_memory: bool = field(
         default=False,
         metadata={"help": "Pin memory for dataloader."}
+    )
+    
+    # distributed training
+    nprocs: int = field(
+        default=1,
+        metadata={"help": "Number of processes for distributed training."}
     )

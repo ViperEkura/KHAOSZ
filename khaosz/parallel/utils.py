@@ -33,6 +33,17 @@ def get_available_backend():
     else:
         return "gloo"
 
+def get_world_size() -> int:
+    if dist.is_available() and dist.is_initialized():
+        return dist.get_world_size()
+    else:
+        return 1
+
+def get_rank() -> int:
+    if dist.is_available() and dist.is_initialized():
+        return dist.get_rank()
+    else:
+        return 0
 
 @contextmanager
 def setup_parallel(
@@ -75,6 +86,21 @@ def setup_parallel(
     finally:
         if dist.is_initialized():
             dist.destroy_process_group()
+
+@contextmanager
+def only_main_procs(main_process_rank=0, block=True):
+    is_main_proc = (get_rank() == main_process_rank)
+    
+    if dist.is_initialized() and block:
+        dist.barrier()
+    
+    try:
+        yield is_main_proc
+        
+    finally:
+        if dist.is_initialized() and block:
+            dist.barrier()
+
 
 def wrapper_spawn_func(rank, world_size, func, kwargs_dict):
     with setup_parallel(rank, world_size):
