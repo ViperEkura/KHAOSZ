@@ -51,13 +51,6 @@ def test_env(request: pytest.FixtureRequest):
 
     shutil.rmtree(test_dir)
 
-# parameter loader
-def test_parameter_loader(test_env):
-    loaded_param = ParameterLoader.load(test_env["test_dir"])
-    assert loaded_param.model is not None
-    assert loaded_param.tokenizer is not None
-    assert loaded_param.config == test_env["transformer_config"]
-
 def test_model_parameter(test_env):
     save_dir = os.path.join(test_env["test_dir"], "save")
     model_param = ModelParameter(test_env["model"],test_env["tokenizer"] , test_env["transformer_config"])

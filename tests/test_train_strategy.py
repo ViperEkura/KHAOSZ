@@ -35,7 +35,7 @@ def test_schedule_factory_random_configs():
             config.validate()
             
             # Create scheduler using factory
-            scheduler = SchedulerFactory.load_scheduler(optimizer, config)
+            scheduler = SchedulerFactory.load(optimizer, config)
             
             # Verify scheduler type
             if isinstance(config, CosineScheduleConfig):
@@ -83,7 +83,7 @@ def test_schedule_factory_edge_cases():
     
     for config in edge_cases:
         config.validate()
-        scheduler = SchedulerFactory.load_scheduler(optimizer, config)
+        scheduler = SchedulerFactory.load(optimizer, config)
         assert scheduler is not None
         
         # Test multiple steps
@@ -97,16 +97,17 @@ def test_schedule_factory_invalid_configs():
     # Test invalid configurations that should raise errors
     invalid_configs = [
         # Negative warmup steps
-        CosineScheduleConfig(warmup_steps=-10, total_steps=1000, min_rate=0.1),
+        {"warmup_steps": -10, "total_steps": 1000, "min_rate": 0.1},
         # Total steps less than warmup steps
-        CosineScheduleConfig(warmup_steps=500, total_steps=400, min_rate=0.1),
+        {"warmup_steps": 500, "total_steps": 400, "min_rate": 0.1},
         # Invalid min_rate
-        CosineScheduleConfig(warmup_steps=100, total_steps=1000, min_rate=-0.1),
-        CosineScheduleConfig(warmup_steps=100, total_steps=1000, min_rate=1.1),
+        {"warmup_steps": 100, "total_steps": 1000, "min_rate": -0.1},
+        {"warmup_steps": 100, "total_steps": 1000, "min_rate": 1.1},
     ]
     
-    for config in invalid_configs:
+    for kwargs in invalid_configs:
         with pytest.raises(ValueError):
+            config = CosineScheduleConfig(**kwargs)
             config.validate()
 
 
@@ -117,7 +118,7 @@ def test_schedule_factory_state_persistence():
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
     
     config = CosineScheduleConfig(warmup_steps=100, total_steps=1000, min_rate=0.1)
-    scheduler = SchedulerFactory.load_scheduler(optimizer, config)
+    scheduler = SchedulerFactory.load(optimizer, config)
     
     # Take a few steps
     for _ in range(5):
@@ -127,7 +128,7 @@ def test_schedule_factory_state_persistence():
     state_dict = scheduler.state_dict()
     
     # Create new scheduler and load state
-    new_scheduler = SchedulerFactory.load_scheduler(optimizer, config)
+    new_scheduler = SchedulerFactory.load(optimizer, config)
     new_scheduler.load_state_dict(state_dict)
     
     # Verify states match

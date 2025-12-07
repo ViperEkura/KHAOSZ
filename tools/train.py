@@ -3,8 +3,8 @@ import argparse
 import torch
 
 from torch.optim import AdamW
-from khaosz.config import ParameterLoader, Checkpoint, TrainConfig, CosineScheduleConfig
-from khaosz.trainer import Trainer, StrategyFactory
+from khaosz.config import ModelParameter, TrainConfig, CosineScheduleConfig
+from khaosz.trainer import Trainer, SchedulerFactory
 from khaosz.data import DatasetLoader
 
 
@@ -36,7 +36,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint_dir", type=str, default="checkpoint", help="Directory to save checkpoints.")
     parser.add_argument("--start_epoch", type=int, default=0, help="Start epoch for training.")
     parser.add_argument("--start_batch", type=int, default=0, help="Start batch for training.")
-    parser.add_argument("--resume_from_checkpoint", action="store_true", help="Train from checkpoint or not.")
     
     args = parser.parse_args()
 
@@ -66,16 +65,12 @@ def train(
     pin_memory: bool,
     window_size: int,
     stride: int,
-    resume_from_checkpoint: bool
 ):
     assert train_type in ["seq", "sft", "dpo"]
     assert os.path.exists(param_path)
     
-    parameter = ParameterLoader.load(param_path)
-    checkpoint = None
-    
-    if isinstance(parameter, Checkpoint) and resume_from_checkpoint:
-        checkpoint = parameter
+    parameter = ModelParameter()
+    parameter.load(param_path)
 
     if window_size is None:
         window_size = parameter.config.m_len
@@ -90,13 +85,6 @@ def train(
         "eos_token_id": parameter.tokenizer.eos_id,
         "pad_token_id": parameter.tokenizer.pad_id,
     }
-    
-    strategy = StrategyFactory.load(
-        model, 
-        train_type,
-        device,
-        **kwargs
-    )
 
     dataset = DatasetLoader.load(
         train_type=train_type,
@@ -111,16 +99,25 @@ def train(
         {"params": [p for n, p in model.named_parameters() if "embed" not in n], "lr": max_lr}
     ]
 
-    optim = AdamW(
+    optimizer = AdamW(
         param_groups,
         betas=(adamw_beta1, adamw_beta2),
         weight_decay=adamw_weight_decay
     )
     
+    schedule_config = CosineScheduleConfig(
+        warmup_steps=warmup_steps,
+        total_steps=len(dataset) * n_epoch // batch_size, 
+    )
+    
+    scheduler = SchedulerFactory.load(optimizer, schedule_config)
+    
     train_config = TrainConfig(
-        strategy=strategy,
+        model=model,
+        strategy=train_type,
         dataset=dataset,
-        optimizer=optim,
+        optimizer=optimizer,
+        scheduler=scheduler,
         checkpoint_dir=checkpoint_dir,
         n_epoch=n_epoch,
         batch_size=batch_size,
@@ -134,17 +131,8 @@ def train(
         pin_memory=pin_memory
     )
     
-    schedule_config = CosineScheduleConfig(
-        warmup_steps=warmup_steps,
-        total_steps=len(dataset) * n_epoch // batch_size, 
-    )
-    
-    trainer = Trainer(
-        parameter=parameter,
-        train_config=train_config,
-        schedule_config=schedule_config,
-    )
-    trainer.train(checkpoint)
+    trainer = Trainer(train_config)
+    trainer.train()
     
 
 if __name__ == "__main__":

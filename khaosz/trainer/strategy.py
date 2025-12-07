@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from torch import Tensor
-from typing import Any, Tuple, Callable, Dict, Union
+from typing import Any, Callable, Dict, Union
 from abc import ABC, abstractmethod
 
 
@@ -41,7 +41,7 @@ class BaseStrategy(ABC):
     def compute_loss(self, batch: Dict[str, Tensor]) -> Tensor:
         raise NotImplementedError
     
-    def __call__(self, batch: Tuple[Tensor, ...]) -> Tensor:
+    def __call__(self, batch: Dict[str, Tensor]) -> Tensor:
         return self.compute_loss(batch)
 
 
@@ -94,7 +94,7 @@ class DpoStrategy(BaseStrategy):
         self.pad_token_id = pad_token_id
         self.beta = beta
         
-    def compute_loss(self, batch: Tuple[Tensor, ...]) -> Tensor:
+    def compute_loss(self, batch: Dict[str, Tensor]) -> Tensor:
         batch = move_to_device(batch, self.device)
         good_ids, bad_ids = batch["chosen"], batch["rejected"]
         good_mask, bad_mask = batch["chosen_mask"], batch["rejected_mask"]
@@ -115,41 +115,6 @@ class DpoStrategy(BaseStrategy):
         return dpo_loss
 
 
-class PpoStrategy(BaseStrategy):
-    def __init__(self, model, pad_token_id, epsilon):
-        super().__init__(model)
-        ref_model = copy.deepcopy(self.model)
-        ref_model.requires_grad_(False)
-        ref_model.eval()
-        
-        self.ref_model = ref_model
-        self.pad_token_id = pad_token_id
-        self.epsilon = epsilon
-        
-    def ppo_clip_loss_masked(
-        self,
-        log_probs: Tensor, 
-        old_log_probs: Tensor, 
-        advantages: Tensor, 
-        values: Tensor, 
-        returns: Tensor,
-        mask: Tensor, 
-        clip_eps: float=0.2, 
-    ):
-        ratio = torch.exp(log_probs - old_log_probs)
-        surr1 = ratio * advantages
-        surr2 = torch.clamp(ratio, 1 - clip_eps, 1 + clip_eps) * advantages
-        policy_loss = -torch.min(surr1, surr2).masked_select(mask).mean()
-
-        value_loss = F.mse_loss(values.masked_select(mask),
-                                returns.masked_select(mask))
-
-        entropy = -(log_probs.exp() * log_probs).masked_select(mask).mean()
-        entropy_loss = -entropy
-        return policy_loss, value_loss, entropy_loss
-
-
-
 class StrategyFactory:
     
     def load(model, train_type, device, **kwargs):
@@ -157,7 +122,7 @@ class StrategyFactory:
             "seq": lambda: SeqStrategy(model, device),
             "sft": lambda: SftStrategy(model, device),
             "dpo": lambda: DpoStrategy(
-                model, 
+                model,
                 device,
                 kwargs.get("pad_token_id"), 
                 kwargs.get("dpo_beta")

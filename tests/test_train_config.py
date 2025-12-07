@@ -31,10 +31,18 @@ def test_gradient_accumulation(base_test_env, random_dataset):
     accumulation_steps_list = [1, 2, 4]
     
     for accumulation_steps in accumulation_steps_list:
+        schedule_config = CosineScheduleConfig(
+            warmup_steps=10,
+            total_steps=20
+        )
         optimizer = torch.optim.AdamW(base_test_env["model"].parameters())
+        scheduler = SchedulerFactory.load(optimizer, schedule_config)
         train_config = TrainConfig(
-            dataset=random_dataset,
+            strategy="seq",
+            model=base_test_env["model"],
             optimizer=optimizer,
+            scheduler=scheduler,
+            dataset=random_dataset,
             checkpoint_dir=base_test_env["test_dir"],
             n_epoch=1,
             batch_size=2,
@@ -44,18 +52,7 @@ def test_gradient_accumulation(base_test_env, random_dataset):
             random_seed=42
         )
         
-        schedule_config = CosineScheduleConfig(
-            warmup_steps=10,
-            total_steps=20
-        )
-        train_config.strategy = StrategyFactory.load(base_test_env["model"], "seq", base_test_env["device"])
-        model_parameter = ModelParameter(
-            base_test_env["model"], 
-            base_test_env["tokenizer"], 
-            base_test_env["transformer_config"]
-        )
-        
-        trainer = Trainer(model_parameter, train_config, schedule_config)
+        trainer = Trainer(train_config)
         trainer.train()
         
         assert train_config.accumulation_steps == accumulation_steps

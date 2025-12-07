@@ -9,12 +9,13 @@ from khaosz.inference.generator import (
     RetrievalGenerator, 
     EmbeddingEncoder
 )
-from khaosz.config.param_config import ParameterLoader
+from khaosz.config.param_config import ModelParameter
 
 
 class Khaosz:
     def __init__(self, model_dir: str):
-        self.parameter = ParameterLoader.load(model_dir)
+        self.parameter = ModelParameter()
+        self.parameter.load(model_dir)
     
     def to(self, *args, **kwargs):
         self.parameter.to(*args, **kwargs)

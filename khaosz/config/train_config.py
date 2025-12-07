@@ -1,15 +1,20 @@
-from dataclasses import dataclass, field
-from typing import Optional, TYPE_CHECKING
+from torch import nn
 from torch.utils.data import Dataset
 from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LRScheduler
 
-if TYPE_CHECKING:
-    from khaosz.trainer.strategy import BaseStrategy
+from dataclasses import dataclass, field
+from typing import Optional
 
 
 @dataclass
 class TrainConfig:
-    strategy: "BaseStrategy" = field(
+    # basic setting
+    model: nn.Module = field(
+        default=None,
+        metadata={"help": "Model for training."}
+    )
+    strategy: str = field(
         default=None,
         metadata={"help": "Training strategy."}
     )
@@ -21,9 +26,9 @@ class TrainConfig:
         default=None,
         metadata={"help": "Optimizer for training."}
     )
-    checkpoint_dir: str = field(
-        default="./checkpoint",
-        metadata={"help": "Checkpoint directory."}
+    scheduler: LRScheduler = field(
+        default=None,
+        metadata={"help": "Scheduler for training."}
     )
     n_epoch: int = field(
         default=1,
@@ -33,6 +38,16 @@ class TrainConfig:
         default=4,
         metadata={"help": "Batch size for training."}
     )
+    accumulation_steps: int = field(
+        default=1,
+        metadata={"help": "Number of iterations between steps."}
+    )
+    max_grad_norm: float = field(
+        default=1.0,
+        metadata={"help": "Maximum gradient norm."}
+    )
+    
+    # checkpoint setting
     start_epoch: int = field(
         default=0,
         metadata={"help": "Start epoch for training."}
@@ -41,17 +56,13 @@ class TrainConfig:
         default=0,
         metadata={"help": "Start batch iteration for training."}
     )
+    checkpoint_dir: str = field(
+        default="./checkpoint",
+        metadata={"help": "Checkpoint directory."}
+    )
     checkpoint_interval: int = field(
         default=5000,
         metadata={"help": "Number of iterations between checkpoints."}
-    )
-    accumulation_steps: int = field(
-        default=1,
-        metadata={"help": "Number of iterations between steps."}
-    )
-    max_grad_norm: float = field(
-        default=1.0,
-        metadata={"help": "Maximum gradient norm."}
     )
     
     # dataloader setting
@@ -76,4 +87,10 @@ class TrainConfig:
     nprocs: int = field(
         default=1,
         metadata={"help": "Number of processes for distributed training."}
+    )
+    
+    # others
+    kwargs: dict = field(
+        default_factory=dict,
+        metadata={"help": "Other arguments."}
     )

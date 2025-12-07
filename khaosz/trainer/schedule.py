@@ -151,7 +151,7 @@ class SchedulerFactory:
     """
 
     @staticmethod
-    def load_scheduler(optimizer, scedule_config: ScheduleConfig) -> BaseScheduler:
+    def load(optimizer, scedule_config: ScheduleConfig) -> BaseScheduler:
         kwargs = scedule_config.get_kwargs()
         schedule_type = kwargs.pop("schedule_type")
         

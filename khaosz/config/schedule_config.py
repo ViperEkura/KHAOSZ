@@ -1,4 +1,4 @@
-from typing import Any, Literal, Dict
+from typing import Any, Dict
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
@@ -39,7 +39,10 @@ class CosineScheduleConfig(ScheduleConfig):
         default=None,
         metadata={"help": "Total training steps for cosine schedule."}
     )
-    schedule_type: Literal["cosine"] = "cosine"
+    
+    def __post_init__(self) -> None:
+        self.schedule_type = "cosine"
+        self.validate()
     
     def get_kwargs(self) -> Dict[str, Any]:
         if self.total_steps is None:
@@ -68,7 +71,10 @@ class SGDRScheduleConfig(ScheduleConfig):
         default=2,
         metadata={"help": "Multiplier for cycle length growth."}
     )
-    schedule_type: Literal["sgdr"] = "sgdr"
+
+    def __post_init__(self) -> None:
+        self.schedule_type = "sgdr"
+        self.validate()
 
     def get_kwargs(self) -> Dict[str, Any]:
         return {

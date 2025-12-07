@@ -5,10 +5,20 @@ from khaosz.trainer import *
 
 def test_callback_integration(base_test_env, random_dataset):
     """Test that all callbacks are properly integrated"""
+    schedule_config = CosineScheduleConfig(
+        warmup_steps=10,
+        total_steps=20
+    )
+    
     optimizer = torch.optim.AdamW(base_test_env["model"].parameters())
+    scheduler = SchedulerFactory.load(optimizer, schedule_config)
+    
     train_config = TrainConfig(
+        model=base_test_env["model"],
+        strategy='seq',
         dataset=random_dataset,
         optimizer=optimizer,
+        scheduler=scheduler,
         checkpoint_dir=base_test_env["test_dir"],
         n_epoch=1,
         batch_size=2,
@@ -18,36 +28,26 @@ def test_callback_integration(base_test_env, random_dataset):
         random_seed=42
     )
     
-    schedule_config = CosineScheduleConfig(
-        warmup_steps=10,
-        total_steps=20
-    )
+
     
     # Create custom callbacks to track calls
     callback_calls = []
     
     class TrackingCallback(TrainCallback):
-        def on_train_begin(self, trainer, context):
+        def on_train_begin(self, context):
             callback_calls.append('on_train_begin')
         
-        def on_batch_end(self, trainer, context):
+        def on_batch_end(self, context):
             callback_calls.append('on_batch_end')
         
-        def on_epoch_end(self, trainer, context):
+        def on_epoch_end(self, context):
             callback_calls.append('on_epoch_end')
     
-    train_config.strategy = StrategyFactory.load(base_test_env["model"], "seq", base_test_env["device"])
-    model_parameter = ModelParameter(
-        base_test_env["model"], 
-        base_test_env["tokenizer"], 
-        base_test_env["transformer_config"]
-    )
+
     
     trainer = Trainer(
-        model_parameter, 
         train_config, 
-        schedule_config,
-        callbacks=[TrackingCallback(), ProgressBarCallback()]
+        callbacks=[TrackingCallback()]
     )
     
     trainer.train()

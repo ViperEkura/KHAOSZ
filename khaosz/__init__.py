@@ -4,7 +4,6 @@ __author__ = "ViperEkura"
 from khaosz.api import Khaosz
 from khaosz.config import (
     ModelConfig,
-    ParameterLoader,
     TrainConfig,
 )
 from khaosz.model.transformer import Transformer
@@ -42,7 +41,6 @@ __all__ = [
     "PriorityTextSplitter",
     
     "ModelConfig",
-    "ParameterLoader",
     "TrainConfig",
     
     "DatasetLoader",
