@@ -11,10 +11,18 @@ def test_different_batch_sizes(base_test_env, random_dataset):
     batch_sizes = [1, 2, 4, 8]
     
     for batch_size in batch_sizes:
+        schedule_config = CosineScheduleConfig(
+            warmup_steps=10,
+            total_steps=20
+        )
         optimizer = torch.optim.AdamW(base_test_env["model"].parameters())
+        scheduler = SchedulerFactory.load(optimizer, schedule_config)
         train_config = TrainConfig(
+            strategy="seq",
+            model=base_test_env["model"],
             dataset=random_dataset,
             optimizer=optimizer,
+            scheduler=scheduler,
             checkpoint_dir=base_test_env["test_dir"],
             n_epoch=1,
             batch_size=batch_size,
@@ -67,10 +75,18 @@ def test_memory_efficient_training(base_test_env, random_dataset):
     ]
     
     for config in small_batch_configs:
+        schedule_config = CosineScheduleConfig(
+            warmup_steps=10,
+            total_steps=20
+        )
         optimizer = torch.optim.AdamW(base_test_env["model"].parameters())
+        scheduler = SchedulerFactory.load(optimizer, schedule_config)
         train_config = TrainConfig(
+            strategy="seq",
+            model=base_test_env["model"],
             dataset=random_dataset,
             optimizer=optimizer,
+            scheduler=scheduler,
             checkpoint_dir=base_test_env["test_dir"],
             n_epoch=1,
             batch_size=config["batch_size"],

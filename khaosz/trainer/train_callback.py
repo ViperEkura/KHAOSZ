@@ -94,18 +94,17 @@ class CheckpointCallback(TrainCallback):
     def __init__(self, interval: int, save_dir: str):
         self.interval = interval
         self.save_dir = save_dir
-        self.checkpoint = None
         self.last_ckpt_iter = 0
     
     def _save_checkpoint(self, context: 'TrainContext'):
         save_path = os.path.join(self.save_dir, f"epoch_{context.epoch}iter_{context.iteration}")
-        self.checkpoint = Checkpoint(
+        context.checkpoint = Checkpoint(
             context.optimizer.state_dict(), 
             context.scheduler.state_dict(), 
             context.epoch, 
             context.iteration
         )
-        self.checkpoint.save(save_path)
+        context.checkpoint.save(save_path)
         self.last_ckpt_iter = context.iteration
     
     def on_batch_end(self, context: 'TrainContext'):

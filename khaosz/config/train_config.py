@@ -94,3 +94,12 @@ class TrainConfig:
         default_factory=dict,
         metadata={"help": "Other arguments."}
     )
+    
+    def __post_init__(self):
+        self.validate()
+    
+    def validate(self):
+        required_fields = ["model", "strategy", "dataset", "optimizer", "scheduler"]
+        for field_name in required_fields:
+            if getattr(self, field_name) is None:
+                raise ValueError(f"{field_name} is required.")
