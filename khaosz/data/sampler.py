@@ -75,6 +75,4 @@ class ResumableDistributedSampler(Sampler[int]):
         self._indices = None
     
     def __len__(self):
-        if self._indices is None:
-            self._get_indices()
-        return len(self._indices)
+        return self.num_samples_per_replica
