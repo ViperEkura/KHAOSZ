@@ -35,7 +35,7 @@ if __name__ == "__main__":
         top_k=50
     )
 
-    print("retrive content:")
+    print("retrieve content:")
     print("\n".join([f"{idx + 1}. " + text for idx, (text, _) in enumerate(retrieved)]))
 
     print("\n\nretrive generate:")
