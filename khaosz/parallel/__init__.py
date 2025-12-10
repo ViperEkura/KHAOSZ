@@ -5,7 +5,8 @@ from khaosz.parallel.utils import (
     get_current_device, 
     get_available_backend, 
     setup_parallel, 
-    only_main_procs,
+    only_on_rank,
+    run_on_rank,
     spawn_parallel_fn
 )
 
@@ -21,7 +22,8 @@ __all__ = [
     "get_current_device",
     "get_available_backend",
     "setup_parallel",
-    "only_main_procs",
+    "only_on_rank",
+    "run_on_rank",
     "spawn_parallel_fn",
     
     "RowParallelLinear",
