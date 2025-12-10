@@ -34,8 +34,6 @@ class Trainer:
     def _build_context(self, checkpoint: Optional[Checkpoint]) -> TrainContext:
         return (TrainContextBuilder(self.train_config)
                 .with_checkpoint(checkpoint)
-                .with_optimizer()
-                .with_scheduler()
                 .with_dataloader()
                 .with_strategy()
                 .build())
