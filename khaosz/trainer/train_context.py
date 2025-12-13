@@ -7,7 +7,7 @@ from khaosz.data import ResumableDistributedSampler
 from khaosz.trainer.checkpoint import Checkpoint
 from khaosz.trainer.strategy import StrategyFactory, BaseStrategy
 from khaosz.config.train_config import TrainConfig
-from khaosz.parallel.utils import get_current_device, get_world_size, get_rank
+from khaosz.parallel.setup import get_current_device, get_world_size, get_rank
 
 from dataclasses import dataclass, field
 from typing import Optional, Self
@@ -85,7 +85,7 @@ class TrainContextBuilder:
             model=self.config.model,
             train_type=self.config.strategy,
             device=device,
-            **self.config.kwargs
+            **self.config.extra_kwargs
         )
         return self
     

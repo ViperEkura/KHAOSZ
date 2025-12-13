@@ -8,6 +8,7 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import LRScheduler
 from typing import List, Optional, Protocol, TYPE_CHECKING
 
+from khaosz.parallel import only_on_rank
 from khaosz.trainer.metric_util import (
     grad_max,
     grad_min,
@@ -96,6 +97,7 @@ class CheckpointCallback(TrainCallback):
         self.save_dir = save_dir
         self.last_ckpt_iter = 0
     
+    @only_on_rank(0)
     def _save_checkpoint(self, context: 'TrainContext'):
         save_path = os.path.join(self.save_dir, f"epoch_{context.epoch}iter_{context.iteration}")
         context.checkpoint = Checkpoint(
@@ -127,6 +129,7 @@ class ProgressBarCallback(TrainCallback):
         self.num_epoch = num_epoch
         self.progress_bar: tqdm = None
     
+    @only_on_rank(0)
     def on_epoch_begin(self, context: 'TrainContext'):
         self.progress_bar = tqdm(
             context.dataloader, 
@@ -134,6 +137,7 @@ class ProgressBarCallback(TrainCallback):
             dynamic_ncols=True
         )
     
+    @only_on_rank(0)
     def on_batch_end(self, context: 'TrainContext'):
         self.progress_bar.set_postfix({
             "loss": f"{context.loss:.4f}",
@@ -141,6 +145,7 @@ class ProgressBarCallback(TrainCallback):
         })
         self.progress_bar.update(1)
     
+    @only_on_rank(0)
     def on_epoch_end(self, context: 'TrainContext'):
         _ = context
         if self.progress_bar:
@@ -219,7 +224,8 @@ class StepMonitorCallback(TrainCallback):
                 json.dump(log_data, f, indent=4)
         except Exception:
             raise
-    
+        
+    @only_on_rank(0)
     def on_step_end(self, context: 'TrainContext'):
         if self.step_num % self.log_interval == 0:
             self._handle_log(context)

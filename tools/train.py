@@ -1,11 +1,14 @@
 import os
 import argparse
 import torch
+import torch.nn as nn
+import torch.distributed.fsdp as fsdp
 
 from torch.optim import AdamW
 from khaosz.config import ModelParameter, TrainConfig, CosineScheduleConfig
 from khaosz.trainer import Trainer, SchedulerFactory
 from khaosz.data import DatasetLoader
+from khaosz.parallel import get_current_device, spawn_parallel_fn
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,9 +40,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start_epoch", type=int, default=0, help="Start epoch for training.")
     parser.add_argument("--start_batch", type=int, default=0, help="Start batch for training.")
     
+    parser.add_argument("--nprocs", type=int, default=1, help="Number of GPUs to use.")
+    
     args = parser.parse_args()
 
     return args
+
+def fsdp_wrap(model: nn.Module):
+    
+    fsdp_model = fsdp.FullyShardedDataParallel(
+        model,
+        sharding_strategy=fsdp.ShardingStrategy.SHARD_GRAD_OP,
+        mixed_precision=fsdp.MixedPrecision(
+            param_dtype=torch.bfloat16,
+            reduce_dtype=torch.bfloat16,
+            buffer_dtype=torch.bfloat16,
+        ),
+        backward_prefetch=fsdp.BackwardPrefetch.BACKWARD_PRE
+    )
+    return fsdp_model
 
 def train(
     train_type: str,
@@ -65,6 +84,7 @@ def train(
     pin_memory: bool,
     window_size: int,
     stride: int,
+    nprocs: int
 ):
     assert train_type in ["seq", "sft", "dpo"]
     assert os.path.exists(param_path)
@@ -76,8 +96,8 @@ def train(
         window_size = parameter.config.m_len
 
     model = parameter.model
-    device = torch.device("cuda")
-    model = model.to(device=device, dtype=torch.bfloat16)
+    current_device = get_current_device()
+    model = fsdp_wrap(model.to(device=current_device, dtype=torch.bfloat16))
     
     kwargs = {
         "dpo_beta": dpo_beta,
@@ -90,8 +110,7 @@ def train(
         train_type=train_type,
         load_path=data_root_path,
         window_size=window_size,
-        stride=stride,
-        **kwargs
+        stride=stride
     )
     
     param_groups = [
@@ -107,7 +126,7 @@ def train(
     
     schedule_config = CosineScheduleConfig(
         warmup_steps=warmup_steps,
-        total_steps=len(dataset) * n_epoch // batch_size, 
+        total_steps=len(dataset) * n_epoch // (batch_size * nprocs), 
     )
     
     scheduler = SchedulerFactory.load(optimizer, schedule_config)
@@ -128,7 +147,9 @@ def train(
         max_grad_norm=max_grad_norm,
         random_seed=random_seed,
         num_workers=num_workers,
-        pin_memory=pin_memory
+        pin_memory=pin_memory,
+        nprocs=nprocs,
+        extra_kwargs=kwargs,
     )
     
     trainer = Trainer(train_config)
@@ -137,4 +158,10 @@ def train(
 
 if __name__ == "__main__":
     args = parse_args()
-    train(**vars(args))
+    
+    spawn_parallel_fn(
+        train,
+        world_size=args.nprocs,
+        backend="nccl",
+        **vars(args)
+    )

@@ -90,7 +90,7 @@ class TrainConfig:
     )
     
     # others
-    kwargs: dict = field(
+    extra_kwargs: dict = field(
         default_factory=dict,
         metadata={"help": "Other arguments."}
     )

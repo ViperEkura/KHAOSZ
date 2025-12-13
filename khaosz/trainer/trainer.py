@@ -8,7 +8,8 @@ from khaosz.trainer.train_callback import (
     GradientClippingCallback,
     SchedulerCallback
 )
-from khaosz.trainer.train_context import TrainContext, TrainContextBuilder, Checkpoint
+from khaosz.trainer.train_context import TrainContext, TrainContextBuilder
+from khaosz.trainer.checkpoint import Checkpoint
 
 logger = logging.getLogger(__name__)
 
