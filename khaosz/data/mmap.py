@@ -19,9 +19,10 @@ class MmapFileHander:
         files like:
         
         ```
-        file_mapper.json
-        file1.bin
-        file2.bin
+        folder_path:
+            - file_mapper.json
+            - file1.bin
+            - file2.bin
         ...
         
         ```
@@ -64,9 +65,8 @@ class MmapFileHander:
             mmap_shared_group[segment_key].append(mmap_tensor)
         
         num_samples = sum(metadata["size"] for metadata in metadata_list)
-        num_keys = len(set(metadata['key'] for metadata in metadata_list))
-        
-        sample_per_key = num_samples / num_keys
+        num_keys = max(len(set(metadata['key'] for metadata in metadata_list)), 1)
+        sample_per_key = num_samples // num_keys
         
         return mmap_shared_group, sample_per_key
     
@@ -77,15 +77,19 @@ class MmapFileHander:
         metadata_list = []
         for segment_key, segment_tensors in mmap_shared_group.items():
             for idx, tensor in enumerate(segment_tensors):
+                
+                try:
+                    with open(os.path.join(save_path, f"{segment_key}_{idx}.bin"), "wb") as f:
+                        f.write(tensor.cpu().numpy().tobytes())
+                except Exception as e:
+                    raise RuntimeError(f"Error saving tensor: {e}")   
+    
                 metadata_list.append({
                     "file_name": f"{segment_key}_{idx}.bin",
                     "size": tensor.numel(),
                     "dtype": MmapFileHander.REVERSE_DTYPE_MAP[tensor.dtype],
                     "key": segment_key
                 })
-                file_path = os.path.join(save_path, f"{segment_key}_{idx}.bin")
-                with open(file_path, "wb") as f:
-                    f.write(tensor.cpu().numpy().tobytes())
         
         metadata_path = os.path.join(save_path, "file_mapper.json")
         with open(metadata_path, "w") as f:
