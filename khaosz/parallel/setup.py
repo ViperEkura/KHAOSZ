@@ -1,3 +1,4 @@
+
 import os
 import torch
 import torch.distributed as dist
@@ -6,7 +7,10 @@ import torch.multiprocessing as mp
 from typing import Callable
 from functools import wraps
 from contextlib import contextmanager
+from khaosz.parallel.device import device_strategy_registry
 
+def get_current_device():
+    return device_strategy_registry.get_current_device()
 
 def get_world_size() -> int:
     if dist.is_available() and dist.is_initialized():
@@ -19,16 +23,6 @@ def get_rank() -> int:
         return dist.get_rank()
     else:
         return 0
-
-def get_current_device():
-    if torch.cuda.is_available():
-        return torch.device(f"cuda:{torch.cuda.current_device()}")
-    elif hasattr(torch, 'xpu') and torch.xpu.is_available():
-        return torch.device(f"xpu:{torch.xpu.current_device()}")
-    elif hasattr(torch, 'mps') and torch.mps.is_available():
-        return torch.device("mps")
-    else:
-        return torch.device("cpu")
 
 @contextmanager
 def setup_parallel(
