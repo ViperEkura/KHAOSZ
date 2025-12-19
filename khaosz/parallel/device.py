@@ -2,7 +2,7 @@ import os
 import torch
 import torch.distributed as dist
 from dataclasses import dataclass
-from typing import Callable, List
+from typing import Callable, List, Optional
 
 
 @dataclass
@@ -27,11 +27,21 @@ class DeviceStrategyRegistry:
     A registry for device strategies that automatically selects the best available device.
     And allows overriding the device backend via environment variable.
     """
+    
+    _instance: Optional["DeviceStrategyRegistry"] = None
+    _initialized: bool = False
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
     def __init__(self) -> None:
+        if self._initialized:
+            return
+            
         self._strategies: List[DeviceStrategy] = []
         
-        # Register default strategies
         self.register(DeviceStrategy(
             name="cuda",
             priority=100,
@@ -59,27 +69,32 @@ class DeviceStrategyRegistry:
             is_available=lambda: True,
             make_device=lambda _: torch.device("cpu")
         ))
+        
+        self._initialized = True
 
     def register(self, strategy: DeviceStrategy):
         self._strategies.append(strategy)
 
     def get_current_device(self) -> torch.device:
         """Return the best available device for the current process."""
-        # Allow environment override (for debugging)
         override = os.getenv("TORCH_DEVICE_OVERRIDE")
-        if override:
-            return torch.device(override)
-
         sorted_strategies = sorted(self._strategies, key=lambda s: -s.priority)
         
         rank = 0
-        if dist.is_available() and dist.is_initialized():
-            rank = dist.get_rank()
 
+        if dist.is_available() and dist.is_initialized():
+            rank = os.environ["LOCAL_RANK"]
+    
+        if override:
+            return torch.device(override, rank)
+        
+        
         for strategy in sorted_strategies:
             if strategy.is_available():
+               
                 return strategy.make_device(rank)
 
         raise RuntimeError("No device backend is available, including CPU.")
 
-device_strategy_registry = DeviceStrategyRegistry()
+
+device_registry = DeviceStrategyRegistry()

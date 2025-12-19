@@ -11,3 +11,5 @@ params/*
 # build file
 build
 *.egg-info
+
+*.ipynb
