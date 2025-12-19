@@ -4,7 +4,7 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 
 @dataclass
@@ -87,6 +87,22 @@ class TrainConfig:
     nprocs: int = field(
         default=1,
         metadata={"help": "Number of processes for distributed training."}
+    )
+    backend: str = field(
+        default="nccl",
+        metadata={"help": "Distributed training backend."}
+    )
+    master_addr: str = field(
+        default="localhost",
+        metadata={"help": "Master address for distributed training."}
+    )
+    master_port: str = field(
+        default="29500",
+        metadata={"help": "Master port for distributed training."}
+    )
+    parallel_fn: Optional[Callable] = field(
+        default=None,
+        metadata={"help": "Parallel function for training."}
     )
     
     # others

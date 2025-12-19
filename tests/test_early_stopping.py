@@ -1,3 +1,4 @@
+import os
 import torch
 import numpy as np
 from khaosz.config import *
@@ -31,10 +32,14 @@ def test_early_stopping_simulation(base_test_env, early_stopping_dataset):
     checkpoint = None
     try:
         checkpoint = trainer.train()
-        assert checkpoint.iteration == 2
     except Exception:
         # Handle any exceptions
         pass
     
-    checkpoint = trainer.train(checkpoint)
+    load_dir = os.path.join(base_test_env["test_dir"], "epoch_0_iter_2")
+    checkpoint = Checkpoint.load(load_dir)
+    trainer.train(checkpoint)
+    
+    load_dir = os.path.join(base_test_env["test_dir"], "epoch_1_iter_10")
+    checkpoint = Checkpoint.load(load_dir)
     assert checkpoint.iteration == 10

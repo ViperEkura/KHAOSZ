@@ -38,19 +38,23 @@ class Checkpoint:
         if save_metric_plot and self.metrics:
             self._plot_metrics()
     
-    def load(self, save_dir: str) -> "Checkpoint":
-        if not os.path.exists(save_dir):
-            raise FileNotFoundError(f"Checkpoint directory {save_dir} does not exist.")
+    @classmethod
+    def load(cls, save_dir: str) -> "Checkpoint":
+        checkpoint_path = os.path.join(save_dir, "train_state.pkl")
         
-        with open(os.path.join(save_dir, "train_state.pkl"), "rb") as f:
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(f"Checkpoint file {checkpoint_path} does not exist.")
+        
+        with open(checkpoint_path, "rb") as f:
             train_state = pkl.load(f)
-            self.epoch = train_state["epoch"]
-            self.iteration = train_state["iteration"]
-            self.metrics = train_state["metrics"]
-            self.optimizer_state = train_state["optimizer_state"]
-            self.scheduler_state = train_state["scheduler_state"]
         
-        return self
+        return cls(
+            optimizer_state=train_state["optimizer_state"],
+            scheduler_state=train_state["scheduler_state"],
+            epoch=train_state["epoch"],
+            iteration=train_state["iteration"],
+            metrics=train_state["metrics"]
+        )
     
     def _plot_metrics(self):
         for metric_name, metric_value in self.metrics.items():

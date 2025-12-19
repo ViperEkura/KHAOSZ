@@ -99,7 +99,7 @@ class CheckpointCallback(TrainCallback):
     
     @only_on_rank(0)
     def _save_checkpoint(self, context: 'TrainContext'):
-        save_path = os.path.join(self.save_dir, f"epoch_{context.epoch}iter_{context.iteration}")
+        save_path = os.path.join(self.save_dir, f"epoch_{context.epoch}_iter_{context.iteration}")
         context.checkpoint = Checkpoint(
             context.optimizer.state_dict(), 
             context.scheduler.state_dict(), 

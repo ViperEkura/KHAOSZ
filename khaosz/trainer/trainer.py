@@ -10,6 +10,7 @@ from khaosz.trainer.train_callback import (
 )
 from khaosz.trainer.train_context import TrainContext, TrainContextBuilder
 from khaosz.trainer.checkpoint import Checkpoint
+from khaosz.parallel.setup import spawn_parallel_fn
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class Trainer:
                 .with_checkpoint(checkpoint)
                 .with_dataloader()
                 .with_strategy()
+                .with_parallel_fn()
                 .build())
     
     def _call_callbacks(self, method_name: str, context: TrainContext):
@@ -44,8 +46,19 @@ class Trainer:
             method = getattr(callback, method_name, None)
             if method:
                 method(context)
+    
+    def train(self, checkpoint: Optional[Checkpoint] = None):
+        config = self.train_config
+        spawn_parallel_fn(
+            self._train_impl,
+            backend=config.backend,
+            world_size=config.nprocs,
+            master_addr=config.master_addr,
+            master_port=config.master_port,
+            checkpoint=checkpoint
+        )
 
-    def train(self, checkpoint: Optional[Checkpoint] = None) -> Checkpoint:
+    def _train_impl(self, checkpoint: Optional[Checkpoint] = None) -> Checkpoint:
         context = self._build_context(checkpoint)
         self._call_callbacks('on_train_begin', context)
         
@@ -85,4 +98,3 @@ class Trainer:
             raise
         finally:
             self._call_callbacks('on_train_end', context)
-            return context.checkpoint

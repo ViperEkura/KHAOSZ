@@ -89,5 +89,12 @@ class TrainContextBuilder:
         )
         return self
     
+    def with_parallel_fn(self) -> Self:
+        fn = self.config.parallel_fn
+        if fn is not None:
+            self._context.model = fn(self._context.model)
+            
+        return self
+    
     def build(self) -> TrainContext:
         return self._context
