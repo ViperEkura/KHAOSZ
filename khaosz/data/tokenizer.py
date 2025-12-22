@@ -9,32 +9,28 @@ class BpeTokenizer:
     def __init__(self, path=None):
         self._control_tokens = ["<bos>", "<eos>", "<pad>"]
         self._special_tokens = ["<|im_start|>", "<|im_end|>"]
+        
         model = BPE()
-        tokenizer = Tokenizer(model)
-        tokenizer.normalizer = normalizers.Sequence([
-            normalizers.NFC()
+        self._tokenizer = Tokenizer(model)
+        self._tokenizer.normalizer = normalizers.Sequence([
+            normalizers.NFC(),
+            normalizers.Strip() 
         ])
-        tokenizer.pre_tokenizer = pre_tokenizers.Sequence([
-            pre_tokenizers.Punctuation(behavior="isolated"),
-            pre_tokenizers.Metaspace(prepend_scheme="never"),
-            pre_tokenizers.Split(pattern=r"(\d+|[a-zA-Z]+|(?:'s|'t|'re|'ve|'m|'ll|'d))", behavior="isolated"),
-            pre_tokenizers.ByteLevel(add_prefix_space=False, use_regex=False)
+        
+        self._tokenizer.pre_tokenizer = pre_tokenizers.Sequence([
+            pre_tokenizers.UnicodeScripts(),
+            pre_tokenizers.ByteLevel(add_prefix_space=False, use_regex=True)
         ])
-        tokenizer.decoder = decoders.Sequence([
-            decoders.ByteLevel(),
-            decoders.Metaspace(prepend_scheme="never")
-        ])
-        tokenizer.post_processor = processors.Sequence([
-            processors.ByteLevel(trim_offsets=False)
-        ])
-        self._tokenizer = tokenizer
+        
+        self._tokenizer.decoder = decoders.ByteLevel()
+        self._tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)
         
         if path is not None:
             self._tokenizer = Tokenizer.from_file(path)
         
-    def _prepare_trainer(self, vocab_size: int, min_freq: int, reserved_token_size: int) -> tuple:
+    def _prepare_trainer(self, vocab_size: int, min_freq: int, reserved_token_size: int, max_token_length=18) -> tuple:
         assert reserved_token_size > len(self._special_tokens)
-        reserved_tokens = [f"<|rsv{i:02d}|>" for i in range(reserved_token_size - len(self._special_tokens))]
+        reserved_tokens = [f"<|reserve{i:02d}|>" for i in range(reserved_token_size - len(self._special_tokens))]
         detail_vocab_size = vocab_size - (len(reserved_tokens) + len(self._special_tokens))
         
         alphabet = pre_tokenizers.ByteLevel.alphabet()
@@ -44,11 +40,11 @@ class BpeTokenizer:
         trainer = BpeTrainer(
             vocab_size=detail_vocab_size,
             min_frequency=min_freq,
-            limit_alphabet=detail_vocab_size // 4,
-            max_token_length=18,
+            limit_alphabet=detail_vocab_size // 6,
+            max_token_length=max_token_length,
             special_tokens=self._control_tokens,
-            show_progress=True,
             initial_alphabet=alphabet,
+            show_progress=True,
         )
         
         return trainer, detail_vocab_size, reserved_tokens
