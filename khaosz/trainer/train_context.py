@@ -80,19 +80,27 @@ class TrainContextBuilder:
         return self
     
     def with_strategy(self) -> Self:
-        device = get_current_device()
         self._context.strategy = StrategyFactory.load(
             model=self.config.model,
             train_type=self.config.strategy,
-            device=device,
+            device=get_current_device(),
             **self.config.extra_kwargs
         )
         return self
     
     def with_parallel_fn(self) -> Self:
-        fn = self.config.parallel_fn
-        if fn is not None:
+        device = get_current_device()
+        self._context.model = self._context.model.to(device=device)
+        
+        if self.config.nprocs > 1:
+            
+            fn = self.config.parallel_fn
+            optimizer_fn = self.config.optimizer_factory
+            scheduler_fn = self.config.scheduler_factory
+            
             self._context.model = fn(self._context.model)
+            self._context.optimizer = optimizer_fn(self._context.model.parameters())
+            self._context.scheduler = scheduler_fn(self._context.optimizer)
             
         return self
     

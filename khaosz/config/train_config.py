@@ -1,4 +1,4 @@
-from torch import nn
+import torch.nn as nn
 from torch.utils.data import Dataset
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
@@ -30,6 +30,7 @@ class TrainConfig:
         default=None,
         metadata={"help": "Scheduler for training."}
     )
+    
     n_epoch: int = field(
         default=1,
         metadata={"help": "Number of epochs for training."}
@@ -104,7 +105,15 @@ class TrainConfig:
         default=None,
         metadata={"help": "Parallel function for training."}
     )
-    
+    optimizer_factory: Optional[Callable[[nn.Module], Optimizer]] = field(
+        default=None,
+        metadata={"help": "Optimizer factory for training."}
+    )
+    scheduler_factory: Optional[Callable[[Optimizer], LRScheduler]] = field(
+        default=None,
+        metadata={"help": "Scheduler factory for training."}
+    )
+
     # others
     extra_kwargs: dict = field(
         default_factory=dict,
@@ -115,7 +124,17 @@ class TrainConfig:
         self.validate()
     
     def validate(self):
-        required_fields = ["model", "strategy", "dataset", "optimizer", "scheduler"]
+        required_fields = ["model", "strategy", "dataset"]
+        
         for field_name in required_fields:
             if getattr(self, field_name) is None:
                 raise ValueError(f"{field_name} is required.")
+        
+        factory_case = all([self.optimizer_factory, self.scheduler_factory])
+        argument_case = all([self.optimizer, self.scheduler])
+        self.nprocs = max(self.nprocs, 1)
+        
+        if self.nprocs > 1 and not factory_case:
+            raise ValueError("Distributed training requires optimizer and scheduler factories.")
+        elif self.nprocs == 1 and not argument_case:
+            raise ValueError("Single process training requires optimizer and scheduler arguments.")
