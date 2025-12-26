@@ -88,13 +88,13 @@ class TrainContextBuilder:
         )
         return self
     
-    def with_parallel_fn(self) -> Self:
+    def with_parallel(self) -> Self:
         device = get_current_device()
         self._context.model = self._context.model.to(device=device)
         
         if self.config.nprocs > 1:
             
-            fn = self.config.parallel_fn
+            fn = self.config.parallel_wrapper
             optimizer_fn = self.config.optimizer_factory
             scheduler_fn = self.config.scheduler_factory
             

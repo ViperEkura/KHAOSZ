@@ -4,7 +4,7 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 
 @dataclass
@@ -101,7 +101,7 @@ class TrainConfig:
         default="29500",
         metadata={"help": "Master port for distributed training."}
     )
-    parallel_fn: Optional[Callable] = field(
+    parallel_wrapper: Optional[Callable] = field(
         default=None,
         metadata={"help": "Parallel function for training."}
     )
@@ -115,6 +115,14 @@ class TrainConfig:
     )
 
     # others
+    device_ids: Optional[List[int]] = field(
+        default=None,
+        metadata={"help": "Device ids for distributed training."}
+    )
+    device_type: str = field(
+        default="cuda",
+        metadata={"help": "Device type for distributed training."}
+    )
     extra_kwargs: dict = field(
         default_factory=dict,
         metadata={"help": "Other arguments."}
@@ -138,3 +146,5 @@ class TrainConfig:
             raise ValueError("Distributed training requires optimizer and scheduler factories.")
         elif self.nprocs == 1 and not argument_case:
             raise ValueError("Single process training requires optimizer and scheduler arguments.")
+        
+        

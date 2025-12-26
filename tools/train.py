@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.distributed.fsdp as fsdp
 
+from typing import List, Optional
 from functools import partial
 from khaosz.config import ModelParameter, TrainConfig, CosineScheduleConfig
 from khaosz.trainer import Trainer, SchedulerFactory
@@ -12,6 +13,15 @@ from khaosz.data import DatasetLoader
 
 
 def parse_args() -> argparse.Namespace:
+    def parse_device_ids(s: Optional[str]) -> Optional[List[int]]:
+        if s is None or s.strip() == "":
+            return None
+        try:
+            return [int(x.strip()) for x in s.split(",") if x.strip()]
+        except ValueError as e:
+            raise argparse.ArgumentTypeError(f"Invalid device_ids format: {s}. Expected comma-separated integers like '0,1,2'.")
+
+
     parser = argparse.ArgumentParser(description="Train the Transformer model.")
     
     parser.add_argument("--train_type",choices=["seq", "sft", "dpo"], help="Train type.")
@@ -40,6 +50,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start_batch", type=int, default=0, help="Start batch for training.")
     
     parser.add_argument("--nprocs", type=int, default=1, help="Number of GPUs to use.")
+    parser.add_argument("--device_ids", type=parse_device_ids, default=None, help="Device IDs to use.")
+    parser.add_argument("--device_type", type=str, default="cuda", help="Device type to use.")
     
     args = parser.parse_args()
 
@@ -88,7 +100,9 @@ def train(
     pin_memory: bool,
     window_size: int,
     stride: int,
-    nprocs: int
+    nprocs: int,
+    device_ids: List[int],
+    device_type: str,
 ):
     assert train_type in ["seq", "sft", "dpo"]
     assert os.path.exists(param_path)
@@ -147,10 +161,12 @@ def train(
         num_workers=num_workers,
         pin_memory=pin_memory,
         nprocs=nprocs,
+        parallel_wrapper=fsdp_wrap,
         optimizer_factory=optimizer_fn,
         scheduler_factory=scheduler_fn,
+        device_ids=device_ids,
+        device_type=device_type,
         extra_kwargs=kwargs,
-        parallel_fn=fsdp_wrap
     )
     
     trainer = Trainer(train_config)
