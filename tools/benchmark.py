@@ -28,7 +28,7 @@ class GenerationBenchmark:
     def _initialize_kv_cache(self, batch_size: int) -> list:
         """初始化KV缓存"""
         config = self.config
-        shape = (batch_size, config.m_len, config.n_layer, config.n_kvhead, config.n_dim // config.n_head)
+        shape = (batch_size, config.max_len, config.n_layers, config.n_kv_heads, config.dim // config.n_heads)
         k_cache = torch.zeros(shape, device=self.device, dtype=self.dtype)
         v_cache = torch.zeros(shape, device=self.device, dtype=self.dtype)
         return (k_cache, v_cache)
@@ -175,12 +175,12 @@ def print_benchmark_result(result: BenchmarkResult):
 if __name__ == "__main__":
     config = ModelConfig(
         vocab_size=10000,
-        n_dim=1536,
-        n_head=24,
-        n_kvhead=4,
-        d_ffn=6912,
-        m_len=2048,
-        n_layer=24,
+        dim=1536,
+        n_heads=24,
+        n_kv_heads=4,
+        dim_ffn=6912,
+        max_len=2048,
+        n_layers=24,
         norm_eps=1e-5,
     )
     

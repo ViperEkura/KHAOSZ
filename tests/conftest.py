@@ -83,19 +83,19 @@ def base_test_env(request: pytest.FixtureRequest):
     n_dim_choices = [8, 16, 32]
     n_head_choices = [2, 4]
     
-    n_dim = int(np.random.choice(n_dim_choices))
-    n_head = int(np.random.choice(n_head_choices))
-    n_kvhead = n_head // 2
-    d_ffn = n_dim * 2
+    dim = int(np.random.choice(n_dim_choices))
+    n_heads = int(np.random.choice(n_head_choices))
+    n_kv_heads = n_heads // 2
+    dim_ffn = dim * 2
 
     config = {
         "vocab_size": 1000,
-        "n_dim": n_dim,
-        "n_head": n_head,
-        "n_kvhead": n_kvhead,
-        "d_ffn": d_ffn,
-        "m_len": 1024,
-        "n_layer": 4,
+        "dim": dim,
+        "n_heads": n_heads,
+        "n_kv_heads": n_kv_heads,
+        "dim_ffn": dim_ffn,
+        "max_len": 1024,
+        "n_layers": 4,
         "norm_eps": 1e-5
     }
     

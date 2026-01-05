@@ -100,7 +100,7 @@ class GeneratorCore:
     ) -> List[int]:
         cur_cache_pos = start_pos
         
-        for _ in range(len(ids), self.config.m_len):
+        for _ in range(len(ids), self.config.max_len):
             next_token_id, cache_increase = self.generate_iterator(
                 input_ids, temperature, top_k, top_p, attn_mask, kv_caches, cur_cache_pos)
             
@@ -127,7 +127,7 @@ class EmbeddingEncoderCore:
         with_batch = isinstance(sentence, list)
         ids = self.tokenizer.encode(sentence)
         batch_ids = ids if with_batch else [ids]
-        max_model_len = self.config.m_len
+        max_model_len = self.config.max_len
         
         all_fragments = []
         fragment_origin_idx = []
@@ -195,10 +195,10 @@ class KVCacheManager:
         self.batch_size = batch_size
         self.device = device
         self.dtype = dtype
-        self.num_layers = config.n_layer
-        self.max_len = config.m_len
-        self.num_heads = config.n_kvhead
-        self.head_dim = config.n_dim //config.n_head
+        self.num_layers = config.n_layers
+        self.max_len = config.max_len
+        self.num_heads = config.n_kv_heads
+        self.head_dim = config.dim //config.n_heads
         
         self._kv_cache: Tuple[Tensor, Tensor] = None
         self._seq_mask: Tensor = None

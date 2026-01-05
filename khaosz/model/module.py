@@ -102,23 +102,20 @@ class RotaryEmbedding(nn.Module):
 
 
 class Linear(nn.Module):
-    def __init__(self, in_dim: int, out_dim: int, bias: bool = False, weight_param=None, bias_param=None):
+    def __init__(self, in_dim: int, out_dim: int, bias: bool = False):
         super().__init__()
-        weight_param = torch.empty((out_dim, in_dim)) if weight_param is None else weight_param
-        bias_param = torch.zeros(out_dim) if bias_param is None else bias_param
-        
-        self.weight = nn.Parameter(weight_param)
-        self.bias = nn.Parameter(bias_param) if bias else None
+        self.weight = nn.Parameter(torch.empty((out_dim, in_dim)))
+        self.bias = nn.Parameter(torch.zeros(out_dim)) if bias else None
 
     def forward(self, x: Tensor) -> Tensor:
         return F.linear(x, self.weight, self.bias)
 
 
 class RMSNorm(nn.Module):
-    def __init__(self, n_dim, norm_eps):
+    def __init__(self, dim, norm_eps):
         super().__init__()
-        self.weight = nn.Parameter(torch.ones(n_dim))
-        self.normalized_shape = (n_dim, )
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.normalized_shape = (dim, )
         self.norm_eps = norm_eps
 
     def forward(self, x: Tensor) -> Tensor:
@@ -127,41 +124,70 @@ class RMSNorm(nn.Module):
     
     
 class MLP(nn.Module):
-    def __init__(self, n_dim: int, d_ffn: int):
+    def __init__(self, dim: int, dim_feed_forward: int):
         super().__init__()
-        self.up = Linear(n_dim, d_ffn)
-        self.gate = Linear(n_dim, d_ffn)
-        self.down = Linear(d_ffn, n_dim)
+        self.up = Linear(dim, dim_feed_forward)
+        self.gate = Linear(dim, dim_feed_forward)
+        self.down = Linear(dim_feed_forward, dim)
     
     def forward(self, x: Tensor) -> Tensor:
         gated = self.up(x) * F.silu(self.gate(x))
         out = self.down(gated)
         return out
 
+class Attention(nn.Module):
+    
+    def forward(self, q: Tensor, k: Tensor, v: Tensor, mask: Optional[Tensor] = None, is_causal: bool= False):
+        # (bsz, seq_len, n_heads, head_dim) -> (bsz, n_heads, seq_len, head_dim)
+        q, k, v = q.permute(0, 2, 1, 3), k.permute(0, 2, 1, 3), v.permute(0, 2, 1, 3)
+        # (bsz, n_heads, seq_len, head_dim) - > (bsz, seq_len, n_heads*head_dim)
+        sdqa_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=is_causal).permute(0, 2, 1, 3).contiguous().flatten(2)
+        
+        return sdqa_out
+
 
 class GQA(nn.Module):
     def __init__(
         self, 
-        n_dim: int, 
-        n_head: int, 
-        n_kvhead: int, 
+        dim: int, 
+        n_heads: int, 
+        n_kv_heads: int, 
+        use_qk_norm: bool,
+        norm_eps: float,
+        use_gated_attention: bool,
         layer_id: int
     ):
         super().__init__()
-        assert n_dim % n_head == 0
-        assert n_head % n_kvhead == 0
+        assert dim % n_heads == 0
+        assert n_heads % n_kv_heads == 0
         
-        self.head_dim = n_dim // n_head
+        self.head_dim = dim // n_heads
         self.layer_id = layer_id
-        self.n_dim = n_dim
-        self.n_heads = n_head
-        self.n_kvheads = n_kvhead
-        self.n_rep = n_head // n_kvhead
+        self.dim = dim
+        self.n_heads = n_heads
+        self.n_kv_heads = n_kv_heads
+        self.n_rep = n_heads // n_kv_heads
+        self.use_qk_norm = use_qk_norm
+        self.use_gated_attention = use_gated_attention
         
-        self.q_proj = Linear(n_dim, n_head * self.head_dim)
-        self.k_proj = Linear(n_dim, n_kvhead * self.head_dim)
-        self.v_proj = Linear(n_dim, n_kvhead * self.head_dim)
-        self.o_proj = Linear(n_dim, n_dim)
+        self.attention = Attention()
+
+        self.q_proj = Linear(dim, n_heads * self.head_dim)
+        self.k_proj = Linear(dim, n_kv_heads * self.head_dim)
+        self.v_proj = Linear(dim, n_kv_heads * self.head_dim)
+        self.o_proj = Linear(dim, dim)
+        
+        if self.use_qk_norm:
+            self.q_norm = RMSNorm(self.head_dim, norm_eps)
+            self.k_norm = RMSNorm(self.head_dim, norm_eps)
+        
+        if self.use_gated_attention:
+            self.gate = Linear(dim, dim)
+
+    def _split_heads(self, x: Tensor, n_heads) -> Tensor:
+        batch_size, seq_len, _ = x.shape
+        x = x.reshape(batch_size, seq_len, n_heads, self.head_dim)
+        return x
     
     def forward(
         self,
@@ -174,9 +200,12 @@ class GQA(nn.Module):
         bsz, seq_len, _ = x.size()
         # x(bsz, seq_len, n_heads * head_dim) -> (bsz, seq_len, n_heads, head_dim)
         q = self._split_heads(self.q_proj(x), self.n_heads)
-        k = self._split_heads(self.k_proj(x), self.n_kvheads)
-        v = self._split_heads(self.v_proj(x), self.n_kvheads)
+        k = self._split_heads(self.k_proj(x), self.n_kv_heads)
+        v = self._split_heads(self.v_proj(x), self.n_kv_heads)
         q, k = apply_rotary_emb(q, rotary_emb), apply_rotary_emb(k, rotary_emb)
+        
+        if self.use_qk_norm:
+            q, k = self.q_norm(q), self.k_norm(k)
         
         if kv_cache is not None:
             k_cache, v_cache = kv_cache
@@ -190,27 +219,34 @@ class GQA(nn.Module):
             v = v_cache[:bsz, :start_pos + seq_len, self.layer_id]
         
         k, v = repeat_kv(k, self.n_rep), repeat_kv(v, self.n_rep)
+        sdqa_out = self.attention(q, k, v, mask, is_causal=(mask == None))
         
-        # (bsz, seq_len, n_heads, head_dim) -> (bsz, n_heads, seq_len, head_dim)
-        q, k, v = q.permute(0, 2, 1, 3), k.permute(0, 2, 1, 3), v.permute(0, 2, 1, 3)
-        sdqa_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=(mask == None)).permute(0, 2, 1, 3)
-        out = self.o_proj(sdqa_out.contiguous().view(bsz, seq_len, -1))
+        if self.use_gated_attention:
+            sdqa_out = sdqa_out * F.sigmoid(self.gate(x))
+        
+        out = self.o_proj(sdqa_out)
 
         return out
-    
-    def _split_heads(self, x: Tensor, n_heads) -> Tensor:
-        batch_size, seq_len, _ = x.shape
-        x = x.reshape(batch_size, seq_len, n_heads, self.head_dim)
-        return x
-    
+
 
 class DecoderBlock(nn.Module):
-    def __init__(self, n_dim, n_head, d_ffn, n_kvhead, norm_eps, layer_id):
+    def __init__(
+        self, 
+        dim: int, 
+        n_heads: int, 
+        dim_ffn: int, 
+        n_kv_heads: int, 
+        norm_eps: int, 
+        use_qk_norm: bool, 
+        use_gated_attention: bool, 
+        layer_id: int
+    ):
         super().__init__()
-        self.attention = GQA(n_dim, n_head, n_kvhead, layer_id)
-        self.norm_attn = RMSNorm(n_dim, norm_eps)
-        self.ffn = MLP(n_dim, d_ffn)
-        self.norm_ffn = RMSNorm(n_dim, norm_eps)
+        self.attention = GQA(dim, n_heads, n_kv_heads, 
+                             use_qk_norm, norm_eps, use_gated_attention, layer_id)
+        self.input_norm = RMSNorm(dim, norm_eps)
+        self.mlp = MLP(dim, dim_ffn)
+        self.post_attention_norm = RMSNorm(dim, norm_eps)
 
     def forward(
         self,
@@ -222,7 +258,7 @@ class DecoderBlock(nn.Module):
     ) -> Tensor:
         # attention
         attn_output = self.attention(
-            self.norm_attn(x), 
+            self.input_norm(x), 
             rotary_emb, 
             attention_mask, 
             kv_cache, 
@@ -231,16 +267,15 @@ class DecoderBlock(nn.Module):
         x = attn_output + x
         
         # feed forward
-        x = self.ffn(self.norm_ffn(x)) + x
+        x = self.mlp(self.post_attention_norm(x)) + x
         
         return x
 
 
 class Embedding(nn.Module):
-    def __init__(self, vocab_size: int, embedding_dim: int, weight_param=None):
+    def __init__(self, vocab_size: int, embedding_dim: int):
         super().__init__()
-        weight_param = torch.empty((vocab_size, embedding_dim)) if weight_param is None else weight_param
-        self.weight = nn.Parameter(weight_param)
+        self.weight = nn.Parameter(torch.empty((vocab_size, embedding_dim)))
     
     def forward(self, x: Tensor) -> Tensor:
         return F.embedding(x, self.weight)

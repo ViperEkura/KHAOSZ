@@ -167,7 +167,7 @@ class StreamGenerator(GeneratorCore):
         self.model.eval()
         kv_caches = cache_manager.get_kvcache()
         
-        for _ in range(len(ids), self.config.m_len):
+        for _ in range(len(ids), self.config.max_len):
             next_token_id, cache_increase = self.generate_iterator(
                 input_ids, temperature, top_k, top_p, kv_caches=kv_caches, start_pos=cur_cache_pos)
             
@@ -219,7 +219,7 @@ class BatchGenerator(GeneratorCore):
         start_cache_pos = max_ids_len
         cur_cache_pos = 0
         
-        while max_ids_len < self.config.m_len and sum(activate_task_mask) != 0:
+        while max_ids_len < self.config.max_len and sum(activate_task_mask) != 0:
             kv_caches = cache_manager.get_kvcache()
             attn_mask =cache_manager.get_seq_mask()
             

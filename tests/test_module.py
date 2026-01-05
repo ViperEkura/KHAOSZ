@@ -22,12 +22,12 @@ def test_env(request: pytest.FixtureRequest):
     
     config = {
         "vocab_size": 1000,
-        "n_dim": 128,
-        "n_head": 4,
-        "n_kvhead": 2,
-        "d_ffn": 256,
-        "m_len": 64,
-        "n_layer": 2,
+        "dim": 128,
+        "n_heads": 4,
+        "n_kv_heads": 2,
+        "dim_ffn": 256,
+        "max_len": 64,
+        "n_layers": 2,
         "norm_eps": 1e-5
     }
     with open(config_path, 'w') as f:
@@ -64,9 +64,9 @@ def test_model_parameter(test_env):
 def test_transformer(test_env):
     model = test_env["model"]
     input_ids = torch.randint(0, test_env["transformer_config"].vocab_size, 
-                              (4, test_env["transformer_config"].m_len))
+                              (4, test_env["transformer_config"].max_len))
     output_logits = model(input_ids)["logits"]
-    target_shape = (4, test_env["transformer_config"].m_len, test_env["transformer_config"].vocab_size)
+    target_shape = (4, test_env["transformer_config"].max_len, test_env["transformer_config"].vocab_size)
     assert output_logits.shape == target_shape
     
 # generator
@@ -80,7 +80,7 @@ def test_embedding_encoder_core(test_env):
     
     single_emb = encoder.encode("测试文本")
     assert isinstance(single_emb, torch.Tensor)
-    assert single_emb.shape[-1] == test_env["transformer_config"].n_dim
+    assert single_emb.shape[-1] == test_env["transformer_config"].dim
     
 
     batch_emb = encoder.encode(["测试1", "测试2"])

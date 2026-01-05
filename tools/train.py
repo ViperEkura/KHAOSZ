@@ -111,7 +111,7 @@ def train(
     parameter.load(param_path)
 
     if window_size is None:
-        window_size = parameter.config.m_len
+        window_size = parameter.config.max_len
 
     model = parameter.model
     

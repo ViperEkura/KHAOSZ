@@ -59,16 +59,17 @@ class Transformer(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
         self.config = config
-        self.rotary_embeding = RotaryEmbedding(config.n_dim // config.n_head, config.m_len)
-        self.embed_tokens = Embedding(config.vocab_size, config.n_dim)
+        self.rotary_embeding = RotaryEmbedding(config.dim // config.n_heads, config.max_len)
+        self.embed_tokens = Embedding(config.vocab_size, config.dim)
         
         self.layers = nn.ModuleList([
-            DecoderBlock(config.n_dim, config.n_head, config.d_ffn, config.n_kvhead, config.norm_eps, layer_id)
-            for layer_id in range(config.n_layer)
+            DecoderBlock(config.dim, config.n_heads, config.dim_ffn, config.n_kv_heads, 
+                         config.norm_eps, config.use_qk_norm, config.use_gated_attention, layer_id)
+            for layer_id in range(config.n_layers)
         ])
         
-        self.norm = RMSNorm(config.n_dim, config.norm_eps)
-        self.lm_head = Linear(config.n_dim, config.vocab_size)
+        self.norm = RMSNorm(config.dim, config.norm_eps)
+        self.lm_head = Linear(config.dim, config.vocab_size)
         
         if self.config.tie_weight == True:
             self.lm_head.weight = self.embed_tokens.weight
