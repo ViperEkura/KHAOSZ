@@ -72,8 +72,8 @@ class SchedulerCallback(TrainCallback):
     """
     Scheduler callback for trainer.
     """
-    def __init__(self, scheduler: LRScheduler):
-        self.scheduler: LRScheduler = scheduler
+    def __init__(self):
+        self.scheduler: LRScheduler = None
     
     def on_train_begin(self, context: 'TrainContext'):
         for group in context.optimizer.param_groups:
@@ -92,9 +92,16 @@ class CheckpointCallback(TrainCallback):
     """ 
     Checkpoint callback for trainer.
     """
-    def __init__(self, interval: int, save_dir: str):
-        self.interval = interval
+    def __init__(
+        self, 
+        save_dir: str,  
+        interval: int,
+        weight_only: bool = False
+    ):
         self.save_dir = save_dir
+        self.interval = interval
+        self.weight_only = weight_only
+        
         self.last_ckpt_iter = 0
     
     @only_on_rank(0)

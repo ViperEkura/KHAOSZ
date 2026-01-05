@@ -28,9 +28,9 @@ class Trainer:
         train_config = self.train_config
         return [
             ProgressBarCallback(train_config.n_epoch),
-            CheckpointCallback(train_config.checkpoint_interval, train_config.checkpoint_dir),
+            CheckpointCallback(train_config.checkpoint_dir, train_config.checkpoint_interval),
             GradientClippingCallback(train_config.max_grad_norm),
-            SchedulerCallback(train_config.scheduler),
+            SchedulerCallback(),
         ]
     
     def _build_context(self, checkpoint: Optional[Checkpoint]) -> TrainContext:

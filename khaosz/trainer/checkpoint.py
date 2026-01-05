@@ -2,16 +2,15 @@ import os
 import pickle as pkl
 import matplotlib.pyplot as plt
 
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LRScheduler
+from torch import Tensor
 from typing import Dict, Optional
 
 
 class Checkpoint:
     def __init__(
         self,
-        optimizer_state: Optimizer,
-        scheduler_state: LRScheduler,
+        optimizer_state: Dict[str, Tensor],
+        scheduler_state: Dict[str, Tensor],
         epoch: int = 0,
         iteration: int = 0,
         metrics: Optional[Dict[str, list]] = None,
@@ -36,7 +35,7 @@ class Checkpoint:
             pkl.dump(train_state, f)
             
         if save_metric_plot and self.metrics:
-            self._plot_metrics()
+            self._plot_metrics(save_dir)
     
     @classmethod
     def load(cls, save_dir: str) -> "Checkpoint":
@@ -56,7 +55,7 @@ class Checkpoint:
             metrics=train_state["metrics"]
         )
     
-    def _plot_metrics(self):
+    def _plot_metrics(self, save_dir: str):
         for metric_name, metric_value in self.metrics.items():
             plt.figure(figsize=(10, 6))
             plt.plot(metric_value, label=metric_name)
@@ -65,5 +64,6 @@ class Checkpoint:
             plt.legend()
             plt.grid(True, alpha=0.3)
             
-            plt.savefig(f'{metric_name}.png', dpi=150, bbox_inches='tight')
+            save_path = os.path.join(save_dir, f"{metric_name}.png")
+            plt.savefig(save_path, dpi=150, bbox_inches='tight')
             plt.close()

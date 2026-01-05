@@ -52,10 +52,11 @@ class BaseModelIO:
         self.config.load(str(paths["config"]))
         self.tokenizer.load(str(paths["tokenizer"]))
         
+        if self.model is None:
+            self.model = Transformer(self.config)
+        
         if paths["model"].exists():
             state_dict = st.load_file(str(paths["model"]))
-            if self.model is None:
-                self.model = Transformer(self.config)
             self.model.load_state_dict(state_dict)
         
         return self
