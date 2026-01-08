@@ -22,7 +22,8 @@ class Trainer:
         callbacks: Optional[List[TrainCallback]] = None
     ):
         self.train_config = train_config
-        self.callbacks = callbacks or self._get_default_callbacks()
+        default_callbacks = self._get_default_callbacks()
+        self.callbacks = default_callbacks + callbacks if callbacks else default_callbacks
 
     def _get_default_callbacks(self) -> List[TrainCallback]:
         train_config = self.train_config
