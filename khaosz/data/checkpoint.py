@@ -1,15 +1,12 @@
 import os
 import json
+import torch
+import torch.distributed as dist
 import matplotlib.pyplot as plt
+
 from pathlib import Path
 from typing import Dict, Optional, Any
-
-import torch.distributed as dist
-from torch.distributed.checkpoint import save, load
-
-
-def get_rank() -> int:
-    return dist.get_rank() if dist.is_initialized() else 0
+from khaosz.parallel.setup import get_rank
 
 
 class Checkpoint:
@@ -53,8 +50,8 @@ class Checkpoint:
             "optimizer": self.optimizer_state_dict,
             "scheduler": self.scheduler_state_dict
         }
-
-        save(state_dict, checkpoint_id=str(save_path))
+        with open(save_path / f"state_dict_rank_{get_rank()}.pt", "wb") as f:
+            torch.save(state_dict, f)
 
     @classmethod
     def load(
@@ -62,9 +59,9 @@ class Checkpoint:
         save_dir: str,
     ) -> "Checkpoint":
 
-        save_path = str(Path(save_dir))
         rank = get_rank()
-
+        save_path = Path(save_dir)
+        
         meta = {}
         if rank == 0:
             with open(Path(save_dir) / "meta.json", "r") as f:
@@ -75,11 +72,8 @@ class Checkpoint:
             dist.broadcast_object_list(meta_list, src=0)
             meta = meta_list[0]
 
-        state_dict = {
-            "optimizer": {},
-            "scheduler": {}
-        }
-        load(state_dict, checkpoint_id=save_path, no_dist=True)
+        with open(save_path / f"state_dict_rank_{get_rank()}.pt", "rb") as f:
+            state_dict = torch.load(f)
 
         return cls(
             optimizer_state_dict=state_dict["optimizer"],

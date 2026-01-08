@@ -9,7 +9,7 @@ from khaosz.trainer.train_callback import (
     SchedulerCallback
 )
 from khaosz.trainer.train_context import TrainContext, TrainContextBuilder
-from khaosz.trainer.checkpoint import Checkpoint
+from khaosz.data.checkpoint import Checkpoint
 from khaosz.parallel.setup import spawn_parallel_fn
 
 logger = logging.getLogger(__name__)

@@ -4,7 +4,7 @@ from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 
 from khaosz.data import ResumableDistributedSampler
-from khaosz.trainer.checkpoint import Checkpoint
+from khaosz.data.checkpoint import Checkpoint
 from khaosz.trainer.strategy import StrategyFactory, BaseStrategy
 from khaosz.config.train_config import TrainConfig
 from khaosz.parallel.setup import get_current_device, get_world_size, get_rank

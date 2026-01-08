@@ -17,7 +17,7 @@ from khaosz.trainer.metric_util import (
     grad_std,
     grad_nan_num
 )
-from khaosz.trainer.checkpoint import Checkpoint
+from khaosz.data.checkpoint import Checkpoint
 
 if TYPE_CHECKING:
     from khaosz.trainer.train_context import TrainContext

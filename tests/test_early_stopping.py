@@ -3,7 +3,7 @@ import torch
 import numpy as np
 from khaosz.config import *
 from khaosz.trainer import *
-
+from khaosz.data.checkpoint import Checkpoint
 
 def test_early_stopping_simulation(base_test_env, early_stopping_dataset):
     """Simulate early stopping behavior"""
