@@ -38,7 +38,6 @@ class Trainer:
                 .with_checkpoint(checkpoint)
                 .with_dataloader()
                 .with_strategy()
-                .with_parallel()
                 .build())
     
     def _call_callbacks(self, method_name: str, context: TrainContext):

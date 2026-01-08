@@ -40,19 +40,32 @@ class TrainContextBuilder:
             world_size=get_world_size(),
             rank=get_rank(),
         )
-    
+        
+        device = get_current_device()
+        self._context.model = self._context.model.to(device=device)
+        
+        if self.config.nprocs > 1:
+            
+            fn = self.config.parallel_wrapper
+            optimizer_fn = self.config.optimizer_factory
+            scheduler_fn = self.config.scheduler_factory
+            
+            self._context.model = fn(self._context.model)
+            self._context.optimizer = optimizer_fn(self._context.model.parameters())
+            self._context.scheduler = scheduler_fn(self._context.optimizer)
+
     def with_checkpoint(self, checkpoint: Optional[Checkpoint]) -> Self:
         if checkpoint is None:
             checkpoint = Checkpoint(
-                optimizer_state=self.config.optimizer.state_dict(),
-                scheduler_state=self.config.scheduler.state_dict(),
+                optimizer_state_dict=self.config.optimizer.state_dict(),
+                scheduler_state_dict=self.config.scheduler.state_dict() if self.config.scheduler is not None else None,
             )
         else:
             # resume from the assigned checkpoint or assigned iteration
             self._context.epoch = max(checkpoint.epoch, self.config.start_epoch)
             self._context.iteration = max(checkpoint.iteration, self.config.start_batch)
-            self._context.optimizer.load_state_dict(checkpoint.optimizer_state)
-            self._context.scheduler.load_state_dict(checkpoint.scheduler_state)
+            self._context.optimizer.load_state_dict(checkpoint.optimizer_state_dict)
+            self._context.scheduler.load_state_dict(checkpoint.scheduler_state_dict)
         
         self._context.checkpoint = checkpoint
         return self
@@ -88,21 +101,6 @@ class TrainContextBuilder:
         )
         return self
     
-    def with_parallel(self) -> Self:
-        device = get_current_device()
-        self._context.model = self._context.model.to(device=device)
-        
-        if self.config.nprocs > 1:
-            
-            fn = self.config.parallel_wrapper
-            optimizer_fn = self.config.optimizer_factory
-            scheduler_fn = self.config.scheduler_factory
-            
-            self._context.model = fn(self._context.model)
-            self._context.optimizer = optimizer_fn(self._context.model.parameters())
-            self._context.scheduler = scheduler_fn(self._context.optimizer)
-            
-        return self
     
     def build(self) -> TrainContext:
         return self._context

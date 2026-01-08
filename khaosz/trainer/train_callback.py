@@ -6,7 +6,7 @@ from pathlib import Path
 from tqdm import tqdm
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import LRScheduler
-from typing import List, Optional, Protocol, TYPE_CHECKING
+from typing import List, Literal, Optional, Protocol, TYPE_CHECKING
 
 from khaosz.parallel import only_on_rank
 from khaosz.trainer.metric_util import (
@@ -104,15 +104,15 @@ class CheckpointCallback(TrainCallback):
         
         self.last_ckpt_iter = 0
     
-    @only_on_rank(0)
     def _save_checkpoint(self, context: 'TrainContext'):
         save_path = os.path.join(self.save_dir, f"epoch_{context.epoch}_iter_{context.iteration}")
         context.checkpoint = Checkpoint(
-            context.optimizer.state_dict(), 
-            context.scheduler.state_dict(), 
-            context.epoch, 
-            context.iteration
+            optimizer_state_dict=context.optimizer.state_dict(),
+            scheduler_state_dict=context.scheduler.state_dict() if context.scheduler else None,
+            epoch=context.epoch,
+            iteration=context.iteration
         )
+
         context.checkpoint.save(save_path)
         self.last_ckpt_iter = context.iteration
     
