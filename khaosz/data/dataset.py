@@ -4,7 +4,7 @@ import bisect
 from abc import ABC, abstractmethod
 from torch import Tensor
 from torch.utils.data import Dataset
-from khaosz.data.mmap import MmapFileHander
+from khaosz.data.mmap import MmapFileHandler
 from typing import Callable, List, Dict, Literal, Optional, Union
 
 Seg = List[Tensor]  
@@ -74,7 +74,7 @@ class BaseDataset(Dataset, ABC):
         self.total_samples = None
 
     def load(self, load_path: str):
-        self.segments, self.total_samples = MmapFileHander.load(load_path)
+        self.segments, self.total_samples = MmapFileHandler.load(load_path)
         self.fetcher = MultiSegmentFetcher(self.segments)
         
     def get_index(self, index: int) -> int:

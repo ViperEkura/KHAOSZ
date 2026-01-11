@@ -17,23 +17,21 @@ def create_mmap_dataset(dir_path, data_dict, dataset_name):
     
     for key, tensor in data_dict.items():
         # Convert tensor to numpy array and save as binary file
-        np_array = tensor.numpy()
-        file_name = f"{key}.bin"
+        file_name = f"{key}.pt"
         file_path = os.path.join(dataset_dir, file_name)
         
-        # Save as binary file
-        np_array.tofile(file_path)
+        with open(file_path, "wb") as f:
+            torch.save(tensor, f)
         
         # Add to file mapper
         file_mapper.append({
             "file_name": file_name,
-            "size": len(np_array),
-            "dtype": str(np_array.dtype),
+            "size": tensor.numel(),
             "key": key
         })
     
     # Save file mapper
-    mapper_path = os.path.join(dataset_dir, "file_mapper.json")
+    mapper_path = os.path.join(dataset_dir, "metadata.json")
     with open(mapper_path, "w") as f:
         json.dump(file_mapper, f, indent=2)
     
@@ -194,7 +192,7 @@ def test_multi_segment_fetcher(base_test_env):
     dataset_path = create_mmap_dataset(test_dir, dummy_data, "multi_segment_test")
     
     # Load the memory mapped files directly
-    multi_segments, _ = MmapFileHander.load(dataset_path)
+    multi_segments, _ = MmapFileHandler.load(dataset_path)
     
     # Create fetcher
     fetcher = MultiSegmentFetcher(multi_segments)
@@ -218,14 +216,14 @@ def test_multi_segment_fetcher(base_test_env):
 
 
 def test_mmap_file_handler_direct(base_test_env):
-    """Test MmapFileHander directly without DatasetLoader"""
+    """Test MmapFileHandler directly without DatasetLoader"""
     test_dir = base_test_env["test_dir"]
     
     # Create test data with multiple segments
     seq_length1 = 100
     seq_length2 = 200
     
-    # Create data in the format expected by MmapFileHander
+    # Create data in the format expected by MmapFileHandler
     dummy_data = {
         "sequence": [
             torch.randint(0, 1000, (seq_length1,), dtype=torch.int64),
@@ -237,12 +235,12 @@ def test_mmap_file_handler_direct(base_test_env):
         ]
     }
     
-    # Save data using MmapFileHander
+    # Save data using MmapFileHandler
     dataset_dir = os.path.join(test_dir, "mmap_direct_test")
-    MmapFileHander.save(dataset_dir, dummy_data)
+    MmapFileHandler.save(dataset_dir, dummy_data)
     
-    # Load data using MmapFileHander
-    loaded_data, num_samples = MmapFileHander.load(dataset_dir)
+    # Load data using MmapFileHandler
+    loaded_data, num_samples = MmapFileHandler.load(dataset_dir)
     
     # Verify data structure
     assert set(loaded_data.keys()) == set(dummy_data.keys())
@@ -255,7 +253,7 @@ def test_mmap_file_handler_direct(base_test_env):
             assert torch.equal(loaded_data[key][i], dummy_data[key][i])
 
 def test_mmap_file_handler_dtypes(base_test_env):
-    """Test MmapFileHander with different data types"""
+    """Test MmapFileHandler with different data types"""
     test_dir = base_test_env["test_dir"]
     
     # Create test data with different dtypes
@@ -269,10 +267,10 @@ def test_mmap_file_handler_dtypes(base_test_env):
     
     # Save data
     dataset_dir = os.path.join(test_dir, "dtype_test")
-    MmapFileHander.save(dataset_dir, data)
+    MmapFileHandler.save(dataset_dir, data)
     
     # Load data
-    loaded_data, _ = MmapFileHander.load(dataset_dir)
+    loaded_data, _ = MmapFileHandler.load(dataset_dir)
     
     # Verify data types
     for key in data:
@@ -280,14 +278,14 @@ def test_mmap_file_handler_dtypes(base_test_env):
         assert torch.equal(loaded_data[key][0], data[key][0])
 
 def test_mmap_file_handler_error_handling(base_test_env):
-    """Test MmapFileHander error handling"""
+    """Test MmapFileHandler error handling"""
     test_dir = base_test_env["test_dir"]
     
     # Test loading without file_mapper.json
     empty_dir = os.path.join(test_dir, "empty_dir")
     os.makedirs(empty_dir, exist_ok=True)
     with pytest.raises(FileNotFoundError):
-        MmapFileHander.load(empty_dir)
+        MmapFileHandler.load(empty_dir)
     
     # Test loading with invalid file_mapper.json
     invalid_dir = os.path.join(test_dir, "invalid_dir")
@@ -299,4 +297,4 @@ def test_mmap_file_handler_error_handling(base_test_env):
     
     # This should raise FileNotFoundError because no binary files exist
     with pytest.raises(FileNotFoundError):
-        MmapFileHander.load(invalid_dir)
+        MmapFileHandler.load(invalid_dir)
