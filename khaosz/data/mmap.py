@@ -11,8 +11,8 @@ class MmapFileHandler:
         
         ```
         [
-            {"file_name": "file1.bin", "size": 1000, "key": "key1"},
-            {"file_name": "file2.bin", "size": 2000, "key": "key2"}
+            {"file_name": "file1.pt", "size": 1000, "key": "key1"},
+            {"file_name": "file2.pt", "size": 2000, "key": "key2"}
             ...
         ]
         ```
@@ -21,8 +21,8 @@ class MmapFileHandler:
         ```
         folder_path:
             - metadata.json
-            - file1.bin
-            - file2.bin
+            - file1.pt
+            - file2.pt
         ...
         ```
     """
