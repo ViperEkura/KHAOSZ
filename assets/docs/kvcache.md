@@ -4,8 +4,8 @@
 
 $$
 \begin{align*}
-o_i &= \sum_j s_{ij} v_{j} \\
-s_{ij} &= \text{softmax}\left( \sum_n \frac{q_{i,n} k_{j,n}}{\sqrt{d_k}} \right)
+o_i &= \sum_j s_{ij} v_{j} \newline
+s_{ij} &= \text{softmax}\left( \frac{q_{i} k_{j}}{\sqrt{d_k}} \right)
 \end{align*}
 $$
 
@@ -13,15 +13,15 @@ $$
 
 $$
 \begin{align*}
-o_n &= \sum_j s_{j}v_{j,n} \\
-s_j &= \text{softmax}\left(\sum_n\frac{q_n k_{j,n}}{\sqrt{d_k}} \right)
+o_n &= \sum_j s_{j}v_{j} \newline
+s_j &= \text{softmax}\left(\frac{q_n k_{j}}{\sqrt{d_k}} \right)
 \end{align*}
 $$
 
 如果我们把式子展开
 
 $$
-o_n = \sum_j \sum_n \text{softmax}\left(\frac{q_n k_{j,n}}{\sqrt{d_k}}\right)v_{j,n}
+o_n = \sum_j \text{softmax}\left(\frac{q_n k_{j}}{\sqrt{d_k}}\right)v_{j}
 $$
 
 以上表达式只有k和v存在长度下标, 而 $q$ 没有， 所以计算过程中 $q$ 的输入是确定的上次输入的最后一个token, 而 $k,  v$ 是需要对不同长度的部分进行缓存的，同时缓存的时候应该注意位置编码的计算应该在kvcache的计算之前进行，否则会存在位置编码的计算错误
