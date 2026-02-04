@@ -105,6 +105,11 @@ class TrainConfig:
         default=None,
         metadata={"help": "Parallel function for training."}
     )
+    state_dict_wrapper: Optional[Callable] = field(
+         default=None,
+         metadata={"help": "Parallel function for state  dict saving."}
+    )
+    
     optimizer_factory: Optional[Callable[[nn.Module], Optimizer]] = field(
         default=None,
         metadata={"help": "Optimizer factory for training."}

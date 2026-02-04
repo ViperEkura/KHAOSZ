@@ -28,6 +28,7 @@ class TrainContext:
     
     world_size: int = field(default=1)
     rank: int = field(default=0)
+    kwargs: dict = field(default_factory=dict)
 
 
 class TrainContextBuilder:
