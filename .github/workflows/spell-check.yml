@@ -9,5 +9,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check spelling
+      - name: Check spelling in specific files
         uses: codespell-project/actions-codespell@v2
+        with:
+          check_filenames: true
+          only_warn: false
+          path: "**/*.{md, py}"
