@@ -1,18 +1,17 @@
+import h5py
 import torch
 import bisect
 
 from abc import ABC, abstractmethod
 from torch import Tensor
 from torch.utils.data import Dataset
-from khaosz.data.mmap import MmapFileHandler
+from khaosz.data.file import load_h5
 from typing import Callable, List, Dict, Literal, Optional, Union
 
-Seg = List[Tensor]  
-MultiSeg = Dict[str, Seg]
 
 
 class BaseSegmentFetcher:
-    def __init__(self, segments: Seg):
+    def __init__(self, segments: List[Tensor]):
         self.segments = segments
         self.cum_lengths = []
         total = 0
@@ -37,20 +36,21 @@ class BaseSegmentFetcher:
             prev_cum = self.cum_lengths[i - 1] if i > 0 else 0
             start = max(begin_idx - prev_cum, 0)
             end = min(end_idx - prev_cum, len(self.segments[i]))
-            result_segments.append(self.segments[i][start:end])
+            data = self.segments[i][start:end]
+            result_segments.append(data)
 
         return torch.cat(result_segments, dim=0)
     
 
 class MultiSegmentFetcher:
-    def __init__(self, muti_segments: MultiSeg):
+    def __init__(self, muti_segments: Dict):
         self.muti_keys = list(muti_segments.keys())
         self.muti_fetchers = {
             key: BaseSegmentFetcher(segments)
             for key, segments in muti_segments.items()
         }
         
-    def key_fetch(self, begin_idx: int, end_idx: int, keys: Union[str, List[str]]) -> Union[Tensor, Seg]:
+    def key_fetch(self, begin_idx: int, end_idx: int, keys: Union[str, List[str]]) -> Dict:
         fetch_dict = {} 
         keys = [keys] if isinstance(keys, str) else keys
         
@@ -61,20 +61,20 @@ class MultiSegmentFetcher:
 
         return fetch_dict if len(keys) > 1 else fetch_dict[keys[0]]
     
-    def fetch_data(self, begin_idx: int, end_idx: int) -> Union[Tensor, Seg]:
+    def fetch_data(self, begin_idx: int, end_idx: int) -> Dict:
         return self.key_fetch(begin_idx, end_idx, self.muti_keys)
 
 
 class BaseDataset(Dataset, ABC):
     def __init__(self, window_size: int, stride: int):
         super().__init__()
-        self.segments: MultiSeg = {}
+        self.segments = {}
         self.window_size = window_size
         self.stride = stride
         self.total_samples = None
 
     def load(self, load_path: str):
-        self.segments, self.total_samples = MmapFileHandler.load(load_path)
+        self.segments, self.total_samples = load_h5(load_path)
         self.fetcher = MultiSegmentFetcher(self.segments)
         
     def get_index(self, index: int) -> int:
