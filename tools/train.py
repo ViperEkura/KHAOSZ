@@ -5,6 +5,8 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.distributed.fsdp as fsdp
 
+from torch.distributed.fsdp.api import StateDictType
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from typing import List, Optional
 from functools import partial
 from khaosz.config import ModelParameter, TrainConfig, CosineScheduleConfig
@@ -77,6 +79,13 @@ def create_optimizer(model: nn.Module, **kwargs) -> optim.Optimizer:
 def create_scheduler(optimizer: optim.Optimizer, **kwargs) -> optim.lr_scheduler.LRScheduler:
     return SchedulerFactory.load(optimizer, **kwargs)
 
+def prepare_checkpoint(model: nn.Module, optimizer: optim.Optimizer) -> dict:
+    with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT):
+        model_state_dict = model.state_dict()
+        optim_state_dict = FSDP.optim_state_dict(model, optimizer)
+        
+        return model_state_dict, optim_state_dict
+
 def train(
     train_type: str,
     param_path: str,
@@ -133,22 +142,18 @@ def train(
         warmup_steps=warmup_steps,
         total_steps=len(dataset) * n_epoch // (batch_size * nprocs), 
     )
-    
 
-    optimizer_fn = partial(create_optimizer, **{"lr": max_lr, "betas": (adamw_beta1, adamw_beta2), "weight_decay": adamw_weight_decay})
-    scheduler_fn = partial(create_scheduler, **{"schedule_config": schedule_config})
-    optimizer, scheduler = None, None
-    
-    if nprocs == 1:
-        optimizer = optimizer_fn(model.parameters())
-        scheduler = scheduler_fn(optimizer)
+    optimizer_fn = partial(create_optimizer, 
+                           **{"lr": max_lr, "betas": (adamw_beta1, adamw_beta2), "weight_decay": adamw_weight_decay})
+    scheduler_fn = partial(create_scheduler, 
+                           **{"schedule_config": schedule_config})
     
     train_config = TrainConfig(
         model=model,
         strategy=train_type,
         dataset=dataset,
-        optimizer=optimizer,
-        scheduler=scheduler,
+        optimizer_fn=optimizer_fn,
+        scheduler_fn=scheduler_fn,
         checkpoint_dir=checkpoint_dir,
         n_epoch=n_epoch,
         batch_size=batch_size,
@@ -162,8 +167,7 @@ def train(
         pin_memory=pin_memory,
         nprocs=nprocs,
         parallel_wrapper=fsdp_wrap,
-        optimizer_factory=optimizer_fn,
-        scheduler_factory=scheduler_fn,
+        state_dict_fn=prepare_checkpoint,
         device_ids=device_ids,
         device_type=device_type,
         extra_kwargs=kwargs,

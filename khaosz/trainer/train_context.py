@@ -36,8 +36,6 @@ class TrainContextBuilder:
         self.config = config
         self._context = TrainContext(
             model=config.model,
-            optimizer=config.optimizer,
-            scheduler=config.scheduler,
             world_size=get_world_size(),
             rank=get_rank(),
         )
@@ -46,20 +44,17 @@ class TrainContextBuilder:
         self._context.model = self._context.model.to(device=device)
         
         if self.config.nprocs > 1:
-            
             fn = self.config.parallel_wrapper
-            optimizer_fn = self.config.optimizer_factory
-            scheduler_fn = self.config.scheduler_factory
-            
             self._context.model = fn(self._context.model)
-            self._context.optimizer = optimizer_fn(self._context.model.parameters())
-            self._context.scheduler = scheduler_fn(self._context.optimizer)
-
+        
+        self._context.optimizer = self.config.optimizer_fn(self._context.model.parameters())
+        self._context.scheduler = self.config.scheduler_fn(self._context.optimizer)
+    
     def with_checkpoint(self, checkpoint: Optional[Checkpoint]) -> Self:
         if checkpoint is None:
             checkpoint = Checkpoint(
-                optimizer_state_dict=self.config.optimizer.state_dict(),
-                scheduler_state_dict=self.config.scheduler.state_dict() if self.config.scheduler is not None else None,
+                optimizer_state_dict=self._context.optimizer.state_dict(),
+                scheduler_state_dict=self._context.scheduler.state_dict(),
             )
         else:
             # resume from the assigned checkpoint or assigned iteration
@@ -101,7 +96,6 @@ class TrainContextBuilder:
             **self.config.extra_kwargs
         )
         return self
-    
     
     def build(self) -> TrainContext:
         return self._context
