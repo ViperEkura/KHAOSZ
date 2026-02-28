@@ -47,7 +47,7 @@ class TrainContextBuilder:
             fn = self.config.parallel_wrapper
             self._context.model = fn(self._context.model)
         
-        self._context.optimizer = self.config.optimizer_fn(self._context.model.parameters())
+        self._context.optimizer = self.config.optimizer_fn(self._context.model)
         self._context.scheduler = self.config.scheduler_fn(self._context.optimizer)
     
     def with_checkpoint(self, checkpoint: Optional[Checkpoint]) -> Self:

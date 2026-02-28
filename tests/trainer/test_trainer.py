@@ -15,14 +15,15 @@ def test_different_batch_sizes(base_test_env, random_dataset):
             warmup_steps=10,
             total_steps=20
         )
-        optimizer = torch.optim.AdamW(base_test_env["model"].parameters())
-        scheduler = SchedulerFactory.load(optimizer, schedule_config)
+        optimizer_fn = lambda model: torch.optim.AdamW(model.parameters())
+        scheduler_fn = lambda optim: SchedulerFactory.load(optim, schedule_config)
+        
         train_config = TrainConfig(
             strategy="seq",
             model=base_test_env["model"],
             dataset=random_dataset,
-            optimizer=optimizer,
-            scheduler=scheduler,
+            optimizer_fn=optimizer_fn,
+            scheduler_fn=scheduler_fn,
             checkpoint_dir=base_test_env["test_dir"],
             n_epoch=1,
             batch_size=batch_size,
@@ -43,13 +44,14 @@ def test_gradient_accumulation(base_test_env, random_dataset):
             warmup_steps=10,
             total_steps=20
         )
-        optimizer = torch.optim.AdamW(base_test_env["model"].parameters())
-        scheduler = SchedulerFactory.load(optimizer, schedule_config)
+        optimizer_fn = lambda model: torch.optim.AdamW(model.parameters())
+        scheduler_fn = lambda optim: SchedulerFactory.load(optim, schedule_config)
+        
         train_config = TrainConfig(
             strategy="seq",
             model=base_test_env["model"],
-            optimizer=optimizer,
-            scheduler=scheduler,
+            optimizer_fn=optimizer_fn,
+            scheduler_fn=scheduler_fn,
             dataset=random_dataset,
             checkpoint_dir=base_test_env["test_dir"],
             n_epoch=1,
@@ -79,14 +81,15 @@ def test_memory_efficient_training(base_test_env, random_dataset):
             warmup_steps=10,
             total_steps=20
         )
-        optimizer = torch.optim.AdamW(base_test_env["model"].parameters())
-        scheduler = SchedulerFactory.load(optimizer, schedule_config)
+        optimizer_fn = lambda model: torch.optim.AdamW(model.parameters())
+        scheduler_fn = lambda optim: SchedulerFactory.load(optim, schedule_config)
+        
         train_config = TrainConfig(
             strategy="seq",
             model=base_test_env["model"],
             dataset=random_dataset,
-            optimizer=optimizer,
-            scheduler=scheduler,
+            optimizer_fn=optimizer_fn,
+            scheduler_fn=scheduler_fn,
             checkpoint_dir=base_test_env["test_dir"],
             n_epoch=1,
             batch_size=config["batch_size"],

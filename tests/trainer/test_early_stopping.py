@@ -9,15 +9,16 @@ def test_early_stopping_simulation(base_test_env, early_stopping_dataset):
     """Simulate early stopping behavior"""
     
     schedule_config = CosineScheduleConfig(warmup_steps=10, total_steps=20)
-    optimizer = torch.optim.AdamW(base_test_env["model"].parameters())
-    scheduler = SchedulerFactory.load(optimizer, schedule_config)
+    
+    optimizer_fn = lambda model: torch.optim.AdamW(model.parameters())
+    scheduler_fn = lambda optim: SchedulerFactory.load(optim, schedule_config)
     
     train_config = TrainConfig(
         strategy="seq",
-        scheduler=scheduler,
+        optimizer_fn=optimizer_fn,
+        scheduler_fn=scheduler_fn,
         model=base_test_env["model"],
         dataset=early_stopping_dataset,
-        optimizer=optimizer,
         checkpoint_dir=base_test_env["test_dir"],
         n_epoch=2,
         batch_size=2,

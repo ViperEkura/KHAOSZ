@@ -10,15 +10,15 @@ def test_callback_integration(base_test_env, random_dataset):
         total_steps=20
     )
     
-    optimizer = torch.optim.AdamW(base_test_env["model"].parameters())
-    scheduler = SchedulerFactory.load(optimizer, schedule_config)
+    optimizer_fn = lambda model: torch.optim.AdamW(model.parameters())
+    scheduler_fn = lambda optim: SchedulerFactory.load(optim, schedule_config)
     
     train_config = TrainConfig(
         model=base_test_env["model"],
         strategy='seq',
         dataset=random_dataset,
-        optimizer=optimizer,
-        scheduler=scheduler,
+        optimizer_fn=optimizer_fn,
+        scheduler_fn=scheduler_fn,
         checkpoint_dir=base_test_env["test_dir"],
         n_epoch=1,
         batch_size=2,
