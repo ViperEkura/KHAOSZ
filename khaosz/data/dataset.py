@@ -1,4 +1,3 @@
-import h5py
 import torch
 import bisect
 
@@ -78,8 +77,10 @@ class BaseDataset(Dataset, ABC):
         self.fetcher = MultiSegmentFetcher(self.segments)
         
     def get_index(self, index: int) -> int:
-        begin_idx = min(index * self.stride, self.total_samples - self.window_size - 1)
-        end_idx = begin_idx + self.window_size
+        assert self.total_samples > self.window_size
+        
+        begin_idx = min(index * self.stride, self.total_samples - 1 - self.window_size)
+        end_idx = min(begin_idx + self.window_size, self.total_samples - 1)
         
         return begin_idx, end_idx
         
@@ -91,7 +92,7 @@ class BaseDataset(Dataset, ABC):
         assert self.total_samples is not None
         if self.total_samples <= self.window_size:
             return 0
-        return self.total_samples // self.stride + 1
+        return (self.total_samples - 1 - self.window_size) // self.stride + 1
     
 
 class SeqDataset(BaseDataset):

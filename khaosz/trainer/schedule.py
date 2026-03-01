@@ -151,8 +151,8 @@ class SchedulerFactory:
     """
 
     @staticmethod
-    def load(optimizer, scedule_config: ScheduleConfig) -> BaseScheduler:
-        kwargs = scedule_config.get_kwargs()
+    def load(optimizer, schedule_config: ScheduleConfig) -> BaseScheduler:
+        kwargs = schedule_config.get_kwargs()
         schedule_type = kwargs.pop("schedule_type")
         
         if schedule_type == "cosine":

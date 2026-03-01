@@ -53,15 +53,13 @@ class TrainContextBuilder:
     def with_checkpoint(self, checkpoint: Optional[Checkpoint]) -> Self:
         if checkpoint is None:
             checkpoint = Checkpoint(
-                optimizer_state_dict=self._context.optimizer.state_dict(),
-                scheduler_state_dict=self._context.scheduler.state_dict(),
+                state_dict=self._context.model.state_dict(),
             )
         else:
             # resume from the assigned checkpoint or assigned iteration
             self._context.epoch = max(checkpoint.epoch, self.config.start_epoch)
             self._context.iteration = max(checkpoint.iteration, self.config.start_batch)
-            self._context.optimizer.load_state_dict(checkpoint.optimizer_state_dict)
-            self._context.scheduler.load_state_dict(checkpoint.scheduler_state_dict)
+            self._context.model.load_state_dict(checkpoint.state_dict)
         
         self._context.checkpoint = checkpoint
         return self

@@ -1,15 +1,12 @@
-# cache
-__pycache__
-.pytest_cache
+# Ignore everything
+*
 
-# params
-params/*
+# Allow directories to be traversed
+!*/
 
-# vscode file
-.vscode
-
-# build file
-build
-*.egg-info
-
-*.ipynb
+# Allow specific file types and root files
+!*.py
+!*.md
+!*.png
+!LICENSE
+!pyproject.toml

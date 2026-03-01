@@ -3,10 +3,8 @@ import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.distributed.fsdp as fsdp
+from torch.nn.parallel import DistributedDataParallel as DDP
 
-from torch.distributed.fsdp.api import StateDictType
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from typing import List, Optional
 from functools import partial
 from khaosz.config import ModelParameter, TrainConfig, CosineScheduleConfig
@@ -59,19 +57,16 @@ def parse_args() -> argparse.Namespace:
 
     return args
 
-def fsdp_wrap(model: nn.Module):
-    
-    fsdp_model = fsdp.FullyShardedDataParallel(
+def ddp_wrap(model: nn.Module):
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    model = model.to(device=f"cuda:{local_rank}", dtype=torch.bfloat16)
+    ddp_model = DDP(
         model,
-        sharding_strategy=fsdp.ShardingStrategy.SHARD_GRAD_OP,
-        mixed_precision=fsdp.MixedPrecision(
-            param_dtype=torch.bfloat16,
-            reduce_dtype=torch.bfloat16,
-            buffer_dtype=torch.bfloat16,
-        ),
-        backward_prefetch=fsdp.BackwardPrefetch.BACKWARD_PRE
+        device_ids=[local_rank],
+        output_device=local_rank,
+        find_unused_parameters=False
     )
-    return fsdp_model
+    return ddp_model
 
 def create_optimizer(model: nn.Module, **kwargs) -> optim.Optimizer:
     return optim.AdamW(model.parameters(), **kwargs)
@@ -79,12 +74,13 @@ def create_optimizer(model: nn.Module, **kwargs) -> optim.Optimizer:
 def create_scheduler(optimizer: optim.Optimizer, **kwargs) -> optim.lr_scheduler.LRScheduler:
     return SchedulerFactory.load(optimizer, **kwargs)
 
-def prepare_checkpoint(model: nn.Module, optimizer: optim.Optimizer) -> dict:
-    with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT):
-        model_state_dict = model.state_dict()
-        optim_state_dict = FSDP.optim_state_dict(model, optimizer)
-        
-        return model_state_dict, optim_state_dict
+def prepare_checkpoint(model: nn.Module) -> dict:
+    if isinstance(model, torch.nn.parallel.DistributedDataParallel):
+        state_dict = model.module.state_dict()
+    else:
+        state_dict = model.state_dict()
+    return state_dict
+
 
 def train(
     train_type: str,
@@ -166,7 +162,7 @@ def train(
         num_workers=num_workers,
         pin_memory=pin_memory,
         nprocs=nprocs,
-        parallel_wrapper=fsdp_wrap,
+        parallel_wrapper=ddp_wrap,
         state_dict_fn=prepare_checkpoint,
         device_ids=device_ids,
         device_type=device_type,

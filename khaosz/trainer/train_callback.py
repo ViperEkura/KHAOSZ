@@ -108,10 +108,10 @@ class CheckpointCallback(TrainCallback):
     
     def _save_checkpoint(self, context: 'TrainContext'):
         save_path = os.path.join(self.save_dir, f"epoch_{context.epoch}_iter_{context.iteration}")
-        state_dict = self.state_dict_fn(context.model) if self.state_dict_fn else context.optimizer.state_dict()
+        state_dict = self.state_dict_fn(context.model) if self.state_dict_fn else context.model.state_dict()
+        
         context.checkpoint = Checkpoint(
-            optimizer_state_dict=state_dict,
-            scheduler_state_dict=context.scheduler.state_dict() if context.scheduler else None,
+            state_dict=state_dict,
             epoch=context.epoch,
             iteration=context.iteration
         )

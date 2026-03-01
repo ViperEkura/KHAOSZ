@@ -12,14 +12,12 @@ from khaosz.parallel.setup import get_rank
 class Checkpoint:
     def __init__(
         self,
-        optimizer_state_dict: Dict[str, Any],
-        scheduler_state_dict: Optional[Dict[str, Any]] = None,
+        state_dict: Dict[str, Any],
         epoch: int = 0,
         iteration: int = 0,
         metrics: Optional[Dict[str, list]] = None,
     ):
-        self.optimizer_state_dict = optimizer_state_dict
-        self.scheduler_state_dict = scheduler_state_dict
+        self.state_dict = state_dict
         self.epoch = epoch
         self.iteration = iteration
         self.metrics = metrics or {}
@@ -46,12 +44,8 @@ class Checkpoint:
             if save_metric_plot and self.metrics:
                 self._plot_metrics(str(save_path))
 
-        state_dict = {
-            "optimizer": self.optimizer_state_dict,
-            "scheduler": self.scheduler_state_dict
-        }
-        with open(save_path / f"state_dict_rank_{get_rank()}.pt", "wb") as f:
-            torch.save(state_dict, f)
+            with open(save_path / f"state_dict.pt", "wb") as f:
+                torch.save(self.state_dict, f)
 
     @classmethod
     def load(
@@ -72,7 +66,7 @@ class Checkpoint:
             dist.broadcast_object_list(meta_list, src=0)
             meta = meta_list[0]
 
-        with open(save_path / f"state_dict_rank_{get_rank()}.pt", "rb") as f:
+        with open(save_path / f"state_dict.pt", "rb") as f:
             state_dict = torch.load(f)
 
         return cls(
