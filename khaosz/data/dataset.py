@@ -18,6 +18,9 @@ class BaseSegmentFetcher:
             total += len(seg)
             self.cum_lengths.append(total)
         self.total_length = total if segments else 0
+        
+    def __len__(self) -> int:
+        return self.total_length
 
     def fetch_data(self, begin_idx: int, end_idx: int) -> Tensor:
         if not (0 <= begin_idx < self.total_length and 0 <= end_idx <= self.total_length):
@@ -48,6 +51,10 @@ class MultiSegmentFetcher:
             key: BaseSegmentFetcher(segments)
             for key, segments in muti_segments.items()
         }
+    
+    def __len__(self) -> int:
+        len_list = [len(seg) for seg in self.muti_fetchers.values()]
+        return min(len_list)
         
     def key_fetch(self, begin_idx: int, end_idx: int, keys: Union[str, List[str]]) -> Dict:
         fetch_dict = {} 
@@ -73,8 +80,9 @@ class BaseDataset(Dataset, ABC):
         self.total_samples = None
 
     def load(self, load_path: str):
-        self.segments, self.total_samples = load_h5(load_path)
+        self.segments = load_h5(load_path)
         self.fetcher = MultiSegmentFetcher(self.segments)
+        self.total_samples = len(self.fetcher)
         
     def get_index(self, index: int) -> int:
         assert self.total_samples > self.window_size

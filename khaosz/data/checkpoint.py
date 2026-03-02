@@ -70,8 +70,7 @@ class Checkpoint:
             state_dict = torch.load(f)
 
         return cls(
-            optimizer_state_dict=state_dict["optimizer"],
-            scheduler_state_dict=state_dict["scheduler"],
+            state_dict=state_dict,
             epoch=meta["epoch"],
             iteration=meta["iteration"],
             metrics=meta.get("metrics", {}),
