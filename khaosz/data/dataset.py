@@ -13,11 +13,13 @@ class BaseSegmentFetcher:
     def __init__(self, segments: List[Tensor]):
         self.segments = segments
         self.cum_lengths = []
+        
         total = 0
         for seg in segments:
-            total += len(seg)
+            total += torch.numel(seg)
             self.cum_lengths.append(total)
-        self.total_length = total if segments else 0
+            
+        self.total_length = total
         
     def __len__(self) -> int:
         return self.total_length
