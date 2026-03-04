@@ -12,39 +12,39 @@
 
 <h2 id="english">English Version</h2>
 
-This is a Chinese-English bilingual Transformer model supporting both languages. It contains model configurations and training workflows, completing training by loading parameters defined in `param_path/config.json`. The training script `train.py` parses command-line arguments, including dataset root directory, number of training epochs, batch size, checkpoint interval, and checkpoint directory.
+A training and inference framework for autoregressive Transformer language models.
 
-**Model Download Options (Choose One):**
+**Model Download Options (choose one):**
 
-1. Visit [HuggingFace](https://huggingface.co/ViperEk/KHAOSZ) to access **Files and versions**
-2. Run `scripts/download.py` to download parameters
+1. Visit [HuggingFace](https://huggingface.co/ViperEk/KHAOSZ) and check **Files and versions**
+2. Run `scripts/download.py` to download model parameters
 
 **Demo Video:** [bilibili](https://www.bilibili.com/video/BV1z5RPYHEkd)
 
-Training dataset sources are listed in the **Model Card** section of the HuggingFace download link.
+For training data sources, please refer to the **Model Card** section on the HuggingFace download page.
 
-**License:** Code follows Apache-2.0 protocol. Please credit the source code when used.
+**License:** The code follows the GPL-3.0 license. Please provide attribution when using it.
 
-- **📊 Device Selection:** Code defaults to CUDA training
-- **🌐 Performance Optimization:** `dtype=torch.bfloat16` is enabled to accelerate training and reduce memory usage. Ensure hardware supports this feature.
-- **🤖 Language Support:** Model supports Chinese and English training. The BBPE tokenizer was trained without multilingual text, so OOV (out-of-vocabulary) issues are minimized for these languages but may exist for others.
+- **📊 Device Selection:** Uses CUDA for training by default
+- **🌐 Performance Optimization:** Enable `dtype=torch.bfloat16` to accelerate training and reduce memory usage. Ensure your hardware supports this feature
+- **🤖 Language Support:** The model supports training in Chinese and English. Since the BBPE tokenizer hasn't been trained on multilingual text, OOV (Out-of-Vocabulary) issues are minimal for Chinese and English, but may exist for other languages
+
 
 ### 📌 Training Guide
 
 To train this Transformer model, follow these steps:
 
-**(1). Prepare Dataset:**
+**(1). Prepare the Dataset:**
 
-Place datasets in the designated root directory. Files should be text documents in Chinese, English, or mixed. Format should align with model input requirements - preferably pre-tokenized token_ids stored as `torch.Tensor` (using `torch.Tensor` saves memory compared to Python lists, which default to 64-bit precision).
+Place the dataset in the specified root directory. This system uses the BBPE tokenizer for tokenization and requires training with pre-tokenized segments (stored as *.h5 format files).
 
 **(2). Install Dependencies:**
 
 ```bash
-pip install -r requirements.txt
-pip install .
+pip install -e .
 ```
 
-**(3). Run Training Script:**
+**(3). Run the Training Script:**
 
 ```bash
 python train.py \
@@ -55,29 +55,29 @@ python train.py \
 --batch_size=8 \
 --max_lr=2e-4 \
 --checkpoint_interval=10000 \
---checkpoint_dir=checkpoints
+--checkpoint_dir=checkpoints 
 ```
 
-**Parameters Explanation:**
+**Parameter Explanation:**
 - `--train_type`: Training type (seq, sft, dpo)
-- `--data_root_path`: Root directory of the dataset
-- `--param_path`: Path to the model training parameters
+- `--data_root_path`: Dataset root directory
+- `--param_path`: Path to model training parameters
 - `--n_epoch`: Total number of training epochs
 - `--batch_size`: Batch size
 - `--accumulation_steps`: Number of batches per training step
-- `--warmup_steps`: Number of warmup steps
+- `--warmup_steps`: Warmup steps
 - `--max_lr`: Maximum learning rate (using warmup + cosine decay)
 - `--checkpoint_interval`: Checkpoint saving interval
-- `--checkpoint_dir`: Directory to save checkpoints
-- `--resume_dir`: Resume training from the specified path
+- `--checkpoint_dir`: Checkpoint saving directory
+- `--resume_dir`: Resume training from specified path
 
-Training logs will be saved in `train_log.txt`. Checkpoints will be saved in the specified directory for resuming training or evaluation.
+
 
 ### 👉 Usage Guide
 
-**(1). Chatting with the Model:**
+**(1). Chat with the Model:**
 
-Open `chat.py` or use streaming/non-streaming interfaces:
+Open `chat.py` or use the streaming/non-streaming interfaces:
 
 **Streaming Output:**
 ```python
@@ -129,7 +129,7 @@ while True:
     print(response)
 ```
 
-**(2) Retrieval-Augmented Generation (RAG):**
+**(2). Retrieval-Augmented Generation (RAG):**
 
 ```python
 import torch
@@ -148,29 +148,8 @@ retrieved_content = model.retrieve_generate(
 print(retrieved_content)
 ```
 
-### 📌 Model Specifications
-
-This model is based on a 24-layer Transformer with parameters defined in `config.json`, totaling approximately 1.0 billion (1.0B) parameters.
-
-**Key Design Choices:**
-- Weight tying between embedding and final linear layers (standard for small models to save parameters)
-- Embedding layer optimization: Without weight tying, a 10,000-word vocabulary would consume ~102M parameters (0.1B)
-
-**Limitations:**
-- May struggle with complex language phenomena due to smaller parameter size
-- Prone to overfitting on specialized datasets
-- Limited multilingual capabilities
-
-**Advantages:**
-- Runs efficiently on lower-spec hardware
-- Shorter training time compared to larger models
-
-**Training Pipeline:** 
-The model has completed pre-training + SFT (Supervised Fine-Tuning) + DPO (Direct Preference Optimization) workflows. All corresponding training code is included in the repository.
-
-
 <h2 id="chinese">中文版本</h2>
-这是一个支持中英文双语的 Transformer 模型，能够处理两种语言。模型包含配置文件和训练流程，通过加载 `param_path/config.json` 中定义的参数完成训练。训练脚本 `train.py` 支持命令行参数解析，包括数据集根目录、训练轮数（epochs）、批量大小（batch size）、检查点保存间隔、检查点目录等。
+这是一个支持基于自回归模式的 Transfomer 语言模型训练以及推理框架
 
 **模型下载选项（任选其一）：**
 
@@ -181,30 +160,28 @@ The model has completed pre-training + SFT (Supervised Fine-Tuning) + DPO (Direc
 
 训练数据来源请参见 HuggingFace 下载页面中的 **Model Card** 部分。
 
-**许可证：** 代码遵循 Apache-2.0 协议，使用时请注明出处。
+**许可证：** 代码遵循 GPL-3.0 协议，使用时请注明出处。
 
 - **📊 设备选择：** 默认使用 CUDA 进行训练
 - **🌐 性能优化：** 启用 `dtype=torch.bfloat16` 以加速训练并减少内存占用，请确保硬件支持该特性
 - **🤖 语言支持：** 模型支持中文和英文训练。由于 BBPE 分词器未使用多语言文本训练，因此中英文的 OOV（未登录词）问题较少，其他语言可能存在 OOV 问题
 
 
-
 ### 📌 训练指南
 
 要训练该 Transformer 模型，请按照以下步骤操作：
 
-#### **(1). 准备数据集：**
+**(1). 准备数据集：**
 
-将数据集放置在指定的根目录下。文件应为包含中文、英文或混合文本的文本文档。格式应符合模型输入要求——建议使用预分词后的 `token_ids` 并以 `torch.Tensor` 格式保存（使用 `torch.Tensor` 相比 Python 列表更节省内存，列表默认为 64 位精度）。
+将数据集放置在指定的根目录下， 本系统采用 BBPE 分词器进行分词，并且要求使用已经经过分词的 token 分段训练（分段存储为 *.h5 格式）
 
-#### **(2). 安装依赖：**
+**(2). 安装依赖：**
 
 ```bash
-pip install -r requirements.txt
-pip install .
+pip install -e .
 ```
 
-#### **(3). 运行训练脚本：**
+**(3). 运行训练脚本：**
 
 ```bash
 python train.py \
@@ -231,13 +208,11 @@ python train.py \
 - `--checkpoint_dir`: 检查点保存目录
 - `--resume_dir`: 从指定路径恢复训练
 
-训练日志将保存在 `train_log.txt` 中。检查点将保存在指定目录，用于恢复训练或评估。
-
 
 
 ### 👉 使用指南
 
-#### **(1). 与模型对话：**
+**(1). 与模型对话：**
 
 打开 `chat.py` 或使用流式/非流式接口：
 
@@ -291,7 +266,7 @@ while True:
     print(response)
 ```
 
-#### **(2). 基于检索的生成（RAG）：**
+**(2). 基于检索的生成（RAG）：**
 
 ```python
 import torch
@@ -309,25 +284,3 @@ retrieved_content = model.retrieve_generate(
 )
 print(retrieved_content)
 ```
-
-
-
-### 📌 模型规格说明（重复部分）
-
-该模型基于一个 24 层的 Transformer 架构，参数配置定义在 `config.json` 中，总参数量约为 10 亿（1.0B）。
-
-**关键设计选择：**
-- 在嵌入层（embedding）与最终线性层之间进行权重绑定（weight tying），这是小型模型中常见的节省参数量的做法
-- 嵌入层优化：若不进行权重绑定，一个包含 10,000 个词的词汇表将消耗约 1.02 亿（0.1B）参数
-
-**局限性：**
-- 由于参数规模较小，可能在处理复杂语言现象时表现受限
-- 在特定领域的数据集上容易出现过拟合
-- 多语言能力有限
-
-**优势：**
-- 可在低配置硬件上高效运行
-- 相较于大型模型，训练时间更短
-
-**训练流程：**  
-该模型已完成预训练（pre-training）+ 监督微调（SFT, Supervised Fine-Tuning）+ 直接偏好优化（DPO, Direct Preference Optimization）的全流程。所有相关的训练代码均已包含在代码库中。
