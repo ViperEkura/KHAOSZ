@@ -8,6 +8,7 @@ name = "khaosz"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "h5py==3.15.1",
     "numpy==2.3.2",
     "torch==2.7.1",
     "tokenizers==0.21.4",
