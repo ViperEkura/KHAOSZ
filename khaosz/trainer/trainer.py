@@ -4,7 +4,8 @@ from khaosz.config import TrainConfig
 from khaosz.trainer.train_callback import (
     TrainCallback, 
     ProgressBarCallback, 
-    CheckpointCallback, 
+    CheckpointCallback,
+    StepMonitorCallback,
     GradientClippingCallback,
     SchedulerCallback
 )
@@ -30,6 +31,7 @@ class Trainer:
         return [
             ProgressBarCallback(train_config.n_epoch),
             CheckpointCallback(train_config.checkpoint_dir, train_config.checkpoint_interval),
+            StepMonitorCallback(train_config.checkpoint_dir, train_config.checkpoint_interval),
             GradientClippingCallback(train_config.max_grad_norm),
             SchedulerCallback(),
         ]

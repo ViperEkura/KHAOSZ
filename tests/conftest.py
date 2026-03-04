@@ -4,17 +4,12 @@ import numpy as np
 import tempfile
 import shutil
 import torch
-
 import pytest
-import matplotlib
-from torch.utils.data import Dataset
 
+from torch.utils.data import Dataset
 from khaosz.config.model_config import ModelConfig
 from khaosz.data.tokenizer import BpeTokenizer
 from khaosz.model.transformer import Transformer
-
-
-matplotlib.use("Agg")
 
 
 class RandomDataset(Dataset):

@@ -7,7 +7,7 @@ from pathlib import Path
 from tqdm import tqdm
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import LRScheduler
-from typing import Callable, Optional, Protocol
+from typing import Callable, List, Optional, Protocol
 
 from khaosz.parallel import only_on_rank
 from khaosz.trainer.metric_util import (
@@ -104,6 +104,7 @@ class CheckpointCallback(TrainCallback):
         self.state_dict_fn = state_dict_fn
         self.last_ckpt_iter = 0
     
+    @only_on_rank(0)
     def _save_checkpoint(self, context: TrainContext):
         save_path = os.path.join(self.save_dir, f"epoch_{context.epoch}_iter_{context.iteration}")
         state_dict = self.state_dict_fn(context.model) if self.state_dict_fn else context.model.state_dict()
@@ -161,13 +162,23 @@ class ProgressBarCallback(TrainCallback):
 
 
 class StepMonitorCallback(TrainCallback):
-    def __init__(self, log_dir=None, log_interval=100, metrics=None):
-        
+    def __init__(
+        self, 
+        log_dir:str,
+        save_interval:int,
+        log_interval:int=10,
+        metrics:List[str]=None
+    ):
         self.step_num = 0
+        self.last_save_step = 0
+        self.save_interval = save_interval
         self.log_interval = log_interval
         self.metrics = metrics or ['loss', 'lr']
+        
         self.log_dir = Path(log_dir) if log_dir else Path.cwd() / "logs"
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.log_cache = []
         
         self._metric_funcs = {
             'loss': lambda ctx: ctx.loss,
@@ -189,13 +200,31 @@ class StepMonitorCallback(TrainCallback):
         }
     
     @only_on_rank(0)
+    def _add_log(self, log_data):
+        self.log_cache.append(log_data)
+    
+    @only_on_rank(0)
+    def _save_log(self, epoch, iter):
+        log_file = self.log_dir / f"epoch_{epoch}_iter_{iter}_metric.jsonl"
+        
+        with open(log_file, 'w') as f:
+            for log in self.log_cache:
+                f.write(json.dumps(log) + '\n')
+    
     def on_step_end(self, context):
+        if self.step_num % self.log_interval == 0:
+            log_data = self._get_log_data(context)
+            self._add_log(log_data)
+        
+        if self.step_num - self.last_save_step >= self.save_interval:
+            self._save_log(context.epoch, context.iteration)
+            self.last_save_step = self.step_num
+        
         self.step_num += 1
-        if self.step_num % self.log_interval != 0:
-            return
-        
-        log_data = self._get_log_data(context)
-        
-        log_file = self.log_dir / f"epoch_{context.epoch}.jsonl"
-        with open(log_file, 'a') as f:
-            f.write(json.dumps(log_data) + '\n')
+    
+    def on_train_end(self, context):
+        self._save_log(context.epoch, context.iteration)
+    
+    def on_error(self, context):
+        self._save_log(context.epoch, context.iteration)
+    
