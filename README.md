@@ -1,4 +1,4 @@
-![image-20250306182014120](/assets/images/project_logo_clipped.png)
+![image-20250306182014120](/assets/images/project_logo.png)
 
 <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; font-size: 16px; font-weight: bold; margin-top: 50px;">
   
