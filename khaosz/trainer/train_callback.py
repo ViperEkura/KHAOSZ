@@ -163,7 +163,7 @@ class ProgressBarCallback(TrainCallback):
             self.progress_bar.close()
 
 
-class StepMonitorCallback(TrainCallback):
+class MetricLoggerCallback(TrainCallback):
     def __init__(
         self, 
         log_dir:str,
@@ -213,7 +213,7 @@ class StepMonitorCallback(TrainCallback):
             for log in self.log_cache:
                 f.write(json.dumps(log) + '\n')
     
-    def on_step_end(self, context):
+    def on_batch_end(self, context):
         if self.step_num % self.log_interval == 0:
             log_data = self._get_log_data(context)
             self._add_log(log_data)
