@@ -63,3 +63,27 @@ def grad_nan_num(model: nn.Module) -> Dict[str, int]:
             nan_num = param.grad.isnan().sum().item()
             nan_nums[name] = nan_num
     return nan_nums
+
+def ctx_get_loss(ctx):
+    return ctx.loss
+
+def ctx_get_lr(ctx):
+    return ctx.optimizer.param_groups[-1]['lr']
+
+def ctx_get_grad_norm(ctx):
+    return grad_norm(ctx.model)
+
+def ctx_get_grad_std(ctx):
+    return grad_std(ctx.model)
+
+def ctx_get_grad_max(ctx):
+    return grad_max(ctx.model)
+
+def ctx_get_grad_min(ctx):
+    return grad_min(ctx.model)
+
+def ctx_get_grad_mean(ctx):
+    return grad_mean(ctx.model)
+
+def ctx_get_grad_nan_num(ctx):
+    return grad_nan_num(ctx.model)
