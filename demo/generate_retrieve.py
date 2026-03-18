@@ -26,9 +26,10 @@ if __name__ == "__main__":
     query = "作者设计了一个怎样的模型"
     emb_query = model.encode(query)
     retrieved = retriever.retrieve(emb_query, retrive_top_k)
+    retrieved_content = "\n".join([f"{idx + 1}. " + text for idx, (text, _) in enumerate(retrieved)])
     
     retrive_response = model.retrieve_generate(
-        retrieved=retrieved,
+        retrieved=retrieved_content,
         query=query,
         temperature=0.8,
         top_p=0.95,
@@ -36,7 +37,7 @@ if __name__ == "__main__":
     )
 
     print("retrieve content:")
-    print("\n".join([f"{idx + 1}. " + text for idx, (text, _) in enumerate(retrieved)]))
+    print(retrieved_content)
 
     print("\n\nretrive generate:")
     print(retrive_response)

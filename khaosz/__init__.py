@@ -17,12 +17,11 @@ from khaosz.data import (
     BpeTokenizer
 )
 from khaosz.inference.generator import (
-    TextGenerator,
-    ChatGenerator, 
-    StreamGenerator, 
-    BatchGenerator, 
-    RetrievalGenerator, 
-    EmbeddingEncoder
+    GenerationRequest,
+    LoopGenerator,
+    StreamGenerator,
+    BatchGenerator,
+    EmbeddingEncoder,
 )
 
 from khaosz.trainer import (
@@ -46,11 +45,10 @@ __all__ = [
     "DatasetLoader",
     "BpeTokenizer",
     
-    "TextGenerator",
-    "ChatGenerator",
+    "GenerationRequest",
+    "LoopGenerator",
     "StreamGenerator",
     "BatchGenerator",
-    "RetrievalGenerator",
     "EmbeddingEncoder",
     
     "Trainer",

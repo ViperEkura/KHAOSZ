@@ -13,35 +13,35 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 def batch_generate(
     model: Khaosz,
-    queries: List[str],
+    query: List[str],
     temperature: float, 
     top_k: int, 
     top_p: float,
     batch_size: int,
 ) -> List:
     assert batch_size > 0
-    sorted_queries = sorted(queries, key=lambda x: len(x), reverse=True)
-    original_indices = {query: idx for idx, query in enumerate(queries)}
+    sorted_query = sorted(query, key=lambda x: len(x), reverse=True)
+    original_indices = {query: idx for idx, query in enumerate(query)}
     
-    responses = [None] * len(queries) 
-    total_batches = (len(sorted_queries) + batch_size - 1) // batch_size 
+    responses = [None] * len(query) 
+    total_batches = (len(sorted_query) + batch_size - 1) // batch_size 
     
     for i in tqdm(range(0, total_batches * batch_size, batch_size), desc="Generating responses"):
-        batch_queries = sorted_queries[i: min(i + batch_size, len(queries))]
-        if not isinstance(batch_queries, list):
-            batch_queries = [batch_queries]
+        batch_query = sorted_query[i: min(i + batch_size, len(query))]
+        if not isinstance(batch_query, list):
+            batch_query = [batch_query]
         
         batch_responses = model.batch_generate(
-            queries=batch_queries,
+            query=batch_query,
             temperature=temperature,
             top_k=top_k,
             top_p=top_p
         )
         
-        for batch_query, batch_response in zip(batch_queries, batch_responses):
+        for batch_query, batch_response in zip(batch_query, batch_responses):
             print(f"Q: {batch_query[:50]} \nR: {batch_response[:50]})")
         
-        for query, response in zip(batch_queries, batch_responses):
+        for query, response in zip(batch_query, batch_responses):
             original_idx = original_indices[query] 
             responses[original_idx] = response  
 
@@ -60,11 +60,11 @@ def processor(
 ):
     with open(input_json_file, "r", encoding='utf-8') as f:
         input_dict = [json.loads(line) for line in f]
-        queries = [item[question_key] for item in input_dict]
+        query = [item[question_key] for item in input_dict]
     
     output_dict = batch_generate(
         model=model,
-        queries=queries,
+        query=query,
         temperature=temperature,
         top_k=top_k,
         top_p=top_p,

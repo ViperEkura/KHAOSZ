@@ -1,9 +1,12 @@
 import torch
+from dataclasses import dataclass
 from torch import Tensor 
 from typing import List, Tuple, Union, Optional, Generator
 from khaosz.inference.core import GeneratorCore, EmbeddingEncoderCore, KVCacheManager
 from khaosz.config.param_config import ModelParameter
 
+
+HistoryType = List[Tuple[str, str]]
 
 def build_prompt(
     query: str, 
@@ -34,7 +37,7 @@ def build_prompt(
     
     return prompt
 
-def pad_sequence(ids_list: List[List[int]], max_ids_len: int, pad_id: int) -> List[List[int]]:
+def pad_sequence(ids_list: List[List[int]], pad_id: int) -> Tuple[List[List[int]], int]:
     """ 
     Pad a list of sequences to a fixed length.
     
@@ -47,34 +50,47 @@ def pad_sequence(ids_list: List[List[int]], max_ids_len: int, pad_id: int) -> Li
         List[List[int]]: A list of padded sequences.
         
     """
+    max_ids_len = max(len(ids) for ids in ids_list)
     new_ids_list = []
     for ids in ids_list:
         pad_len = max_ids_len - len(ids)
         padded_seq = [pad_id] * pad_len + ids
         new_ids_list.append(padded_seq)
     
-    return new_ids_list
+    return new_ids_list, max_ids_len
+
+@dataclass
+class GenerationRequest:
+    top_k: int
+    top_p: float
+    temperature: float
+    max_len: int
+
+    query: Union[str, List[str]]
+    history: Optional[Union[HistoryType, List[HistoryType]]] = None
+    system_prompt: Optional[str] = None
+
+    build_prompt: bool = True
+
+    def __post_init__(self):
+        if not isinstance(self.top_k, int) or self.top_k < 0:
+            raise ValueError("top_k must be a non-negative integer")
+        if not isinstance(self.top_p, float) or self.top_p < 0.0 or self.top_p > 1.0:
+            raise ValueError("top_p must be a float between 0.0 and 1.0")
+        if not isinstance(self.temperature, float) or self.temperature < 0.0:
+            raise ValueError("temperature must be a non-negative float")
 
 
-class TextGenerator(GeneratorCore):
+class LoopGenerator(GeneratorCore):
     def __init__(self, parameter: ModelParameter):
         super().__init__(parameter)
     
-    def generate(
-            self, 
-            query: str, 
-            temperature: float,
-            top_k: int,
-            top_p: float,
-        ) -> str:
-        assert temperature >= 0.0
-        assert top_k >= 0
-        assert top_p >= 0.0 and top_p <= 1.0
-        
+    def generate(self, request: GenerationRequest) -> str:
         device = next(self.model.parameters()).device
         cache_manager = KVCacheManager(self.config, 1, device=device)
         
-        ids = self.tokenizer.encode(query)
+        input_args = build_prompt(request.query, request.history) if request.build_prompt else request.query
+        ids = self.tokenizer.encode(input_args)
         input_ids = torch.tensor([ids], device=device, dtype=torch.long)
         
         start_cache_pos = len(ids)
@@ -83,84 +99,30 @@ class TextGenerator(GeneratorCore):
         kv_caches = cache_manager.get_kvcache()
         
         ids = self.generate_loop(
-            input_ids, ids, temperature, top_k, top_p, 
+            input_ids, ids, request.temperature, request.top_k, request.top_p, 
             kv_caches=kv_caches, 
             start_pos=cur_cache_pos
         )
-        
         response = self.tokenizer.decode(ids[start_cache_pos:])
         
         return response
 
-
-class ChatGenerator(GeneratorCore):
-    def __init__(self, parameter: ModelParameter):
-        super().__init__(parameter)
-        
-    def generate(
-            self, 
-            query: str, 
-            history: List[Tuple[str, str]],
-            temperature: float,
-            top_k: int,
-            top_p: float,
-        ) -> str:
-        
-        assert temperature >= 0.0
-        assert top_k >= 0
-        assert top_p >= 0.0 and top_p <= 1.0
-
-        if history is None:
-            history = []
-        
-        device = next(self.model.parameters()).device
-        cache_manager = KVCacheManager(self.config, 1, device=device)
-        
-        ids = self.tokenizer.encode(build_prompt(query, history))
-        input_ids = torch.tensor([ids], device=device, dtype=torch.long)
-        
-        start_cache_pos = len(ids)
-        cur_cache_pos = 0
-        self.model.eval()
-        kv_caches = cache_manager.get_kvcache()
-        
-        ids = self.generate_loop(
-            input_ids, ids, temperature, top_k, top_p, 
-            kv_caches=kv_caches, 
-            start_pos=cur_cache_pos
-        )
-        
-        response = self.tokenizer.decode(ids[start_cache_pos:])
-        
-        return response
-    
 
 class StreamGenerator(GeneratorCore):
     def __init__(self, parameter: ModelParameter):
         super().__init__(parameter)
     
-    def generate(
-            self, 
-            query: str, 
-            history: List[Tuple[str, str]],
-            temperature: float,
-            top_k: int,
-            top_p: float,
-        ) -> Generator[Tuple[str, List[Tuple[str, str]]], None, None]:
-        
-        assert temperature >= 0.0
-        assert top_k >= 0
-        assert top_p >= 0.0 and top_p <= 1.0
+    def generate(self, request: GenerationRequest) -> Generator[Tuple[str, List[Tuple[str, str]]], None, None]:
 
-        if history is None:
-            history = []
+        if request.history is None:
+            request.history = []
         
         device = next(self.model.parameters()).device
         cache_manager = KVCacheManager(self.config, 1, device=device)
-                
-        ids = self.tokenizer.encode(build_prompt(query, history))
+
+        input_args = build_prompt(request.query, request.history) if request.build_prompt else request.query
+        ids = self.tokenizer.encode(input_args)
         input_ids = torch.tensor([ids], device=device, dtype=torch.long)
-        cpy_history = history.copy()
         
         start_cache_pos = len(ids)
         cur_cache_pos = 0
@@ -169,45 +131,36 @@ class StreamGenerator(GeneratorCore):
         
         for _ in range(len(ids), self.config.max_len):
             next_token_id, cache_increase = self.generate_iterator(
-                input_ids, temperature, top_k, top_p, kv_caches=kv_caches, start_pos=cur_cache_pos)
+                input_ids, request.temperature, request.top_k, request.top_p, 
+                kv_caches=kv_caches, 
+                start_pos=cur_cache_pos
+            )
             
             input_ids = next_token_id
             ids.append(next_token_id.item())
             cur_cache_pos += cache_increase
             
             response = self.tokenizer.decode(ids[start_cache_pos:])
-            yield response, cpy_history + [(query, response)]
+            yield response, request.history + [(request.query, response)]
             
             if next_token_id.item() in self.tokenizer.stop_ids:
-                yield response + "\n", cpy_history + [(query, response)]
+                yield response + "\n", request.history + [(request.query, response)]
                 break
-    
+
 
 class BatchGenerator(GeneratorCore):
     def __init__(self, parameter: ModelParameter):
         super().__init__(parameter)
     
-    def generate(
-        self, 
-        queries: List[str],
-        histories: List[List[Tuple[str, str]]],
-        temperature: float, 
-        top_k: int, 
-        top_p: float 
-    ) -> List[str]:
+    def generate(self, request: GenerationRequest) -> List[str]:
+        batch_size = len(request.query)
+        if request.history is None:
+            request.history = [[] for _ in range(batch_size)]
         
-        assert temperature >= 0.0
-        assert top_k >= 0
-        assert top_p >= 0.0 and top_p <= 1.0
+        prompts = [build_prompt(query, history) for query, history in zip(request.query, request.history)]
         
-        batch_size = len(queries)
-        if histories is None:
-            histories = [[] for _ in range(batch_size)]
-        
-        prompts = [build_prompt(query, history) for query, history in zip(queries, histories)]
         ids_list = [self.tokenizer.encode(prompt) for prompt in prompts]
-        max_ids_len = max(len(ids) for ids in ids_list)
-        ids_list = pad_sequence(ids_list, max_ids_len, self.tokenizer.pad_id)
+        ids_list, max_ids_len = pad_sequence(ids_list, self.tokenizer.pad_id)
         
         device = next(self.model.parameters()).device
         cache_manager = KVCacheManager(self.config, batch_size, device=device)
@@ -224,7 +177,11 @@ class BatchGenerator(GeneratorCore):
             attn_mask =cache_manager.get_seq_mask()
             
             next_token_id, cache_increase = self.generate_iterator(
-                input_tensor, temperature, top_k, top_p, attn_mask=attn_mask, kv_caches=kv_caches, start_pos=cur_cache_pos)
+                input_tensor, request.temperature, request.top_k, request.top_p, 
+                attn_mask=attn_mask, 
+                kv_caches=kv_caches, 
+                start_pos=cur_cache_pos
+            )
             
             cur_cache_pos += cache_increase
             active_mask = []
@@ -246,46 +203,13 @@ class BatchGenerator(GeneratorCore):
 
             max_ids_len += 1
         
-        
         responses = [str()] * batch_size
         for i in range(batch_size):
             responses[i] = self.tokenizer.decode(ids_list[i][start_cache_pos:])
-            histories[i].append((queries[i], responses[i]))
+            request.history[i].append((request.query[i], responses[i]))
         
         return responses
 
-
-class RetrievalGenerator(GeneratorCore):
-    def __init__(self, retriever_parameter: ModelParameter):
-        super().__init__(retriever_parameter)
-    
-    def generate(
-        self,
-        retrieved: List[str],
-        query: str, 
-        history: List[Tuple[str, str]],
-        temperature: float,
-        top_k: int,
-        top_p: float,
-    ) -> str:
-        assert temperature >= 0.0
-        assert top_k >= 0
-        assert top_p >= 0.0 and top_p <= 1.0
-        
-        if history is None:
-            history = []
-            
-        retrieved = "\n".join([f"{idx + 1}. {key}" for idx, key in enumerate(retrieved)]) if retrieved else ""
-        retrieved_query = f"{retrieved}\n\n{query}" if retrieved else query
-        parameter = ModelParameter(self.model, self.tokenizer, self.config)
-        
-        return ChatGenerator(parameter).generate(
-            retrieved_query, 
-            history,
-            temperature=temperature,
-            top_k=top_k,
-            top_p=top_p,
-        )
 
 class EmbeddingEncoder(EmbeddingEncoderCore):
     def __init__(self, parameter: ModelParameter):
