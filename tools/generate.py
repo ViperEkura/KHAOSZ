@@ -1,4 +1,3 @@
-import os
 import torch
 import json
 import torch
@@ -8,8 +7,6 @@ from khaosz import Khaosz
 from typing import List
 from tqdm import tqdm
 
-
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 def batch_generate(
     model: Khaosz,
@@ -38,9 +35,6 @@ def batch_generate(
             top_p=top_p
         )
         
-        for batch_query, batch_response in zip(batch_query, batch_responses):
-            print(f"Q: {batch_query[:50]} \nR: {batch_response[:50]})")
-        
         for query, response in zip(batch_query, batch_responses):
             original_idx = original_indices[query] 
             responses[original_idx] = response  
@@ -49,20 +43,23 @@ def batch_generate(
 
 
 def processor(
-    model: Khaosz,
+    model_dir: str,
     input_json_file: str,
     output_json_file: str,
     batch_size: int,
     temperature: float,
-    top_p: float,
     top_k: int,
-    question_key: str="question",
+    top_p: float,
+    question_key: str,
+    response_key: str,
 ):
-    with open(input_json_file, "r", encoding='utf-8') as f:
-        input_dict = [json.loads(line) for line in f]
-        query = [item[question_key] for item in input_dict]
+    model = Khaosz(model_dir).to(device='cuda', dtype=torch.bfloat16)
     
-    output_dict = batch_generate(
+    with open(input_json_file, "r", encoding='utf-8') as f:
+        input_data = [json.loads(line) for line in f]
+        query = [item[question_key] for item in input_data]
+    
+    responses = batch_generate(
         model=model,
         query=query,
         temperature=temperature,
@@ -71,8 +68,12 @@ def processor(
         batch_size=batch_size
     )
     
+    # Write output in JSONL format
     with open(output_json_file, "w", encoding='utf-8') as f:
-        json.dump(output_dict, f, indent=4, ensure_ascii=False)
+        for query, response in zip(query, responses):
+            output_item = {question_key: query, response_key: response}
+            f.write(json.dumps(output_item, ensure_ascii=False) + '\n')
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run generate with a Khaosz model.")
@@ -81,21 +82,11 @@ if __name__ == "__main__":
     parser.add_argument("--input_json_file", type=str, required=True, help="Path to the input JSONL file.")
     parser.add_argument("--output_json_file", type=str, required=True, help="Path to the output JSONL file.")
     parser.add_argument("--question_key", type=str, default="question", help="Key for the question in the input JSON.")
+    parser.add_argument("--response_key", type=str, default="response", help="Key for the response in the output JSON.")
     parser.add_argument("--temperature", type=float, default=0.60, help="Temperature for generating responses.")
-    parser.add_argument("--top_p", type=float, default=0.95, help="Top-p value for generating responses.")
     parser.add_argument("--top_k", type=int, default=30, help="Top-k value for generating responses.")
+    parser.add_argument("--top_p", type=float, default=0.95, help="Top-p value for generating responses.")
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size for generating responses.")    
 
     args = parser.parse_args()
-    model = Khaosz(args.model_dir).to(device='cuda', dtype=torch.bfloat16)
-    
-    processor(
-        model,
-        input_json_file=args.input_json_file,
-        output_json_file=args.output_json_file,
-        question_key=args.question_key,
-        batch_size=args.batch_size,
-        temperature=args.temperature,
-        top_k=args.top_k,
-        top_p=args.top_p
-    )
+    processor(**vars(args))
