@@ -112,11 +112,8 @@ def train(
 
     model = parameter.model
     
-    kwargs = {
+    strategy_kwargs = {
         "dpo_beta": dpo_beta,
-        "bos_token_id": parameter.tokenizer.bos_id,
-        "eos_token_id": parameter.tokenizer.eos_id,
-        "pad_token_id": parameter.tokenizer.pad_id,
         "label_smoothing": label_smoothing
     }
 
@@ -158,7 +155,7 @@ def train(
         parallel_wrapper=ddp_wrap,
         state_dict_fn=prepare_checkpoint,
         device_type=device_type,
-        extra_kwargs=kwargs,
+        extra_kwargs=strategy_kwargs,
     )
     
     trainer = Trainer(train_config)
