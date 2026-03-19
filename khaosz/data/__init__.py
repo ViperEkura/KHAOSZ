@@ -1,9 +1,9 @@
 from khaosz.data.dataset import (
     BaseDataset, 
-    SeqDataset, 
-    DpoDataset, 
-    SftDataset, 
-    PpoDataset, 
+    SEQDataset, 
+    DPODataset, 
+    SFTDataset, 
+    GRPODataset,
     MultiSegmentFetcher,
     DatasetLoader
 )
@@ -13,10 +13,10 @@ from khaosz.data.sampler import ResumableDistributedSampler
 
 __all__ = [
     "BaseDataset",
-    "SeqDataset",
-    "DpoDataset",
-    "SftDataset",
-    "PpoDataset",
+    "SEQDataset",
+    "SFTDataset",
+    "DPODataset",
+    "GRPODataset",
     "MultiSegmentFetcher",
     "DatasetLoader",
     "BpeTokenizer",

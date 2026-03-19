@@ -20,7 +20,7 @@ from khaosz.trainer.metric_util import (
     ctx_get_grad_std,
     ctx_get_grad_nan_num
 )
-from khaosz.data.checkpoint import Checkpoint
+from khaosz.data.serialization import Checkpoint
 from khaosz.trainer.train_context import TrainContext
 
 

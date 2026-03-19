@@ -4,7 +4,7 @@ import bisect
 from abc import ABC, abstractmethod
 from torch import Tensor
 from torch.utils.data import Dataset
-from khaosz.data.file import load_h5
+from khaosz.data.serialization import load_h5
 from typing import Callable, List, Dict, Literal, Optional, Union
 
 
@@ -105,7 +105,7 @@ class BaseDataset(Dataset, ABC):
         return (self.total_samples - 1 - self.window_size) // self.stride + 1
     
 
-class SeqDataset(BaseDataset):
+class SEQDataset(BaseDataset):
     def __init__(self, window_size: int, stride: int):
         super().__init__(window_size, stride)
         self.fetcher = MultiSegmentFetcher(self.segments)
@@ -123,7 +123,7 @@ class SeqDataset(BaseDataset):
         return {"input_ids": x, "target_ids": y}
     
     
-class SftDataset(BaseDataset):
+class SFTDataset(BaseDataset):
     def __init__(self, window_size: int, stride: int):
         super().__init__(window_size, stride)
         self.fetcher = MultiSegmentFetcher(self.segments)
@@ -141,7 +141,7 @@ class SftDataset(BaseDataset):
         return {"input_ids": x, "target_ids": y, "loss_mask": loss_mask}
 
 
-class DpoDataset(BaseDataset):
+class DPODataset(BaseDataset):
     def __init__(self, window_size: int, stride: int):
         super().__init__(window_size, stride)
         self.fetcher = MultiSegmentFetcher(self.segments)
@@ -160,7 +160,7 @@ class DpoDataset(BaseDataset):
         return {"chosen": chosen, "rejected": rejected, "chosen_mask": chosen_mask, "rejected_mask": rejected_mask}
 
 
-class PpoDataset(BaseDataset):
+class GRPODataset(BaseDataset):
     def __init__(self, window_size: int, stride: int):
         super().__init__(window_size, stride)
         self.fetcher = MultiSegmentFetcher(self.segments)
@@ -171,12 +171,12 @@ class PpoDataset(BaseDataset):
     def __getitem__(self, index: int) -> Dict[str, Tensor]:
         begin_idx, end_idx = self.get_index(index)
 
-        input_ids =  self._fetch_data(begin_idx, end_idx, "input_ids"),
-        actions = self._fetch_data(begin_idx, end_idx, "actions"),
-        logprobs = self._fetch_data(begin_idx, end_idx, "logprobs"),
+        prompts =  self._fetch_data(begin_idx, end_idx, "prompts"),
+        responses = self._fetch_data(begin_idx, end_idx, "responses"),
+        masks = self._fetch_data(begin_idx, end_idx, "masks"),
         rewards =  self._fetch_data(begin_idx, end_idx, "rewards")
         
-        return {"input_ids": input_ids, "actions": actions, "logprobs": logprobs, "rewards": rewards}
+        return {"prompts": prompts, "responses": responses, "masks": masks, "rewards": rewards}
     
 
 class DatasetLoader:
@@ -191,9 +191,10 @@ class DatasetLoader:
             stride = window_size
         
         dataset_router: Dict[str, Callable[[int], BaseDataset]] = {
-            "seq": lambda window_size: SeqDataset(window_size, stride),
-            "sft": lambda window_size: SftDataset(window_size, stride),
-            "dpo": lambda window_size: DpoDataset(window_size, stride),
+            "seq": lambda window_size: SEQDataset(window_size, stride),
+            "sft": lambda window_size: SFTDataset(window_size, stride),
+            "dpo": lambda window_size: DPODataset(window_size, stride),
+            "grpo": lambda window_size: GRPODataset(window_size, stride),
         }
         dataset = dataset_router[train_type](window_size)
         dataset.load(load_path)

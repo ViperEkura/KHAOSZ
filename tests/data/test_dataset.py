@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 
-from khaosz.data.file import save_h5
+from khaosz.data.serialization import save_h5
 from khaosz.data.dataset import *
 
 
