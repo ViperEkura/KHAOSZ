@@ -16,7 +16,7 @@ def parse_args() -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(description="Train the Transformer model.")
     
-    parser.add_argument("--train_type",choices=["seq", "sft", "dpo"], help="Train type.")
+    parser.add_argument("--train_type", type=str, required=True, choices=["seq", "sft", "dpo"], help="Train type.")
     parser.add_argument("--data_root_path", type=str, required=True, help="Path to the root directory of the dataset.")
     parser.add_argument("--param_path", type=str, required=True, help="Path to the model parameters or resume checkpoint.")
     
@@ -67,18 +67,14 @@ def create_scheduler(optimizer: optim.Optimizer, **kwargs) -> optim.lr_scheduler
     return SchedulerFactory.load(optimizer, **kwargs)
 
 def prepare_checkpoint(model: nn.Module) -> dict:
-    if isinstance(model, torch.nn.parallel.DistributedDataParallel):
-        state_dict = model.module.state_dict()
-    else:
-        state_dict = model.state_dict()
-    return state_dict
+    return model.module.state_dict()
 
 
 def train(
     train_type: str,
     param_path: str,
     data_root_path: str,
-    max_lr: int,
+    max_lr: float,
     n_epoch: int,
     batch_size: int,
     start_epoch: int,
@@ -104,8 +100,7 @@ def train(
     assert train_type in ["seq", "sft", "dpo"]
     assert os.path.exists(param_path)
     
-    parameter = ModelParameter()
-    parameter.load(param_path)
+    parameter = ModelParameter.load(param_path)
 
     if window_size is None:
         window_size = parameter.config.max_len

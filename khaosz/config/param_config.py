@@ -72,9 +72,12 @@ class BaseModelIO:
 class ModelParameter(BaseModelIO):
     """Container for model parameters with serialization capabilities."""
     
-    def save(self, save_dir: Union[str, Path]):
-        self.save_components(save_dir)
+    @classmethod
+    def save(cls, instance: "ModelParameter", save_dir: Union[str, Path]):
+        instance.save_components(save_dir)
     
-    def load(self, load_dir: Union[str, Path]) -> "ModelParameter":
-        return self.load_components(load_dir)
+    @classmethod
+    def load(cls, load_dir: Union[str, Path]) -> "ModelParameter":
+        instance = cls()
+        return instance.load_components(load_dir)
 

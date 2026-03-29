@@ -9,33 +9,37 @@ from khaosz.config.param_config import ModelParameter
 HistoryType = List[Tuple[str, str]]
 
 def build_prompt(
-    query: str, 
-    init_prompt: Optional[str] = None,
-    history: Optional[List[Tuple[str, str]]] = None
-    ) -> str:
-    """ 
-    Build prompt in ChatML format for query and history
-    
-    Args:
-        query(str): query string
-        history(Optional[List[Tuple[str, str]]]): history list of query and response
-        
-    Returns:
-        str: prompt string in ChatML format
-        
+    query: str,
+    system_prompt: Optional[str] = None,
+    history: Optional[HistoryType] = None
+) -> str:
     """
-    prompt = f"<|im_start|>system\n{init_prompt}<|im_end|>\n" if init_prompt else ""
-    
+    Build prompt in ChatML format for query and history.
+
+    Args:
+        query (str): query string.
+        system_prompt (Optional[str]): system prompt string.
+        history (Optional[HistoryType]): history list of query and response.
+
+    Returns:
+        str: prompt string in ChatML format.
+    """
+    result = ""
+
+    if system_prompt:
+        result += f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
+
     # (convert tuple format to ChatML)
     if history:
         for user_msg, assistant_msg in history:
-            prompt += f"<|im_start|>user\n{user_msg}<|im_end|>\n"
-            prompt += f"<|im_start|>assistant\n{assistant_msg}<|im_end|>\n"
-    
-    prompt += f"<|im_start|>user\n{query}<|im_end|>\n"
-    prompt += "<|im_start|>assistant\n"
-    
-    return prompt
+            result += f"<|im_start|>user\n{user_msg}<|im_end|>\n"
+            result += f"<|im_start|>assistant\n{assistant_msg}<|im_end|>\n"
+
+    result += f"<|im_start|>user\n{query}<|im_end|>\n"
+    result += "<|im_start|>assistant\n"
+
+    return result
+
 
 def pad_sequence(ids_list: List[List[int]], pad_id: int) -> Tuple[List[List[int]], int]:
     """ 
@@ -59,8 +63,21 @@ def pad_sequence(ids_list: List[List[int]], pad_id: int) -> Tuple[List[List[int]
     
     return new_ids_list, max_ids_len
 
+
 @dataclass
 class GenerationRequest:
+    """
+    Request parameters for text generation.
+    
+    Attributes:
+        top_k: Top-k sampling parameter.
+        top_p: Top-p (nucleus) sampling parameter.
+        temperature: Sampling temperature.
+        max_len: Maximum generation length.
+        query: Input query (string or list of strings for batch).
+        history: Conversation history.
+        system_prompt: System prompt for the conversation.
+    """
     top_k: int
     top_p: float
     temperature: float
@@ -69,8 +86,6 @@ class GenerationRequest:
     query: Union[str, List[str]]
     history: Optional[Union[HistoryType, List[HistoryType]]] = None
     system_prompt: Optional[str] = None
-
-    build_prompt: bool = True
 
     def __post_init__(self):
         if not isinstance(self.top_k, int) or self.top_k < 0:
@@ -89,19 +104,21 @@ class LoopGenerator(GeneratorCore):
         device = next(self.model.parameters()).device
         cache_manager = KVCacheManager(self.config, 1, device=device)
         
-        input_args = build_prompt(request.query, request.history) if request.build_prompt else request.query
-        ids = self.tokenizer.encode(input_args)
+        prompt = build_prompt(request.query, request.history)
+        ids = self.tokenizer.encode(prompt)
         input_ids = torch.tensor([ids], device=device, dtype=torch.long)
         
         start_cache_pos = len(ids)
-        cur_cache_pos = 0
         self.model.eval()
         kv_caches = cache_manager.get_kvcache()
         
         ids = self.generate_loop(
-            input_ids, ids, request.temperature, request.top_k, request.top_p, 
+            input_ids, 
+            ids, 
+            request.temperature, 
+            request.top_k, 
+            request.top_p, 
             kv_caches=kv_caches, 
-            start_pos=cur_cache_pos
         )
         response = self.tokenizer.decode(ids[start_cache_pos:])
         
@@ -112,16 +129,12 @@ class StreamGenerator(GeneratorCore):
     def __init__(self, parameter: ModelParameter):
         super().__init__(parameter)
     
-    def generate(self, request: GenerationRequest) -> Generator[Tuple[str, List[Tuple[str, str]]], None, None]:
-
-        if request.history is None:
-            request.history = []
-        
+    def generate(self, request: GenerationRequest) -> Generator[str, None, None]:        
         device = next(self.model.parameters()).device
         cache_manager = KVCacheManager(self.config, 1, device=device)
 
-        input_args = build_prompt(request.query, request.history) if request.build_prompt else request.query
-        ids = self.tokenizer.encode(input_args)
+        prompt = build_prompt(request.query, request.history)
+        ids = self.tokenizer.encode(prompt)
         input_ids = torch.tensor([ids], device=device, dtype=torch.long)
         
         start_cache_pos = len(ids)
@@ -141,10 +154,10 @@ class StreamGenerator(GeneratorCore):
             cur_cache_pos += cache_increase
             
             response = self.tokenizer.decode(ids[start_cache_pos:])
-            yield response, request.history + [(request.query, response)]
+            yield response
             
             if next_token_id.item() in self.tokenizer.stop_ids:
-                yield response + "\n", request.history + [(request.query, response)]
+                yield response + "\n"
                 break
 
 
@@ -217,4 +230,36 @@ class EmbeddingEncoder(EmbeddingEncoderCore):
         
     def encode(self, sentence: Union[str, List[str]]) -> Union[Tensor, List[Tensor]]:
         return super().encode(sentence)
+
+
+class GeneratorFactory:
+    """Factory class for creating appropriate generator instances based on request features."""
+    
+    @staticmethod
+    def create_generator(parameter: ModelParameter, request: GenerationRequest):
+        """
+        Create a generator based on the characteristics of GenerationRequest.
+        Args:
+            parameter: Model parameters
+            request: Generation request
+        
+        Returns:
+            Subclass instance of GeneratorCore
+        """
+
+        # Streaming generation detection: check stream field
+        if request.stream:
+            return StreamGenerator(parameter)
+        
+        # Batch generation detection: query is a list
+        if isinstance(request.query, list):
+            return BatchGenerator(parameter)
+        
+        # Default return LoopGenerator
+        return LoopGenerator(parameter)
+    
+    @staticmethod
+    def create_encoder(parameter: ModelParameter):
+        """Create an EmbeddingEncoder instance"""
+        return EmbeddingEncoder(parameter)
         

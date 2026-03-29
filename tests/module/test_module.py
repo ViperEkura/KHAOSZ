@@ -54,7 +54,7 @@ def test_env(request: pytest.FixtureRequest):
 def test_model_parameter(test_env):
     save_dir = os.path.join(test_env["test_dir"], "save")
     model_param = ModelParameter(test_env["model"],test_env["tokenizer"] , test_env["transformer_config"])
-    model_param.save(save_dir)
+    ModelParameter.save(model_param, save_dir)
     
     assert os.path.exists(os.path.join(save_dir, "model.safetensors"))
     assert os.path.exists(os.path.join(save_dir, "tokenizer.json"))

@@ -1,5 +1,8 @@
 import torch
+import torch.nn as nn
+
 from torch import Tensor 
+from contextlib import contextmanager
 from typing import Any, Callable, List, Tuple, Union, Optional, Self
 from khaosz.config import ModelParameter, ModelConfig
 
@@ -54,6 +57,26 @@ def apply_sampling_strategies(
     return logits
 
 
+@contextmanager
+def disable_random_init():
+    init_functions = [
+        'xavier_normal_', 'xavier_uniform_',
+        'kaiming_normal_', 'kaiming_uniform_',
+        'zeros_', 'ones_', 'constant_',
+        'normal_', 'uniform_'
+    ]
+    original_funcs = {}
+    for name in init_functions:
+        if hasattr(nn.init, name):
+            original_funcs[name] = getattr(nn.init, name)
+            setattr(nn.init, name, lambda *args, **kwargs: None)
+    try:
+        yield
+    finally:
+        for name, orig_func in original_funcs.items():
+            setattr(nn.init, name, orig_func)
+
+
 class GeneratorCore:
     def __init__(self, parameter: ModelParameter):
         self.model = parameter.model
@@ -81,10 +104,6 @@ class GeneratorCore:
         next_token_id = torch.multinomial(probs, num_samples=1)
     
         return next_token_id, cache_increase
-
-    def to(self, *args, **kargs) -> Self:
-        self.model.to(*args, **kargs)
-        return self
 
     def generate_loop(
         self,
@@ -115,6 +134,10 @@ class GeneratorCore:
                 break
         
         return ids
+    
+    def to(self, *args, **kargs) -> Self:
+        self.model.to(*args, **kargs)
+        return self
 
 
 class EmbeddingEncoderCore:
@@ -203,7 +226,7 @@ class KVCacheManager:
         self._kv_cache: Tuple[Tensor, Tensor] = None
         self._seq_mask: Tensor = None
         self._initialize()
-
+    
     def _initialize(self):
         k_cache = torch.zeros(
             (self.batch_size, self.max_len, self.num_layers, self.num_heads, self.head_dim),

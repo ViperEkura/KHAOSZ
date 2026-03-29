@@ -1,4 +1,5 @@
 from khaosz.inference.core import (
+    disable_random_init,
     GeneratorCore,
     EmbeddingEncoderCore,
     KVCacheManager,
@@ -10,9 +11,11 @@ from khaosz.inference.generator import (
     StreamGenerator,
     BatchGenerator,
     EmbeddingEncoder,
+    GeneratorFactory
 )
 
 __all__ = [
+    "disable_random_init",
     "GeneratorCore",
     "EmbeddingEncoderCore",
     "KVCacheManager",
@@ -22,4 +25,5 @@ __all__ = [
     "StreamGenerator",
     "BatchGenerator",
     "EmbeddingEncoder",
+    "GeneratorFactory"
 ]

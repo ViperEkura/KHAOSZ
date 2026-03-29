@@ -6,7 +6,9 @@ import argparse
 import tqdm
 
 from torch import Tensor
-from khaosz import Khaosz
+from khaosz.config.param_config import ModelParameter
+from khaosz.inference.core import disable_random_init
+
 
 def compute_perplexity(
         model: nn.Module, 
@@ -45,22 +47,23 @@ def process_file(
     batch_size: int,
     text_key: str
 ):
-    model = Khaosz(model_dir).to(device="cuda", dtype=torch.bfloat16)
-    tokenizer = model.parameter.tokenizer
+    with disable_random_init():
+        param = ModelParameter.load(model_dir)
+
+    param.to(device='cuda', dtype=torch.bfloat16)
+    model = param.model
+    tokenizer = param.tokenizer
     
     with open(input_file, "r", encoding='utf-8') as f:
         input_data = [json.loads(line) for line in f]
     
     texts = [item[text_key] for item in input_data]
     encoded_texts = [tokenizer.encode(text) for text in texts]
-    
     output_data = []
     
     for i in tqdm(range(0, len(encoded_texts), batch_size), desc="Computing perplexity"):
         batch_encoded = encoded_texts[i:i + batch_size]
         batch_texts = texts[i:i + batch_size]
-        
-        # Pad sequences to the same length (left padding)
         max_len = max(len(seq) for seq in batch_encoded)
         padded_ids = []
         masks = []
@@ -74,10 +77,7 @@ def process_file(
         
         input_ids = torch.tensor(padded_ids, device="cuda", dtype=torch.long)
         input_mask = torch.tensor(masks, device="cuda", dtype=torch.bool)
-        
-        # Compute perplexity
-        with torch.inference_mode():
-            perplexity = compute_perplexity(model.parameter.model, input_ids, input_mask)
+        perplexity = compute_perplexity(model, input_ids, input_mask)
         
         for text, ppl in zip(batch_texts, perplexity):
             output_data.append({text_key: text, "ppl": float(ppl.item())})
@@ -87,16 +87,14 @@ def process_file(
             f.write(json.dumps(item, ensure_ascii=False) + '\n')
 
 
-def main():
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run perplexity with a Khaosz model.")
     parser.add_argument("--model_dir", type=str, required=True, help="Path to the model directory.")
     parser.add_argument("--input_file", type=str, required=True, help="Path to the input file.")
     parser.add_argument("--output_file", type=str, required=True, help="Path to the output file.")
     parser.add_argument("--batch_size", type=int, default=4, help="Batch size for evaluation.")
     parser.add_argument("--text_key", type=str, default="text", help="Key for the text field in the input data.")
-
     args = parser.parse_args()
-    process_file(**vars(args))
 
-if __name__ == "__main__":
-    main()
+    with torch.inference_mode():
+        process_file(**vars(args))
