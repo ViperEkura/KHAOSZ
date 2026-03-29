@@ -171,13 +171,13 @@ class GRPODataset(BaseDataset):
     def __getitem__(self, index: int) -> Dict[str, Tensor]:
         begin_idx, end_idx = self.get_index(index)
 
-        prompts =  self._fetch_data(begin_idx, end_idx, "prompts"),
-        responses = self._fetch_data(begin_idx, end_idx, "responses"),
-        masks = self._fetch_data(begin_idx, end_idx, "masks"),
-        rewards =  self._fetch_data(begin_idx, end_idx, "rewards")
-        
-        return {"prompts": prompts, "responses": responses, "masks": masks, "rewards": rewards}
+        prompts = self._fetch_data(begin_idx, end_idx, "prompts")
+        responses = self._fetch_data(begin_idx, end_idx, "responses")
+        masks = self._fetch_data(begin_idx, end_idx, "masks")
+        rewards = self._fetch_data(begin_idx, end_idx, "rewards")
     
+        return {"prompts": prompts, "responses": responses, "masks": masks, "rewards": rewards}
+
 
 class DatasetLoader:
     @staticmethod       

@@ -2,10 +2,30 @@ import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 from torch import Tensor
-from typing import Any, Callable, Dict, Union
+from typing import Any, Callable, Dict, Union, Optional
 from abc import ABC, abstractmethod
+
+
+def unwrap_model(model: nn.Module) -> nn.Module:
+    """Unwrap DDP wrapper if present to get the original model."""
+    if isinstance(model, DDP):
+        return model.module
+    return model
+
+
+def create_ref_model(model: nn.Module) -> nn.Module:
+    """
+    Create a reference model for DPO/GRPO training.
+    Handles DDP-wrapped models safely.
+    """
+    original_model = unwrap_model(model)
+    ref_model = copy.deepcopy(original_model)
+    ref_model.requires_grad_(False)
+    ref_model.eval()
+    return ref_model
 
 
 def move_to_device(batch:Dict[str, Tensor], device: str) -> Any:
@@ -17,6 +37,18 @@ def get_logprobs(
     mask: Tensor, 
     reduction: str,
 ):
+    """
+    Compute token-wise log probabilities from model outputs.
+    
+    Args:
+        model: The language model
+        input_ids: Input token IDs of shape [batch_size, seq_len]
+        mask: Attention mask of shape [batch_size, seq_len]
+        reduction: How to reduce over sequence dimension ("mean", "sum", "none")
+    
+    Returns:
+        Log probabilities with reduction applied over sequence dimension
+    """
     # reduction on seq_len dim
     allowed_reductions = ["mean", "sum", "none"]
     if reduction not in allowed_reductions:
@@ -25,7 +57,7 @@ def get_logprobs(
     shifted_input_ids = input_ids[:, 1:]
     shifted_mask = mask[:, 1:]
 
-    logits = model(input_ids[:, :-1, :], mask[:, :-1, :])["logits"]
+    logits = model(input_ids[:, :-1], mask[:, :-1])["logits"]
     log_probs = torch.log_softmax(logits.float(), dim=-1)
 
     # [batch_size, seq_len - 1]
@@ -99,18 +131,13 @@ class SFTStrategy(BaseStrategy):
 class DPOStrategy(BaseStrategy):
     def __init__(
             self, 
-            model, 
-            device, 
+            model: nn.Module, 
+            device: str, 
             beta: float,
             reduction: str,
-            
         ):
         super().__init__(model, device)
-        ref_model = copy.deepcopy(self.model)
-        ref_model.requires_grad_(False)
-        ref_model.eval()
-
-        self.ref_model = ref_model
+        self.ref_model = create_ref_model(model)
         self.beta = beta
         self.reduction = reduction
         
@@ -145,20 +172,15 @@ class GRPOStrategy(BaseStrategy):
     
     def __init__(
         self, 
-        model, 
-        device, 
+        model: nn.Module, 
+        device: str, 
         clip_eps: float,
         kl_coef: float,
         group_size: int,
         reduction: str,
     ):
-
         super().__init__(model, device)
-        ref_model = copy.deepcopy(self.model)
-        ref_model.requires_grad_(False)
-        ref_model.eval()
-        
-        self.ref_model = ref_model
+        self.ref_model = create_ref_model(model)
         self.clip_eps = clip_eps
         self.kl_coef = kl_coef
         self.group_size = group_size

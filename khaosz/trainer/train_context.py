@@ -88,7 +88,7 @@ class TrainContextBuilder:
     
     def with_strategy(self) -> Self:
         self._context.strategy = StrategyFactory.load(
-            model=self.config.model,
+            model=self._context.model,
             train_type=self.config.strategy,
             device=get_current_device(),
             **self.config.extra_kwargs
