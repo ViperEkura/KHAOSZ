@@ -77,6 +77,7 @@ class GenerationRequest:
         query: Input query (string or list of strings for batch).
         history: Conversation history.
         system_prompt: System prompt for the conversation.
+        stream: Whether to use streaming generation.
     """
     top_k: int
     top_p: float
@@ -86,6 +87,7 @@ class GenerationRequest:
     query: Union[str, List[str]]
     history: Optional[Union[HistoryType, List[HistoryType]]] = None
     system_prompt: Optional[str] = None
+    stream: bool = False
 
     def __post_init__(self):
         if not isinstance(self.top_k, int) or self.top_k < 0:
@@ -233,33 +235,62 @@ class EmbeddingEncoder(EmbeddingEncoderCore):
 
 
 class GeneratorFactory:
-    """Factory class for creating appropriate generator instances based on request features."""
+    """Factory class for creating generator instances.
+    
+    Provides smart generator selection based on request characteristics:
+    - Streaming: Use StreamGenerator for streaming output
+    - Batch: Use BatchGenerator when query is a list
+    - Single: Use LoopGenerator for single query non-streaming
+    
+    Example usage:
+        generator = GeneratorFactory.create_generator(parameter, request)
+        result = generator.generate(request)
+    """
     
     @staticmethod
-    def create_generator(parameter: ModelParameter, request: GenerationRequest):
-        """
-        Create a generator based on the characteristics of GenerationRequest.
-        Args:
-            parameter: Model parameters
-            request: Generation request
+    def create_generator(parameter: ModelParameter, request: GenerationRequest) -> GeneratorCore:
+        """Create a generator based on request characteristics.
         
+        Args:
+            parameter: Model parameters containing model, tokenizer, config
+            request: Generation request with query, options, etc.
+            
         Returns:
-            Subclass instance of GeneratorCore
+            Appropriate GeneratorCore subclass instance
         """
-
-        # Streaming generation detection: check stream field
+        # Streaming generation: check stream field first
         if request.stream:
             return StreamGenerator(parameter)
         
-        # Batch generation detection: query is a list
+        # Batch generation: query is a list of strings
         if isinstance(request.query, list):
             return BatchGenerator(parameter)
         
-        # Default return LoopGenerator
+        # Default: single query non-streaming
         return LoopGenerator(parameter)
     
     @staticmethod
-    def create_encoder(parameter: ModelParameter):
-        """Create an EmbeddingEncoder instance"""
+    def create_encoder(parameter: ModelParameter) -> EmbeddingEncoderCore:
+        """Create an embedding encoder instance.
+        
+        Args:
+            parameter: Model parameters
+            
+        Returns:
+            EmbeddingEncoderCore instance
+        """
         return EmbeddingEncoder(parameter)
+    
+    @classmethod
+    def create(cls, parameter: ModelParameter, request: GenerationRequest) -> GeneratorCore:
+        """Convenience method that delegates to create_generator.
+        
+        Args:
+            parameter: Model parameters
+            request: Generation request
+            
+        Returns:
+            Generator instance
+        """
+        return cls.create_generator(parameter, request)
         

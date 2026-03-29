@@ -134,8 +134,8 @@ def spawn_parallel_fn(
     
     if world_size == 1:
         device_ids = device_ids or [0]
-        deice_id = torch.device(device_type, device_ids[0])
-        os.environ["LOCAL_DEVICE"] = str(deice_id)
+        device_id = torch.device(device_type, device_ids[0])
+        os.environ["LOCAL_DEVICE"] = str(device_id)
         
         func(**kwargs)
         return

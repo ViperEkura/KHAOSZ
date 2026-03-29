@@ -1,29 +1,33 @@
 from khaosz.trainer.trainer import Trainer
-from khaosz.trainer.strategy import StrategyFactory
-from khaosz.trainer.schedule import SchedulerFactory
+from khaosz.trainer.strategy import StrategyFactory, BaseStrategy
+from khaosz.trainer.schedule import SchedulerFactory, BaseScheduler
 
 from khaosz.trainer.train_callback import (
     TrainCallback,
-    ProgressBarCallback,
-    CheckpointCallback,
-    TrainCallback,
+    GradientClippingCallback,
     SchedulerCallback,
-    MetricLoggerCallback
+    CheckpointCallback,
+    ProgressBarCallback,
+    MetricLoggerCallback,
 )
 
 __all__ = [
-    # trainer
+    # Main trainer
     "Trainer",
     
-    # factory
+    # Strategy factory
     "StrategyFactory",
-    "SchedulerFactory",
+    "BaseStrategy",
     
-    # callback
+    # Scheduler factory
+    "SchedulerFactory",
+    "BaseScheduler",
+    
+    # Callbacks
     "TrainCallback",
-    "ProgressBarCallback",
-    "CheckpointCallback",
-    "TrainCallback",
+    "GradientClippingCallback",
     "SchedulerCallback",
-    "MetricLoggerCallback"
+    "CheckpointCallback",
+    "ProgressBarCallback",
+    "MetricLoggerCallback",
 ]

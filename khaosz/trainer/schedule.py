@@ -1,20 +1,21 @@
+"""Learning rate scheduler implementations with factory pattern."""
+
 import math
 from abc import abstractmethod, ABC
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Type
 from torch.optim.lr_scheduler import LRScheduler
 from khaosz.config.schedule_config import ScheduleConfig
 
 
 class BaseScheduler(LRScheduler, ABC):
-    """
-    Base scheduler class for all other schedulers.
-    """
+    """Base scheduler class for all other schedulers."""
     
     def __init__(self, optimizer, last_epoch: int = -1):
         super().__init__(optimizer, last_epoch)
     
     @abstractmethod
     def get_lr(self) -> List[float]:
+        """Calculate the current learning rate."""
         raise NotImplementedError
     
     def state_dict(self) -> Dict[str, Any]:
@@ -24,10 +25,95 @@ class BaseScheduler(LRScheduler, ABC):
         super().load_state_dict(state_dict)
 
 
+class SchedulerFactory:
+    """Factory class for creating learning rate schedulers.
+    
+    Supports decorator-based registration for extensible scheduler types.
+    Also supports creation from ScheduleConfig objects.
+    
+    Example usage:
+        @SchedulerFactory.register("custom")
+        class CustomScheduler(BaseScheduler):
+            ...
+        
+        scheduler = SchedulerFactory.create(optimizer, "custom", **kwargs)
+        
+        # Or from config
+        config = CosineScheduleConfig(total_steps=10000)
+        scheduler = SchedulerFactory.load(optimizer, config)
+    """
+    
+    SCHEDULER_MAP: Dict[str, Type[BaseScheduler]] = {}
+    
+    @classmethod
+    def register(cls, name: str):
+        """Decorator to register a new scheduler class.
+        
+        Args:
+            name: Registration name for the scheduler
+            
+        Returns:
+            Decorator function that registers the scheduler class
+        """
+        def decorator(scheduler_cls: Type[BaseScheduler]) -> Type[BaseScheduler]:
+            if not issubclass(scheduler_cls, BaseScheduler):
+                raise TypeError(f"{scheduler_cls.__name__} must inherit from BaseScheduler")
+            cls.SCHEDULER_MAP[name] = scheduler_cls
+            return scheduler_cls
+        return decorator
+    
+    @classmethod
+    def create(cls, optimizer, schedule_type: str, **kwargs) -> BaseScheduler:
+        """Create a scheduler instance by type name.
+        
+        Args:
+            optimizer: PyTorch optimizer
+            schedule_type: Type of scheduler ("cosine", "sgdr")
+            **kwargs: Arguments passed to the scheduler constructor
+            
+        Returns:
+            Scheduler instance
+            
+        Raises:
+            ValueError: If schedule_type is not supported
+        """
+        if schedule_type not in cls.SCHEDULER_MAP:
+            raise ValueError(
+                f"Unknown schedule type: '{schedule_type}'. "
+                f"Supported types: {sorted(cls.SCHEDULER_MAP.keys())}"
+            )
+        
+        scheduler_cls = cls.SCHEDULER_MAP[schedule_type]
+        return scheduler_cls(optimizer, **kwargs)
+    
+    @staticmethod
+    def load(optimizer, schedule_config: ScheduleConfig) -> BaseScheduler:
+        """Create a scheduler from a ScheduleConfig object.
+        
+        Args:
+            optimizer: PyTorch optimizer
+            schedule_config: ScheduleConfig instance
+            
+        Returns:
+            Scheduler instance
+        """
+        kwargs = schedule_config.get_kwargs()
+        schedule_type = kwargs.pop("schedule_type")
+        return SchedulerFactory.create(optimizer, schedule_type, **kwargs)
+    
+    @classmethod
+    def available_types(cls) -> list:
+        """Return list of registered scheduler type names."""
+        return list(cls.SCHEDULER_MAP.keys())
+
+
+# ============== Scheduler Classes ==============
+# All scheduler classes are registered at class definition time using the decorator
+
+
+@SchedulerFactory.register("cosine")
 class CosineScheduler(BaseScheduler):
-    """
-    Cosine decay scheduler with warmup, implemented as PyTorch LRScheduler.
-    """
+    """Cosine decay scheduler with warmup, implemented as PyTorch LRScheduler."""
     
     def __init__(
         self, 
@@ -75,10 +161,9 @@ class CosineScheduler(BaseScheduler):
         super().load_state_dict(state_dict)
 
 
+@SchedulerFactory.register("sgdr")
 class SGDRScheduler(BaseScheduler):
-    """
-    SGDR (Stochastic Gradient Descent with Warm Restarts) scheduler, 
-    """
+    """SGDR (Stochastic Gradient Descent with Warm Restarts) scheduler."""
     
     def __init__(
         self, 
@@ -142,23 +227,3 @@ class SGDRScheduler(BaseScheduler):
         self.min_rate = state_dict.pop('min_rate')
         self.t_mult = state_dict.pop('t_mult')
         super().load_state_dict(state_dict)
-
-
-    
-class SchedulerFactory:
-    """
-    Factory class for creating learning rate schedulers.
-    """
-
-    @staticmethod
-    def load(optimizer, schedule_config: ScheduleConfig) -> BaseScheduler:
-        kwargs = schedule_config.get_kwargs()
-        schedule_type = kwargs.pop("schedule_type")
-        
-        if schedule_type == "cosine":
-            return CosineScheduler(optimizer, **kwargs)
-        elif schedule_type == "sgdr":
-            return SGDRScheduler(optimizer, **kwargs)
-        else:
-            raise ValueError(f"Unsupported schedule type: {schedule_type}")
-        

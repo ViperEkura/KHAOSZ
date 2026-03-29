@@ -1,10 +1,15 @@
-from typing import Any, Dict
+from typing import Any, Dict, Type
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 
 @dataclass
 class ScheduleConfig(ABC):
+    """Base configuration class for learning rate schedulers.
+    
+    Provides common validation and interface for all schedule types.
+    """
+    
     schedule_type: str = field(
         default="cosine",
         metadata={
@@ -23,6 +28,7 @@ class ScheduleConfig(ABC):
     
     @abstractmethod
     def get_kwargs(self) -> Dict[str, Any]:
+        """Get configuration kwargs for scheduler creation."""
         raise NotImplementedError
     
     def validate(self) -> None:
@@ -35,6 +41,8 @@ class ScheduleConfig(ABC):
 
 @dataclass
 class CosineScheduleConfig(ScheduleConfig):
+    """Cosine annealing learning rate schedule configuration."""
+    
     total_steps: int = field(
         default=None,
         metadata={"help": "Total training steps for cosine schedule."}
@@ -63,6 +71,8 @@ class CosineScheduleConfig(ScheduleConfig):
 
 @dataclass
 class SGDRScheduleConfig(ScheduleConfig):
+    """Stochastic Gradient Descent with Warm Restarts schedule configuration."""
+    
     cycle_length: int = field(
         default=1000,
         metadata={"help": "Length of the first cycle in steps."}
@@ -91,3 +101,50 @@ class SGDRScheduleConfig(ScheduleConfig):
             raise ValueError(f"cycle_length must be positive, got {self.cycle_length}")
         if self.t_mult < 1:
             raise ValueError(f"t_mult must be >= 1, got {self.t_mult}")
+
+
+class ScheduleConfigFactory:
+    """Factory class for creating ScheduleConfig instances.
+    
+    Supports both direct instantiation and factory creation methods.
+    
+    Example usage:
+        # Direct creation
+        config = CosineScheduleConfig(total_steps=10000)
+        
+        # Factory method
+        config = ScheduleConfigFactory.create("cosine", total_steps=10000)
+    """
+    
+    CONFIG_MAP: Dict[str, Type[ScheduleConfig]] = {
+        "cosine": CosineScheduleConfig,
+        "sgdr": SGDRScheduleConfig,
+    }
+    
+    @classmethod
+    def create(cls, schedule_type: str, **kwargs) -> ScheduleConfig:
+        """Create a schedule config instance.
+        
+        Args:
+            schedule_type: Type of schedule ("cosine", "sgdr")
+            **kwargs: Arguments passed to the config constructor
+            
+        Returns:
+            ScheduleConfig instance
+            
+        Raises:
+            ValueError: If schedule_type is not supported
+        """
+        if schedule_type not in cls.CONFIG_MAP:
+            raise ValueError(
+                f"Unknown schedule type: '{schedule_type}'. "
+                f"Supported types: {sorted(cls.CONFIG_MAP.keys())}"
+            )
+        
+        config_cls = cls.CONFIG_MAP[schedule_type]
+        return config_cls(**kwargs)
+    
+    @classmethod
+    def available_types(cls) -> list:
+        """Return list of available schedule type names."""
+        return list(cls.CONFIG_MAP.keys())
