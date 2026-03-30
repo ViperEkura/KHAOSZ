@@ -87,7 +87,7 @@ class TrainContextBuilder:
         return self
     
     def with_strategy(self) -> Self:
-        self._context.strategy = StrategyFactory.load(
+        self._context.strategy = StrategyFactory.create(
             model=self._context.model,
             train_type=self.config.strategy,
             device=get_current_device(),

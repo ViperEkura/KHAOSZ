@@ -82,9 +82,12 @@ def only_on_rank(rank, sync=False):
         @wraps(func)
         def wrapper(*args, **kwargs):
             if get_rank() == rank:
-                return func(*args, **kwargs)
-            if sync:
+                ret_args = func(*args, **kwargs)
+
+            if sync and dist.is_available() and dist.is_initialized():
                 dist.barrier()
+
+            return ret_args
         
         return wrapper
     

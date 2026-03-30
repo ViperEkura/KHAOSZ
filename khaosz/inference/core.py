@@ -191,7 +191,7 @@ class EmbeddingEncoderCore:
         sentence_embs: List[Tensor] = []
         for i in range(len(batch_ids)):
             indices = [idx for idx, orig_idx in enumerate(fragment_origin_idx) if orig_idx == i]
-            if indices is not None:
+            if indices:
                 sum_frags = torch.sum(fragment_embs[indices, :, :], dim=1)      # [frags, hidden_size]
                 length = torch.sum(seq_mask[indices, :], dim=1).unsqueeze(1)    # [frags, 1]
                 emb = torch.sum(sum_frags / length, dim=0)                      # [frags, hidden_size]
@@ -228,11 +228,11 @@ class KVCacheManager:
         self._initialize()
     
     def _initialize(self):
-        k_cache = torch.zeros(
+        k_cache = torch.empty(
             (self.batch_size, self.max_len, self.num_layers, self.num_heads, self.head_dim),
             device=self.device, dtype=self.dtype
         )
-        v_cache = torch.zeros(
+        v_cache = torch.empty(
             (self.batch_size, self.max_len, self.num_layers, self.num_heads, self.head_dim),
             device=self.device, dtype=self.dtype
         )

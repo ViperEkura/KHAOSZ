@@ -74,19 +74,16 @@ class SchedulerCallback(TrainCallback):
     Scheduler callback for trainer.
     """
     def __init__(self):
-        self.scheduler: LRScheduler = None
+        pass
     
     def on_train_begin(self, context: TrainContext):
         for group in context.optimizer.param_groups:
             if "initial_lr" not in group:
                 group["initial_lr"] = group["lr"] 
-        
-        self.scheduler = context.scheduler
     
     def on_batch_end(self, context: TrainContext):
-        _ = context
-        if self.scheduler:
-            self.scheduler.step()
+        if context.scheduler:
+            context.scheduler.step()
 
 
 class CheckpointCallback(TrainCallback):

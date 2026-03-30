@@ -15,10 +15,13 @@ dependencies = [
     "tqdm==4.67.1",
     "safetensors==0.5.3",
     "huggingface-hub==0.34.3",
-    "pytest==9.0.2"
 ]
+
+[project.optional-dependencies]
+dev = ["pytest==9.0.2"]
+
 keywords = ["nlp", "datasets", "language-models", "machine-learning"]
-license = { text = "GPL-3.0" }
+license = ["GPL-3.0"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: GPL-3.0",

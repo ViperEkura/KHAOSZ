@@ -93,7 +93,7 @@ class RotaryEmbedding(nn.Module):
         seq_len = x.size(1)
         
         if self.max_len_cached < seq_len + start_pos:
-            self._set_rotary_buffer(seq_len)
+            self._set_rotary_buffer(seq_len + start_pos)
         
         cos = self.cos_cached[start_pos : start_pos + seq_len]
         sin = self.sin_cached[start_pos : start_pos + seq_len]
@@ -237,6 +237,7 @@ class MLA(nn.Module):
         use_gated_attention: bool,
         layer_id: int
     ):
+        super().__init__()
         self.dim = dim
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads
