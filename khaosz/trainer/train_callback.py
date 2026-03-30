@@ -6,7 +6,6 @@ import torch.nn as nn
 from pathlib import Path
 from tqdm import tqdm
 from torch.nn.utils import clip_grad_norm_
-from torch.optim.lr_scheduler import LRScheduler
 from typing import Callable, List, Optional, Protocol
 
 from khaosz.parallel import only_on_rank

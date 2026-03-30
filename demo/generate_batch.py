@@ -1,19 +1,19 @@
-import os
 import torch
+from pathlib import Path
 from khaosz.config.param_config import ModelParameter
 from khaosz.inference.core import disable_random_init
-from khaosz.inference.generator import BatchGenerator, GenerationRequest
+from khaosz.inference.generator import GeneratorFactory, GenerationRequest
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = Path(__file__).parent.parent
+PARAMETER_ROOT = Path(PROJECT_ROOT, "params")
 
 
 def batch_generate():
-    with disable_random_init():
-        model_dir = os.path.join(PROJECT_ROOT, "params")
-        param = ModelParameter.load(model_dir)
 
-    param.to(device="cuda", dtype=torch.bfloat16)
-    generator = BatchGenerator(param)
+    with disable_random_init():
+        param = ModelParameter.load(PARAMETER_ROOT)
+        param.to(device="cuda", dtype=torch.bfloat16)
+
     inputs = [
         "你好",
         "请问什么是人工智能",
@@ -31,6 +31,7 @@ def batch_generate():
         history=None,
         system_prompt=None,
     )
+    generator = GeneratorFactory.create(param, request)
     responses = generator.generate(request)
 
     for q, r in zip(inputs, responses):

@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from torch import Tensor
-from typing import Any, Callable, Dict, Union, Optional
+from typing import Any, Callable, Dict, Union
 from abc import ABC, abstractmethod
 
 

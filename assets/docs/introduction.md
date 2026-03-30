@@ -1,50 +1,26 @@
-## 模型介绍
+## Model Introduction
 
 
 
-### 1. 模型搭建
+### 1. Model Architecture
 
-本模型采用Transformer架构， 使用GQA（q_head=24, kv_head=4） 机制，相较于传统的MHA可以节省KV cache 的显存占用（但是目前没有做KV cache），通过堆叠24层Transformer实现模型的搭建， 参数量为1.0b。Transformer 是自回归模型， 是通过计算前面所有的token的关系得到下一个token的概率分布
+This model uses the Transformer architecture with GQA mechanism (q_head=24, kv_head=4), which saves KV cache memory compared to traditional MHA (although KV cache is not currently implemented). The model is built by stacking 24 layers of Transformer blocks, with 1.0 billion parameters. Transformer is an autoregressive model that calculates the relationship between all previous tokens to obtain the probability distribution of the next token.
 
 ![structure](../images/structure.png)
 
-什么是自回归模型呢， 在把句子拆分成token之后, 模型会预测下一个token的概率分布。这意味着模型会根据给定的上下文（即已经出现的tokens序列），计算出下一个可能的token及其对应的概率。
+What is an autoregressive model? After splitting a sentence into tokens, the model predicts the probability distribution of the next token. This means the model calculates the probability of the next possible token and its corresponding probability based on the given context (the sequence of tokens that have already appeared).
 
+#### 1. Autoregression
 
+In autoregressive modeling, when a sentence is tokenized into a sequence of tokens, the model learns to predict what comes next. Given a sequence of tokens as input, the model calculates a probability distribution over all possible next tokens. This distribution tells us how likely each potential next token is, given the current context.
 
-#### 1. 自回归
+For instance, if the input sequence contains tokens representing a question, the model might predict that certain response tokens have higher probabilities than others. The sampling process then selects one token from this distribution—controlled by parameters like top_k, top_p, and temperature—to serve as the next token in the sequence.
 
-假设我们有一个句子被拆分成如下tokens列表：
+Once a token is selected, it is appended to the input sequence, and the model repeats this process. The updated sequence is then fed back into the model to predict the next token. This iterative process continues until either a special end-of-sequence token is generated, or the maximum sequence length is reached. These control tokens are essential because without them, the model would continue generating tokens indefinitely, eventually exhausting available memory.
 
-```
-["你好", "，" "今天", "天气"]
-```
+#### 2. Causal Mask
 
-接下来，模型会基于这个序列预测下一个可能出现的token。这通常以概率分布的形式给出，比如：
-
-```
--> {"token": "不错", "probability": 0.4}
--> {"token": "晴朗", "probability": 0.2}
--> ......
-```
-
-这里，“不错”和“晴朗”是两个可能跟随在“天气”之后的tokens，并且给出了每个token成为下一个token的可能性大小。
-
-之后，我们通过采样（通过top_k, top_p, temperature参数调整采样后的结果）得到下一个token并且将下一个token加入序列作为输入
-
-```
-["你好", "，" "今天", "天气", "不错"]
-```
-
-之后都是在重复这个流程， 直到遇到控制流程结束的token（<|end_of_seqence|>）模型停止处理（一般模型都会设置控制token， 不然模型会一直输出到显存爆炸）。 
-
-
-
-
-
-#### 2. 因果掩码
-
-transformer 中采用注意力机制，输入的形状一般为[bsz, seq_len]， 输出为[bsz, seq_len，n_dim]， 为了实现预测下一个token， 模型的输入和输出必须错开来一个位置。模型预测的target必须错开一个位置， 在训练的时候我们也采用错开一个位置的方法
+Transformers use attention mechanism. The input shape is generally [bsz, seq_len], and the output is [bsz, seq_len, n_dim]. To predict the next token, the model's input and output must be offset by one position. The target predicted by the model must be offset by one position, and during training we also use the offset-by-one method:
 
 ```
 sequence : [[1, 2, 3, 4, 5, 6]]
@@ -52,18 +28,14 @@ input_ids: [[1, 2, 3, 4, 5]]
 target_ids: [[2, 3, 4, 5, 6]]
 ```
 
-
-
-注意力得分计算的公式为
-
+The attention score calculation formula is:
 
 $$ s_{ij} = softmax(\frac{q_i^Tk_j}{\sqrt{d_k}}) $$
 $$ s_{ij} := s_{ij} + mask_{ij} $$
 
+Here, the attention score represents the degree to which the model attends to the similarity between two tokens.
 
-其中注意力得分代表了模型对两个token之间相似程度的关注程度
-
-对于decoder only结构的模型， 为了防止模型从未来的位置偷到信息， 在注意力的计算过程中需要增加掩码，我们需要在注意力得分计算之前应用一个掩码。这个掩码通常是一个下三角矩阵，对于长度为n的序列，它的形状是[n, n]。下面以一个长度为5的序列为例，展示如何创建这样的因果掩码矩阵：
+For decoder-only structure models, to prevent the model from "stealing" information from future positions, a mask needs to be added during attention calculation. We need to apply a mask before attention score calculation. This mask is typically a lower triangular matrix, and for a sequence of length n, its shape is [n, n]. Below is an example of how to create such a causal mask matrix for a sequence of length 5:
 
 ```
 [[0, -inf, -inf, -inf, -inf],
@@ -73,25 +45,21 @@ $$ s_{ij} := s_{ij} + mask_{ij} $$
  [0,    0,    0,    0,    0]]
 ```
 
-在这个矩阵中，0表示可以注意到的位置，而-inf表示应该被掩盖（即不应注意到）的位置。因为这个句子保证了注意力得分中 $j > i$  的部分通过softmax 之后由`inf` 变成0， 也就是模型不能看到未来的信息
+In this matrix, 0 represents positions that can be attended to, while -inf represents positions that should be masked (i.e., should not be attended to). Because this matrix ensures that after the softmax, the parts of the attention scores where $j > i$ change from `inf` to 0, meaning the model cannot see future information.
 
+#### 3. Rotary Position Embedding
 
-
-#### 3. 旋转位置编码
-
-旋转位置编码（Rotary Position Embedding, RoPE）是一种为了解决Transformer模型中缺乏对序列位置信息直接建模的问题而设计的位置编码方法。与传统的位置编码（如正弦和余弦函数的位置编码）不同，RoPE通过将位置信息直接嵌入到查询（Query, Q）和键（Key, K）向量中来实现，使得模型能够更自然地处理序列中的相对位置关系。
-
+Rotary Position Embedding (RoPE) is a position encoding method designed to solve the problem of lacking direct modeling of sequence position information in Transformer models. Unlike traditional position encodings (such as sine and cosine function position encodings), RoPE embeds position information directly into the Query (Q) and Key (K) vectors, allowing the model to more naturally handle relative position relationships in sequences.
 
 $$ q_i = R_i W_q x_i $$
 $$ k_j = R_j W_k x_j $$
 $$ q_i^T k_j = (R_i W_q x_i)^T( R_j W_k x_j) = x_i^T W_q^T R_{i-j} W_k x_j $$
 
-其中的 $R_{i-j}$ 控制了模型的不同token 在不同相对距离上注意力的衰减，在 $i - j$ 绝对值越大的时候， 衰减的程度越强， 通过这种方式能让模型学习到相对位置关系， 从而使得模型可以扩展和适应长序列
+The $R_{i-j}$ controls the attenuation of attention for different tokens at different relative distances. When the absolute value of $i - j$ is larger, the degree of attenuation is stronger. This approach allows the model to learn relative position relationships, enabling the model to scale and adapt to longer sequences.
 
+## KV Cache Implementation
 
-## kv_cache 实现
-
-根据注意力的计算公式
+According to the attention calculation formula:
 
 $$
 \begin{align*}
@@ -100,7 +68,7 @@ s_{ij} &= \text{softmax}\left( \frac{q_{i} k_{j}}{\sqrt{d_k}} \right)
 \end{align*}
 $$
 
-由于模型是自回归模型, 我们只用求序列最后一个部分，也就是说 $ i $ 的下标是确定的, 是序列最后一个元素, 我们求的是 $o_{n} $ 
+Since the model is an autoregressive model, we only need to calculate for the last part of the sequence, meaning the index $i$ is fixed as the last element of the sequence, and we compute $o_{n}$:
 
 $$
 \begin{align*}
@@ -109,10 +77,10 @@ s_j &= \text{softmax}\left(\frac{q_n k_{j}}{\sqrt{d_k}} \right)
 \end{align*}
 $$
 
-如果我们把式子展开
+If we expand the expression:
 
 $$
 o_n = \sum_j \text{softmax}\left(\frac{q_n k_{j}}{\sqrt{d_k}}\right)v_{j}
 $$
 
-以上表达式只有k和v存在长度下标, 而 $q$ 没有， 所以计算过程中 $q$ 的输入是确定的上次输入的最后一个token, 而 $k,  v$ 是需要对不同长度的部分进行缓存的，同时缓存的时候应该注意位置编码的计算应该在kvcache的计算之前进行，否则会存在位置编码的计算错误
+In the above expression, only k and v have length indices, while $q$ does not. Therefore, during the calculation process, the input of $q$ is fixed as the last token from the previous input, while $k$ and $v$ need to be cached for parts of different lengths. Also, when caching, note that position encoding calculation should be performed before KV cache computation, otherwise there will be position encoding calculation errors.

@@ -1,20 +1,19 @@
-import os
 import torch
+from pathlib import Path
 from khaosz.config.param_config import ModelParameter
 from khaosz.inference.core import disable_random_init
-from khaosz.inference.generator import LoopGenerator, GenerationRequest
+from khaosz.inference.generator import GeneratorFactory, GenerationRequest
 
-
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = Path(__file__).parent.parent
+PARAMETER_ROOT = Path(PROJECT_ROOT, "params")
 
 
 def generate_text():
 
     with disable_random_init():
-        model_dir = os.path.join(PROJECT_ROOT, "params")
-        param = ModelParameter.load(model_dir)
+        param = ModelParameter.load(PARAMETER_ROOT)
+        param.to(device="cuda", dtype=torch.bfloat16)
 
-    param.to(device="cuda", dtype=torch.bfloat16)
     query = input(">> ")
 
     request = GenerationRequest(
@@ -26,7 +25,7 @@ def generate_text():
         history=None,
         system_prompt=None,
     )
-    generator = LoopGenerator(param)
+    generator = GeneratorFactory.create(param, request)
     response = generator.generate(request)
 
     print(response)

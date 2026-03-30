@@ -75,7 +75,7 @@ class Checkpoint:
             with open(save_path / "meta.json", "w") as f:
                 json.dump(meta, f, indent=2)
 
-            st.save_file(self.state_dict, save_path / f"state_dict.safetensors")
+            st.save_file(self.state_dict, save_path / "state_dict.safetensors")
 
     @classmethod
     def load(
@@ -96,7 +96,7 @@ class Checkpoint:
             dist.broadcast_object_list(meta_list, src=0)
             meta = meta_list[0]
 
-        state_dict = st.load_file(save_path / f"state_dict.safetensors")
+        state_dict = st.load_file(save_path / "state_dict.safetensors")
 
         return cls(
             state_dict=state_dict,

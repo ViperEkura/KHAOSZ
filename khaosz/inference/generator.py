@@ -219,7 +219,7 @@ class BatchGenerator(GeneratorCore):
                     ids_list[i].append(token)
                     c_ids += 1
 
-                    is_active = not token in self.tokenizer.stop_ids
+                    is_active = token not in self.tokenizer.stop_ids
                     activate_task_mask[i] = is_active
                     active_mask.append(is_active)
 
