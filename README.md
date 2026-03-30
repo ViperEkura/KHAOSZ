@@ -15,16 +15,23 @@
 
 ## 📖 Table of Contents | 目录
 
-<div align="center">
+<details open>
+<summary><b>English</b></summary>
 
-| English | 中文 |
-|---------|------|
-| [Installation](#installation) | [安装](#安装) |
-| [Quick Start](#quick-start) | [快速开始](#快速开始) |
-| [Documentation](#documentation) | [文档](#文档) |
-| [License](#license) | [许可证](#许可证) |
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Documentation](#documentation)
 
-</div>
+</details>
+
+<details>
+<summary><b>中文</b></summary>
+
+- [安装](#安装)
+- [快速开始](#快速开始)
+- [文档](#文档)
+
+</details>
 
 ---
 
@@ -73,11 +80,6 @@ python demo/generate_ar.py
 
 - [bilibili](https://www.bilibili.com/video/BV1z5RPYHEkd)
 
-<a id="license"></a>
-### License
-
-GPL-3.0
-
 ---
 
 <a id="chinese"></a>
@@ -125,23 +127,25 @@ python demo/generate_ar.py
 
 - [bilibili](https://www.bilibili.com/video/BV1z5RPYHEkd)
 
-### 许可证
-
-GPL-3.0
 
 ---
 
 <a id="documentation"></a>
-## 📚 Documentation | 文档
 
-| Document | 说明 |
-|----------|------|
-| [参数说明](assets/docs/params.md) | Training & inference parameters |
-| [设计文档](assets/docs/design.md) | Framework design |
-| [数据流程](assets/docs/dataflow.md) | Data processing pipeline |
-| [模型介绍](assets/docs/introduction.md) | Model architecture |
+### Document | 文档
+
+| Document | Description |
+|----------|-------------|
+| *Parameter Guide* <br> [参数说明](./assets/docs/params.md) | *Training & inference parameters* <br> 训练与推理参数配置 |
+| *Design Document* <br> [设计文档](./assets/docs/design.md) | *Framework architecture & module design* <br> 系统架构与模块设计 |
+| *Data Flow* <br> [数据流程](./assets/docs/dataflow.md) | *Data processing pipeline details* <br> 数据处理管道详解 |
+| *Model Introduction* <br> [模型介绍](./assets/docs/introduction.md) | *Model architecture & technical details* <br> 模型架构与技术细节 |
 
 ### Download | 下载
 
 - [HuggingFace](https://huggingface.co/ViperEk/KHAOSZ)
 - `python demo/download.py`
+
+### Lincence | 许可证
+
+- [GPL-3.0](LICENSE)
