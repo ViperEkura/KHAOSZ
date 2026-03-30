@@ -54,8 +54,8 @@ python train.py \
 --n_epoch=5 \
 --batch_size=8 \
 --max_lr=2e-4 \
---checkpoint_interval=10000 \
---checkpoint_dir=checkpoints 
+--ckpt_interval=10000 \
+--ckpt_dir=checkpoints 
 ```
 
 **Parameter Explanation:**
@@ -67,8 +67,8 @@ python train.py \
 - `--accumulation_steps`: Number of batches per training step
 - `--warmup_steps`: Warmup steps
 - `--max_lr`: Maximum learning rate (using warmup + cosine decay)
-- `--checkpoint_interval`: Checkpoint saving interval
-- `--checkpoint_dir`: Checkpoint saving directory
+- `--ckpt_interval`: Checkpoint saving interval
+- `--ckpt_dir`: Checkpoint saving directory
 - `--resume_dir`: Resume training from specified path
 
 
@@ -191,8 +191,8 @@ python train.py \
 --n_epoch=5 \
 --batch_size=8 \
 --max_lr=2e-4 \
---checkpoint_interval=10000 \
---checkpoint_dir=checkpoints 
+--ckpt_interval=10000 \
+--ckpt_dir=checkpoints 
 ```
 
 **参数说明：**
@@ -204,8 +204,8 @@ python train.py \
 - `--accumulation_steps`: 每个训练步骤的 batch 数量
 - `--warmup_steps`: 预热步数（warmup steps）
 - `--max_lr`: 最大学习率（使用预热 + 余弦衰减）
-- `--checkpoint_interval`: 检查点保存间隔
-- `--checkpoint_dir`: 检查点保存目录
+- `--ckpt_interval`: 检查点保存间隔
+- `--ckpt_dir`: 检查点保存目录
 - `--resume_dir`: 从指定路径恢复训练
 
 

@@ -10,24 +10,26 @@ from torch import Tensor
 from typing import Any, Dict, List
 from khaosz.parallel.setup import get_rank
 
+
 def save_h5(file_path: str, file_name: str, tensor_group: Dict[str, List[Tensor]]):
     os.makedirs(file_path, exist_ok=True)
     full_file_path = os.path.join(file_path, f"{file_name}.h5")
-    with h5py.File(full_file_path, 'w') as f:
+    with h5py.File(full_file_path, "w") as f:
         for key, tensors in tensor_group.items():
             grp = f.create_group(key)
             for idx, tensor in enumerate(tensors):
                 arr = tensor.cpu().numpy()
-                grp.create_dataset(f'data_{idx}', data=arr)
+                grp.create_dataset(f"data_{idx}", data=arr)
+
 
 def load_h5(file_path: str, share_memory=True) -> Dict[str, List[Tensor]]:
     tensor_group: Dict[str, List[Tensor]] = {}
 
     root_path = Path(file_path)
     h5_files = list(root_path.rglob("*.h5")) + list(root_path.rglob("*.hdf5"))
-    
+
     for h5_file in h5_files:
-        with h5py.File(h5_file, 'r') as f:
+        with h5py.File(h5_file, "r") as f:
             for key in f.keys():
                 grp = f[key]
                 dsets = []
@@ -37,7 +39,7 @@ def load_h5(file_path: str, share_memory=True) -> Dict[str, List[Tensor]]:
                     if share_memory:
                         tensor = tensor.share_memory_()
                     dsets.append(tensor)
-            
+
                 if tensor_group.get(key) is None:
                     tensor_group[key] = []
                 tensor_group[key].extend(dsets)
@@ -60,7 +62,7 @@ class Checkpoint:
         self,
         save_dir: str,
     ) -> None:
-        
+
         save_path = Path(save_dir)
         save_path.mkdir(parents=True, exist_ok=True)
 
@@ -72,7 +74,7 @@ class Checkpoint:
             }
             with open(save_path / "meta.json", "w") as f:
                 json.dump(meta, f, indent=2)
-            
+
             st.save_file(self.state_dict, save_path / f"state_dict.safetensors")
 
     @classmethod
@@ -83,7 +85,7 @@ class Checkpoint:
 
         rank = get_rank()
         save_path = Path(save_dir)
-        
+
         meta = {}
         if rank == 0:
             with open(Path(save_dir) / "meta.json", "r") as f:

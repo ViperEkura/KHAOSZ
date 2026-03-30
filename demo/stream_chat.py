@@ -5,16 +5,16 @@ from khaosz.inference.core import disable_random_init
 from khaosz.inference.generator import StreamGenerator, GenerationRequest
 
 
-PROJECT_ROOT = os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 def chat():
-    
+
     with disable_random_init():
         model_dir = os.path.join(PROJECT_ROOT, "params")
         param = ModelParameter.load(model_dir)
 
-    param.to(device='cuda', dtype=torch.bfloat16)
+    param.to(device="cuda", dtype=torch.bfloat16)
     generator = StreamGenerator(param)
 
     history = []
@@ -22,7 +22,7 @@ def chat():
         query = input(">> ")
         if query == "!exit":
             break
-        
+
         request = GenerationRequest(
             query=query,
             temperature=0.8,
@@ -32,7 +32,7 @@ def chat():
             history=history,
             system_prompt=None,
         )
-        
+
         response_size = 0
         full_response = ""
         for response in generator.generate(request):
@@ -40,7 +40,7 @@ def chat():
             print(response[response_size:], end="", flush=True)
             response_size = len(response)
             full_response = response
-        
+
         # After generation, update history
         history.append((query, full_response.strip()))
 

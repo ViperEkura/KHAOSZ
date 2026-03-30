@@ -8,5 +8,8 @@
 !*.py
 !*.md
 !*.png
+
 !LICENSE
 !pyproject.toml
+!.github/workflows/lint.yml
+!.github/workflows/tests.yml

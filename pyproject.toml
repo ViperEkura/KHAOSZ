@@ -26,7 +26,7 @@ classifiers = [
 urls = { Homepage = "https://github.com/ViperEkura/KHAOSZ" }
 
 [project.optional-dependencies]
-dev = ["pytest==9.0.2"]
+dev = ["pytest==9.0.2", "ruff"]
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -36,3 +36,12 @@ extra-index-url = "https://download.pytorch.org/whl/cu126"
 
 [tool.setuptools.dynamic]
 version = { attr = "khaosz.__version__" }
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

@@ -5,18 +5,18 @@ from khaosz.inference.core import disable_random_init
 from khaosz.inference.generator import LoopGenerator, GenerationRequest
 
 
-PROJECT_ROOT = os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 def generate_text():
-    
+
     with disable_random_init():
         model_dir = os.path.join(PROJECT_ROOT, "params")
         param = ModelParameter.load(model_dir)
-    
-    param.to(device='cuda', dtype=torch.bfloat16)
+
+    param.to(device="cuda", dtype=torch.bfloat16)
     query = input(">> ")
-    
+
     request = GenerationRequest(
         query=query,
         temperature=0.8,
@@ -28,8 +28,9 @@ def generate_text():
     )
     generator = LoopGenerator(param)
     response = generator.generate(request)
-    
+
     print(response)
+
 
 if __name__ == "__main__":
     generate_text()
