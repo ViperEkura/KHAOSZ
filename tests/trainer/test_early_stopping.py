@@ -25,6 +25,7 @@ def test_early_stopping_simulation(base_test_env, early_stopping_dataset):
         checkpoint_interval=1,
         accumulation_steps=2,
         random_seed=np.random.randint(1e4),
+        device_type=base_test_env["device"]
     )
 
     trainer = Trainer(train_config)

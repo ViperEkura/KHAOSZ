@@ -81,6 +81,7 @@ def only_on_rank(rank, sync=False):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
+            ret_args = None
             if get_rank() == rank:
                 ret_args = func(*args, **kwargs)
 

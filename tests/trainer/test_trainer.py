@@ -30,7 +30,8 @@ def test_different_batch_sizes(base_test_env, random_dataset):
             checkpoint_interval=5,
             accumulation_steps=1,
             max_grad_norm=1.0,
-            random_seed=np.random.randint(1000)
+            random_seed=np.random.randint(1000),
+            device_type=base_test_env["device"]
         )
         
         assert train_config.batch_size == batch_size
@@ -59,7 +60,8 @@ def test_gradient_accumulation(base_test_env, random_dataset):
             checkpoint_interval=10,
             accumulation_steps=accumulation_steps,
             max_grad_norm=1.0,
-            random_seed=42
+            random_seed=42,
+            device_type=base_test_env["device"]
         )
         
         trainer = Trainer(train_config)
@@ -96,7 +98,8 @@ def test_memory_efficient_training(base_test_env, random_dataset):
             checkpoint_interval=5,
             accumulation_steps=config["accumulation_steps"],
             max_grad_norm=1.0,
-            random_seed=42
+            random_seed=42,
+            device_type=base_test_env["device"]
         )
         
         assert train_config.accumulation_steps == config["accumulation_steps"]

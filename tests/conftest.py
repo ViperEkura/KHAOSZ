@@ -96,7 +96,7 @@ def base_test_env(request: pytest.FixtureRequest):
     
     with open(config_path, 'w') as f:
         json.dump(config, f)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     transformer_config = ModelConfig().load(config_path)
     model = Transformer(transformer_config).to(device=device)
     tokenizer = BpeTokenizer()

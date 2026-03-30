@@ -25,7 +25,8 @@ def test_callback_integration(base_test_env, random_dataset):
         checkpoint_interval=3,
         accumulation_steps=1,
         max_grad_norm=1.0,
-        random_seed=42
+        random_seed=42,
+        device_type=base_test_env["device"]
     )
     
 
