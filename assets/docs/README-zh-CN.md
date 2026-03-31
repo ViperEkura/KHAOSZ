@@ -75,7 +75,7 @@ pip install -e ".[dev]"
 #### 训练模型
 
 ```bash
-python tools/train.py \
+python scripts/tools/train.py \
   --train_type=seq \
   --data_root_path=/path/to/dataset \
   --param_path=/path/to/param_path
@@ -84,25 +84,25 @@ python tools/train.py \
 #### 文本生成
 
 ```bash
-python tools/generate.py --param_path=/path/to/param_path
+python scripts/tools/generate.py --param_path=/path/to/param_path
 ```
 
 #### 演示
 
-查看 `demo/` 文件夹中的演示：
+查看 `scripts/demo/` 文件夹中的演示：
 
 ```bash
 # 下载预处理数据（运行演示前必需）
-python demo/download.py
+python scripts/demo/download.py
 
 # 交互式流式聊天
-python demo/stream_chat.py
+python scripts/demo/stream_chat.py
 
 # 批量生成
-python demo/generate_batch.py
+python scripts/demo/generate_batch.py
 
 # 自回归生成
-python demo/generate_ar.py
+python scripts/demo/generate_ar.py
 ```
 
 观看 [bilibili](https://www.bilibili.com/video/BV1z5RPYHEkd) 上的视频演示。

@@ -2,12 +2,6 @@
   <!-- <img src="assets/images/project_logo.png" width="auto" alt="Logo"> -->
   
   <h1>AstrAI</h1>
-  
-  <div>
-    <a href="#english">English</a> • 
-    <a href="assets/docs/README-zh-CN.md">中文</a>
-  </div>
-  
   <p>
     <strong>A lightweight Transformer training & inference framework</strong>
   </p>
@@ -80,7 +74,7 @@ pip install -e ".[dev]"
 #### Train a Model
 
 ```bash
-python tools/train.py \
+python scripts/tools/train.py \
   --train_type=seq \
   --data_root_path=/path/to/dataset \
   --param_path=/path/to/param_path
@@ -89,25 +83,25 @@ python tools/train.py \
 #### Generate Text
 
 ```bash
-python tools/generate.py --param_path=/path/to/param_path
+python scripts/tools/generate.py --param_path=/path/to/param_path
 ```
 
 #### Demo
 
-Check out the demos in the `demo/` folder:
+Check out the demos in the `scripts/demo/` folder:
 
 ```bash
 # Download pre‑processed data (required before running demos)
-python demo/download.py
+python scripts/demo/download.py
 
 # Interactive streaming chat
-python demo/stream_chat.py
+python scripts/demo/stream_chat.py
 
 # Batch generation
-python demo/generate_batch.py
+python scripts/demo/generate_batch.py
 
 # Auto‑regressive generation
-python demo/generate_ar.py
+python scripts/demo/generate_ar.py
 ```
 
 Watch a video walkthrough on [bilibili](https://www.bilibili.com/video/BV1z5RPYHEkd).
