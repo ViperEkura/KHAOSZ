@@ -1,12 +1,54 @@
 ## Model Introduction
 
-
-
 ### 1. Model Architecture
 
 This model uses the Transformer architecture with GQA mechanism (q_head=24, kv_head=4), which saves KV cache memory compared to traditional MHA (although KV cache is not currently implemented). The model is built by stacking 24 layers of Transformer blocks, with 1.0 billion parameters. Transformer is an autoregressive model that calculates the relationship between all previous tokens to obtain the probability distribution of the next token.
 
-![structure](../images/structure.png)
+```mermaid
+flowchart TB
+    subgraph Layers["Transformer Layers"]
+        direction TB
+        A[Input Embedding] --> B[Transformer Block\nLayer 1]
+        B --> C[Transformer Block\nLayer ...]
+        C --> D[Transformer Block\nLayer 32]
+        D --> E[RMSNorm]
+        E --> F[Linear]
+        F --> G[SoftMax]
+    end
+
+    subgraph TransformerBlock["Transformer Block"]
+        direction TB
+        H[x] --> I[RMSNorm]
+        I --> J[Linear → Q/K/V]
+        J --> K[Q]
+        J --> L[K]
+        J --> M[V]
+        K --> N[RoPE]
+        L --> O[RoPE]
+        N --> P["Q @ K^T / sqrt(d)"]
+        O --> P
+        P --> Q[Masked SoftMax]
+        Q --> R[S @ V]
+        M --> R
+        R --> S[Linear]
+        S --> T[+]
+        H --> T
+        T --> U[RMSNorm]
+        U --> V[Linear]
+        V --> W[SiLU]
+        V --> X[×]
+        W --> X
+        X --> Y[Linear]
+        Y --> Z[+]
+        T --> Z
+        Z --> AA[x']
+    end
+
+    classDef main fill:#e6f3ff,stroke:#0066cc;
+    classDef block fill:#fff2e6,stroke:#cc6600;
+    class Layers main;
+    class TransformerBlock block;
+```
 
 What is an autoregressive model? After splitting a sentence into tokens, the model predicts the probability distribution of the next token. This means the model calculates the probability of the next possible token and its corresponding probability based on the given context (the sequence of tokens that have already appeared).
 

@@ -1,7 +1,6 @@
 <div align="center">
-  <!-- <img src="assets/images/project_logo.png" width="auto" alt="Logo"> -->
   
-  <h1>AstrAI</h1>
+  <img src="assets/images/logo.png" width="auto" alt="Logo">
   <p>
     <strong>A lightweight Transformer training & inference framework</strong>
   </p>
@@ -14,7 +13,6 @@
   <img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2FViperEkura%2FAstrAI&query=%24.stargazers_count&label=stars&suffix=%20stars&color=76bad9" alt="stars">
   <img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2FViperEkura%2FAstrAI&query=%24.forks_count&label=forks&suffix=%20forks&color=76bad9" alt="forks">
 </div>
-
 <br>
 
 <div align="center">
@@ -22,7 +20,7 @@
   <a href="assets/docs/README-zh-CN.md">中文</a> •
   <a href="https://github.com/ViperEkura/AstrAI/issues">Issue Tracker</a> •
   <a href="https://github.com/ViperEkura/AstrAI/discussions">Discussions</a> •
-  <a href="https://huggingface.co/ViperEk/AstrAI">HuggingFace</a>
+  <a href="https://huggingface.co/ViperEk/">HuggingFace</a>
 </div>
 
 <br>
@@ -130,7 +128,7 @@ For major changes, please open an issue first to discuss what you would like to 
 
 - **GitHub Issues**: [Issue Tracker](https://github.com/ViperEkura/AstrAI/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/ViperEkura/AstrAI/discussions)
-- **HuggingFace**: [Model Hub](https://huggingface.co/ViperEk/AstrAI)
+- **HuggingFace**: [Model Hub](https://huggingface.co/ViperEk)
 
 ### License
 

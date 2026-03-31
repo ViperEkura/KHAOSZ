@@ -1,7 +1,6 @@
 <div align="center">
-  <!-- <img src="../images/project_logo.png" width="auto" alt="Logo"> -->
   
-  <h1>AstrAI</h1>
+  <img src="../images/logo.png" width="auto" alt="Logo">
   
   <div>
     <a href="../../README.md">English</a> • 
@@ -28,9 +27,8 @@
   <a href="#chinese">中文</a> •
   <a href="https://github.com/ViperEkura/AstrAI/issues">问题追踪</a> •
   <a href="https://github.com/ViperEkura/AstrAI/discussions">讨论区</a> •
-  <a href="https://huggingface.co/ViperEk/AstrAI">HuggingFace</a>
+  <a href="https://huggingface.co/ViperEk">HuggingFace</a>
 </div>
-
 <br>
 
 ## 📖 目录
@@ -131,7 +129,7 @@ python scripts/demo/generate_ar.py
 
 - **GitHub Issues**: [问题追踪](https://github.com/ViperEkura/AstrAI/issues)
 - **Discussions**: [GitHub 讨论区](https://github.com/ViperEkura/AstrAI/discussions)
-- **HuggingFace**: [模型中心](https://huggingface.co/ViperEk/AstrAI)
+- **HuggingFace**: [模型中心](https://huggingface.co/ViperEk)
 
 ### 许可证
 

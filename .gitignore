@@ -11,5 +11,6 @@
 
 !LICENSE
 !pyproject.toml
+!.github/ISSUE_TEMPLATE/*
 !.github/workflows/lint.yml
 !.github/workflows/tests.yml
