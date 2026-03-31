@@ -7,7 +7,6 @@ import tqdm
 
 from torch import Tensor
 from astrai.config.param_config import ModelParameter
-from astrai.inference.core import disable_random_init
 
 
 def compute_perplexity(
@@ -42,9 +41,7 @@ def compute_perplexity(
 def process_file(
     model_dir: str, input_file: str, output_file: str, batch_size: int, text_key: str
 ):
-    with disable_random_init():
-        param = ModelParameter.load(model_dir)
-
+    param = ModelParameter.load(model_dir, disable_init=True)
     param.to(device="cuda", dtype=torch.bfloat16)
     model = param.model
     tokenizer = param.tokenizer

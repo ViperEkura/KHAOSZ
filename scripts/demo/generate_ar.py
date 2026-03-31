@@ -1,7 +1,6 @@
 import torch
 from pathlib import Path
 from astrai.config.param_config import ModelParameter
-from astrai.inference.core import disable_random_init
 from astrai.inference.generator import GeneratorFactory, GenerationRequest
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -9,10 +8,8 @@ PARAMETER_ROOT = Path(PROJECT_ROOT, "params")
 
 
 def generate_text():
-
-    with disable_random_init():
-        param = ModelParameter.load(PARAMETER_ROOT)
-        param.to(device="cuda", dtype=torch.bfloat16)
+    param = ModelParameter.load(PARAMETER_ROOT, disable_init=True)
+    param.to(device="cuda", dtype=torch.bfloat16)
 
     query = input(">> ")
 

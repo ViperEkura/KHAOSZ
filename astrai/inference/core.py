@@ -1,8 +1,6 @@
 import torch
-import torch.nn as nn
 
 from torch import Tensor
-from contextlib import contextmanager
 from typing import Any, Callable, List, Tuple, Union, Optional, Self
 from astrai.config import ModelParameter, ModelConfig
 
@@ -53,31 +51,6 @@ def apply_sampling_strategies(
         logits[indices_to_remove] = filter_value
 
     return logits
-
-
-@contextmanager
-def disable_random_init():
-    init_functions = [
-        "xavier_normal_",
-        "xavier_uniform_",
-        "kaiming_normal_",
-        "kaiming_uniform_",
-        "zeros_",
-        "ones_",
-        "constant_",
-        "normal_",
-        "uniform_",
-    ]
-    original_funcs = {}
-    for name in init_functions:
-        if hasattr(nn.init, name):
-            original_funcs[name] = getattr(nn.init, name)
-            setattr(nn.init, name, lambda *args, **kwargs: None)
-    try:
-        yield
-    finally:
-        for name, orig_func in original_funcs.items():
-            setattr(nn.init, name, orig_func)
 
 
 class GeneratorCore:

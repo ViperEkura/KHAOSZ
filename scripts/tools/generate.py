@@ -4,23 +4,19 @@ import argparse
 
 from astrai.config.param_config import ModelParameter
 from astrai.inference.generator import BatchGenerator, GenerationRequest
-from astrai.inference.core import disable_random_init
 
 
 def processor(
     model_dir: str,
     input_json_file: str,
     output_json_file: str,
-    batch_size: int,
     temperature: float,
     top_k: int,
     top_p: float,
     question_key: str,
     response_key: str,
 ):
-    with disable_random_init():
-        param = ModelParameter.load(model_dir)
-
+    param = ModelParameter.load(model_dir, disable_init=True)
     param.to(device="cuda", dtype=torch.bfloat16)
     generator = BatchGenerator(param)
 
