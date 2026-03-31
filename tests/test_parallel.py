@@ -1,7 +1,7 @@
 import torch
 import torch.distributed as dist
 
-from khaosz.parallel import get_rank, only_on_rank, spawn_parallel_fn
+from astrai.parallel import get_rank, only_on_rank, spawn_parallel_fn
 
 
 @only_on_rank(0)

@@ -8,8 +8,8 @@ from tqdm import tqdm
 from torch.nn.utils import clip_grad_norm_
 from typing import Callable, List, Optional, Protocol
 
-from khaosz.parallel import only_on_rank
-from khaosz.trainer.metric_util import (
+from astrai.parallel import only_on_rank
+from astrai.trainer.metric_util import (
     ctx_get_loss,
     ctx_get_lr,
     ctx_get_grad_max,
@@ -19,8 +19,8 @@ from khaosz.trainer.metric_util import (
     ctx_get_grad_std,
     ctx_get_grad_nan_num,
 )
-from khaosz.data.serialization import Checkpoint
-from khaosz.trainer.train_context import TrainContext
+from astrai.data.serialization import Checkpoint
+from astrai.trainer.train_context import TrainContext
 
 
 class TrainCallback(Protocol):

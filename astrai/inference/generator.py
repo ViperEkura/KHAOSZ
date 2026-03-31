@@ -2,8 +2,8 @@ import torch
 from dataclasses import dataclass
 from torch import Tensor
 from typing import List, Tuple, Union, Optional, Generator
-from khaosz.inference.core import GeneratorCore, EmbeddingEncoderCore, KVCacheManager
-from khaosz.config.param_config import ModelParameter
+from astrai.inference.core import GeneratorCore, EmbeddingEncoderCore, KVCacheManager
+from astrai.config.param_config import ModelParameter
 
 
 HistoryType = List[Tuple[str, str]]

@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="assets/images/project_logo.png" width="auto" alt="Logo">
+  <!-- <img src="assets/images/project_logo.png" width="auto" alt="Logo"> -->
   
-  <h1>KHAOSZ</h1>
+  <h1>AstrAI</h1>
   
   <div>
     <a href="#english">English</a> • 
@@ -48,8 +48,8 @@
 ### Installation
 
 ```bash
-git clone https://github.com/username/khaosz.git
-cd khaosz
+git clone https://github.com/ViperEkura/AstrAI.git
+cd AstrAI
 pip install -e .
 ```
 
@@ -95,8 +95,8 @@ python demo/generate_ar.py
 ### 安装
 
 ```bash
-git clone https://github.com/username/khaosz.git
-cd khaosz
+git clone https://github.com/ViperEkura/AstrAI.git
+cd AstrAI
 pip install -e .
 ```
 
@@ -143,7 +143,7 @@ python demo/generate_ar.py
 
 ### Download | 下载
 
-- [HuggingFace](https://huggingface.co/ViperEk/KHAOSZ)
+- [HuggingFace](https://huggingface.co/ViperEk/AstrAI)
 - `python demo/download.py`
 
 ### Lincence | 许可证

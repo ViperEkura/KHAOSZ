@@ -3,8 +3,8 @@ import torch.nn as nn
 
 from torch import Tensor
 from typing import Any, Mapping, Optional, Tuple
-from khaosz.config.model_config import ModelConfig
-from khaosz.model.module import (
+from astrai.config.model_config import ModelConfig
+from astrai.model.module import (
     Embedding,
     DecoderBlock,
     Linear,

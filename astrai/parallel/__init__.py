@@ -1,4 +1,4 @@
-from khaosz.parallel.setup import (
+from astrai.parallel.setup import (
     get_world_size,
     get_rank,
     get_current_device,
@@ -7,7 +7,7 @@ from khaosz.parallel.setup import (
     spawn_parallel_fn,
 )
 
-from khaosz.parallel.module import RowParallelLinear, ColumnParallelLinear
+from astrai.parallel.module import RowParallelLinear, ColumnParallelLinear
 
 __all__ = [
     "get_world_size",

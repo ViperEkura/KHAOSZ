@@ -1,8 +1,8 @@
-from khaosz.trainer.trainer import Trainer
-from khaosz.trainer.strategy import StrategyFactory, BaseStrategy
-from khaosz.trainer.schedule import SchedulerFactory, BaseScheduler
+from astrai.trainer.trainer import Trainer
+from astrai.trainer.strategy import StrategyFactory, BaseStrategy
+from astrai.trainer.schedule import SchedulerFactory, BaseScheduler
 
-from khaosz.trainer.train_callback import (
+from astrai.trainer.train_callback import (
     TrainCallback,
     GradientClippingCallback,
     SchedulerCallback,

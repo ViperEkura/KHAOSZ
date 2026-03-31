@@ -1,7 +1,7 @@
 import logging
 from typing import Optional, List
-from khaosz.config import TrainConfig
-from khaosz.trainer.train_callback import (
+from astrai.config import TrainConfig
+from astrai.trainer.train_callback import (
     TrainCallback,
     ProgressBarCallback,
     CheckpointCallback,
@@ -9,9 +9,9 @@ from khaosz.trainer.train_callback import (
     GradientClippingCallback,
     SchedulerCallback,
 )
-from khaosz.trainer.train_context import TrainContext, TrainContextBuilder
-from khaosz.data.serialization import Checkpoint
-from khaosz.parallel.setup import spawn_parallel_fn
+from astrai.trainer.train_context import TrainContext, TrainContextBuilder
+from astrai.data.serialization import Checkpoint
+from astrai.parallel.setup import spawn_parallel_fn
 
 logger = logging.getLogger(__name__)
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 dynamic = ["version"]
-name = "khaosz"
+name = "astrai"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -23,7 +23,7 @@ classifiers = [
     "License :: OSI Approved :: GPL-3.0",
     "Operating System :: OS Independent",
 ]
-urls = { Homepage = "https://github.com/ViperEkura/KHAOSZ" }
+urls = { Homepage = "https://github.com/ViperEkura/AstrAI" }
 
 [project.optional-dependencies]
 dev = ["pytest==9.0.2", "ruff"]
@@ -35,7 +35,7 @@ where = ["."]
 extra-index-url = "https://download.pytorch.org/whl/cu126"
 
 [tool.setuptools.dynamic]
-version = { attr = "khaosz.__version__" }
+version = { attr = "astrai.__version__" }
 
 [tool.ruff]
 target-version = "py312"

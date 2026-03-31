@@ -6,7 +6,7 @@ import bisect
 from abc import ABC, abstractmethod
 from torch import Tensor
 from torch.utils.data import Dataset
-from khaosz.data.serialization import load_h5
+from astrai.data.serialization import load_h5
 from typing import List, Dict, Optional, Union
 
 

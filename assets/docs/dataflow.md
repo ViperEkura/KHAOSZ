@@ -1,16 +1,16 @@
-# KHAOSZ Data Flow Documentation
+# AstrAI Data Flow Documentation
 
-This document describes the data flow of the KHAOSZ project (a training and inference framework for autoregressive Transformer language models). It covers the complete flow from raw data to model training and inference.
+This document describes the data flow of the AstrAI project (a training and inference framework for autoregressive Transformer language models). It covers the complete flow from raw data to model training and inference.
 
 ## Overview
 
-KHAOSZ adopts a modular design with the following main components:
-- **Data Module** (`khaosz/data/`): Dataset, sampler, tokenizer, serialization tools
-- **Model Module** (`khaosz/model/`): Transformer model and its submodules
-- **Training Module** (`khaosz/trainer/`): Trainer, training context, strategies, schedulers
-- **Inference Module** (`khaosz/inference/`): Generation core, KV cache management, streaming generation
-- **Config Module** (`khaosz/config/`): Model, training, scheduler, and other configurations
-- **Parallel Module** (`khaosz/parallel/`): Distributed training support
+AstrAI adopts a modular design with the following main components:
+- **Data Module** (`astrai/data/`): Dataset, sampler, tokenizer, serialization tools
+- **Model Module** (`astrai/model/`): Transformer model and its submodules
+- **Training Module** (`astrai/trainer/`): Trainer, training context, strategies, schedulers
+- **Inference Module** (`astrai/inference/`): Generation core, KV cache management, streaming generation
+- **Config Module** (`astrai/config/`): Model, training, scheduler, and other configurations
+- **Parallel Module** (`astrai/parallel/`): Distributed training support
 
 The data flow can generally be divided into two main lines: **Training Data Flow** and **Inference Data Flow**.
 
@@ -199,7 +199,7 @@ flowchart LR
 
 ## Summary
 
-The data flow design of KHAOSZ reflects the characteristics of modularity, extensibility, and resumability. The training data flow supports large-scale distributed training through chunk loading, resumable sampling, gradient accumulation, and other mechanisms; the inference data flow achieves efficient text generation using KV cache and sampling strategies. Clear interfaces between modules facilitate customization and extension.
+The data flow design of AstrAI reflects the characteristics of modularity, extensibility, and resumability. The training data flow supports large-scale distributed training through chunk loading, resumable sampling, gradient accumulation, and other mechanisms; the inference data flow achieves efficient text generation using KV cache and sampling strategies. Clear interfaces between modules facilitate customization and extension.
 
 > Document Update Time: 2026-03-30  
 > Corresponding Code Version: Refer to version number defined in `pyproject.toml`

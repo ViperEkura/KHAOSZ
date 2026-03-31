@@ -6,8 +6,8 @@ import argparse
 import tqdm
 
 from torch import Tensor
-from khaosz.config.param_config import ModelParameter
-from khaosz.inference.core import disable_random_init
+from astrai.config.param_config import ModelParameter
+from astrai.inference.core import disable_random_init
 
 
 def compute_perplexity(

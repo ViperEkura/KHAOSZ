@@ -83,8 +83,8 @@
 ### Usage Example
 
 ```python
-from khaosz.config.param_config import ModelParameter
-from khaosz.inference.generator import StreamGenerator, GenerationRequest
+from astrai.config.param_config import ModelParameter
+from astrai.inference.generator import StreamGenerator, GenerationRequest
 
 # Load model
 param = ModelParameter.load("your_model_dir")

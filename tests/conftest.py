@@ -7,9 +7,9 @@ import torch
 import pytest
 
 from torch.utils.data import Dataset
-from khaosz.config.model_config import ModelConfig
-from khaosz.data.tokenizer import BpeTokenizer
-from khaosz.model.transformer import Transformer
+from astrai.config.model_config import ModelConfig
+from astrai.data.tokenizer import BpeTokenizer
+from astrai.model.transformer import Transformer
 
 
 class RandomDataset(Dataset):

@@ -5,9 +5,9 @@ from dataclasses import dataclass, field
 from typing import Optional, Self, Union
 from pathlib import Path
 
-from khaosz.data.tokenizer import BpeTokenizer
-from khaosz.config.model_config import ModelConfig
-from khaosz.model.transformer import Transformer
+from astrai.data.tokenizer import BpeTokenizer
+from astrai.config.model_config import ModelConfig
+from astrai.model.transformer import Transformer
 
 
 @dataclass

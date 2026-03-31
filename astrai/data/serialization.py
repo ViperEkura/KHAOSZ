@@ -8,7 +8,7 @@ import torch.distributed as dist
 from pathlib import Path
 from torch import Tensor
 from typing import Any, Dict, List
-from khaosz.parallel.setup import get_rank
+from astrai.parallel.setup import get_rank
 
 
 def save_h5(file_path: str, file_name: str, tensor_group: Dict[str, List[Tensor]]):

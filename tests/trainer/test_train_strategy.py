@@ -2,9 +2,9 @@ import torch
 import numpy as np
 import pytest
 
-from khaosz.config import *
-from khaosz.trainer.schedule import *
-from khaosz.data.dataset import *
+from astrai.config import *
+from astrai.trainer.schedule import *
+from astrai.data.dataset import *
 
 
 def test_schedule_factory_random_configs():

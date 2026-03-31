@@ -2,9 +2,9 @@ import torch
 import json
 import argparse
 
-from khaosz.config.param_config import ModelParameter
-from khaosz.inference.generator import BatchGenerator, GenerationRequest
-from khaosz.inference.core import disable_random_init
+from astrai.config.param_config import ModelParameter
+from astrai.inference.generator import BatchGenerator, GenerationRequest
+from astrai.inference.core import disable_random_init
 
 
 def processor(

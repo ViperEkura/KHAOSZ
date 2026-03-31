@@ -4,7 +4,7 @@ import math
 from abc import abstractmethod, ABC
 from typing import Any, Dict, List, Type
 from torch.optim.lr_scheduler import LRScheduler
-from khaosz.config.schedule_config import ScheduleConfig
+from astrai.config.schedule_config import ScheduleConfig
 
 
 class BaseScheduler(LRScheduler, ABC):

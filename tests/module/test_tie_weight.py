@@ -4,8 +4,8 @@ import torch
 import pytest
 import tempfile
 import safetensors.torch as st
-from khaosz.model.transformer import Transformer
-from khaosz.config.model_config import ModelConfig
+from astrai.model.transformer import Transformer
+from astrai.config.model_config import ModelConfig
 
 
 @pytest.fixture

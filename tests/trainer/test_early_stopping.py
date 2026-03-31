@@ -1,9 +1,9 @@
 import os
 import torch
 import numpy as np
-from khaosz.config import *
-from khaosz.trainer import *
-from khaosz.data.serialization import Checkpoint
+from astrai.config import *
+from astrai.trainer import *
+from astrai.data.serialization import Checkpoint
 
 
 def test_early_stopping_simulation(base_test_env, early_stopping_dataset):

@@ -6,10 +6,10 @@ import torch.optim as optim
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from functools import partial
-from khaosz.data import DatasetLoader
-from khaosz.config import ModelParameter, TrainConfig, CosineScheduleConfig
-from khaosz.trainer import Trainer, SchedulerFactory
-from khaosz.parallel import get_rank
+from astrai.data import DatasetLoader
+from astrai.config import ModelParameter, TrainConfig, CosineScheduleConfig
+from astrai.trainer import Trainer, SchedulerFactory
+from astrai.parallel import get_rank
 
 
 def parse_args() -> argparse.Namespace:

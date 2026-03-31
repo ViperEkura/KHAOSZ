@@ -1,7 +1,7 @@
 import torch
 
-from khaosz.config import *
-from khaosz.trainer import *
+from astrai.config import *
+from astrai.trainer import *
 
 
 def test_callback_integration(base_test_env, random_dataset):

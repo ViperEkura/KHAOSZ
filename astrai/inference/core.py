@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch import Tensor
 from contextlib import contextmanager
 from typing import Any, Callable, List, Tuple, Union, Optional, Self
-from khaosz.config import ModelParameter, ModelConfig
+from astrai.config import ModelParameter, ModelConfig
 
 
 def apply_sampling_strategies(

@@ -1,7 +1,7 @@
 import torch
 from typing import Dict, Any
 from dataclasses import dataclass
-from khaosz.model.transformer import ModelConfig, Transformer
+from astrai.model.transformer import ModelConfig, Transformer
 
 
 @dataclass

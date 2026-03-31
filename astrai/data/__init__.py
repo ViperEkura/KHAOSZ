@@ -1,4 +1,4 @@
-from khaosz.data.dataset import (
+from astrai.data.dataset import (
     BaseDataset,
     SEQDataset,
     DPODataset,
@@ -9,8 +9,8 @@ from khaosz.data.dataset import (
     DatasetFactory,
 )
 
-from khaosz.data.tokenizer import BpeTokenizer
-from khaosz.data.sampler import ResumableDistributedSampler
+from astrai.data.tokenizer import BpeTokenizer
+from astrai.data.sampler import ResumableDistributedSampler
 
 __all__ = [
     # Base classes

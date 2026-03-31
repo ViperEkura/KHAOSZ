@@ -6,7 +6,7 @@ PARAMETER_ROOT = Path(PROJECT_ROOT, "params")
 
 if __name__ == "__main__":
     snapshot_download(
-        repo_id="ViperEk/KHAOSZ",
+        repo_id="ViperEk/AstrAI",
         local_dir=PARAMETER_ROOT,
         force_download=True,
     )

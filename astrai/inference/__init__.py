@@ -1,11 +1,11 @@
-from khaosz.inference.core import (
+from astrai.inference.core import (
     disable_random_init,
     GeneratorCore,
     EmbeddingEncoderCore,
     KVCacheManager,
 )
 
-from khaosz.inference.generator import (
+from astrai.inference.generator import (
     GenerationRequest,
     LoopGenerator,
     StreamGenerator,

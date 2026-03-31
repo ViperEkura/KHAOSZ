@@ -1,13 +1,13 @@
 __version__ = "1.3.2"
 __author__ = "ViperEkura"
 
-from khaosz.config import (
+from astrai.config import (
     ModelConfig,
     TrainConfig,
 )
-from khaosz.model.transformer import Transformer
-from khaosz.data import DatasetLoader, BpeTokenizer
-from khaosz.inference.generator import (
+from astrai.model.transformer import Transformer
+from astrai.data import DatasetLoader, BpeTokenizer
+from astrai.inference.generator import (
     GenerationRequest,
     LoopGenerator,
     StreamGenerator,
@@ -15,7 +15,7 @@ from khaosz.inference.generator import (
     EmbeddingEncoder,
     GeneratorFactory,
 )
-from khaosz.trainer import Trainer, StrategyFactory, SchedulerFactory
+from astrai.trainer import Trainer, StrategyFactory, SchedulerFactory
 
 __all__ = [
     "Transformer",

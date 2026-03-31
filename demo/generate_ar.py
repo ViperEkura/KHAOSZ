@@ -1,8 +1,8 @@
 import torch
 from pathlib import Path
-from khaosz.config.param_config import ModelParameter
-from khaosz.inference.core import disable_random_init
-from khaosz.inference.generator import GeneratorFactory, GenerationRequest
+from astrai.config.param_config import ModelParameter
+from astrai.inference.core import disable_random_init
+from astrai.inference.generator import GeneratorFactory, GenerationRequest
 
 PROJECT_ROOT = Path(__file__).parent.parent
 PARAMETER_ROOT = Path(PROJECT_ROOT, "params")
