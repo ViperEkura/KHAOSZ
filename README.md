@@ -5,7 +5,7 @@
   
   <div>
     <a href="#english">English</a> • 
-    <a href="#chinese">中文</a>
+    <a href="assets/docs/README-zh-CN.md">中文</a>
   </div>
   
   <p>
@@ -13,23 +13,37 @@
   </p>
 </div>
 
-## 📖 Table of Contents | 目录
+<div align="center">
+  <img src="https://img.shields.io/badge/python-3.12+-blue.svg" alt="python">
+  <img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg" alt="license">
+  <img src="https://img.shields.io/github/v/release/ViperEkura/AstrAI?color=76bad9" alt="release">
+  <img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2FViperEkura%2FAstrAI&query=%24.stargazers_count&label=stars&suffix=%20stars&color=76bad9" alt="stars">
+  <img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2FViperEkura%2FAstrAI&query=%24.forks_count&label=forks&suffix=%20forks&color=76bad9" alt="forks">
+</div>
+
+<br>
+
+<div align="center">
+  <a href="#english">English</a> •
+  <a href="assets/docs/README-zh-CN.md">中文</a> •
+  <a href="https://github.com/ViperEkura/AstrAI/issues">Issue Tracker</a> •
+  <a href="https://github.com/ViperEkura/AstrAI/discussions">Discussions</a> •
+  <a href="https://huggingface.co/ViperEk/AstrAI">HuggingFace</a>
+</div>
+
+<br>
+
+## 📖 Table of Contents
 
 <details open>
 <summary><b>English</b></summary>
 
-- [Installation](#installation)
+- [Features](#features)
 - [Quick Start](#quick-start)
 - [Documentation](#documentation)
-
-</details>
-
-<details>
-<summary><b>中文</b></summary>
-
-- [安装](#安装)
-- [快速开始](#快速开始)
-- [文档](#文档)
+- [Contributing](#contributing)
+- [Community](#community)
+- [License](#license)
 
 </details>
 
@@ -40,59 +54,16 @@
 
 ### Features
 
-- 🚀 **High Performance**: Optimized for both training and inference
-- 🔧 **Flexible**: Support for seq/sft/dpo training
-- 💡 **Easy to Use**: Simple API with comprehensive examples
-- 📦 **Lightweight**: Minimal dependencies
-
-### Installation
-
-```bash
-git clone https://github.com/ViperEkura/AstrAI.git
-cd AstrAI
-pip install -e .
-```
+- 🚀 **High Performance**: Optimized for both training and inference with efficient parallelization.
+- 🔧 **Flexible**: Support for seq/sft/dpo training, customizable model architectures.
+- 💡 **Easy to Use**: Simple API with comprehensive examples and demos.
+- 📦 **Lightweight**: Minimal dependencies, easy to deploy.
+- 🔬 **Research‑Friendly**: Modular design, easy to experiment with new ideas.
+- 🤗 **HuggingFace Integration**: Compatible with HuggingFace models and datasets.
 
 ### Quick Start
 
-```bash
-# Train
-python tools/train.py \
-  --train_type=seq \
-  --data_root_path=/path/to/dataset \
-  --param_path=/path/to/param_path
-
-# Generate
-python tools/generate.py --param_path=/path/to/param_path
-```
-
-### Demo
-
-```bash
-# run download before using
-python demo/download.py
-
-# run demo
-python demo/stream_chat.py
-python demo/generate_batch.py
-python demo/generate_ar.py
-```
-
-- [bilibili](https://www.bilibili.com/video/BV1z5RPYHEkd)
-
----
-
-<a id="chinese"></a>
-## 中文
-
-### 特性
-
-- 🚀 **高性能**: 训练与推理双向优化
-- 🔧 **灵活**: 支持 seq/sft/dpo 多种训练方式
-- 💡 **易用**: 简洁的 API 与丰富的示例
-- 📦 **轻量**: 依赖少，部署简单
-
-### 安装
+#### Installation
 
 ```bash
 git clone https://github.com/ViperEkura/AstrAI.git
@@ -100,52 +71,79 @@ cd AstrAI
 pip install -e .
 ```
 
-### 快速开始
+For development dependencies:
 
 ```bash
-# 训练
+pip install -e ".[dev]"
+```
+
+#### Train a Model
+
+```bash
 python tools/train.py \
   --train_type=seq \
   --data_root_path=/path/to/dataset \
   --param_path=/path/to/param_path
+```
 
-# 生成
+#### Generate Text
+
+```bash
 python tools/generate.py --param_path=/path/to/param_path
 ```
 
-### 演示
+#### Demo
+
+Check out the demos in the `demo/` folder:
 
 ```bash
-# 使用前先下载模型
+# Download pre‑processed data (required before running demos)
 python demo/download.py
 
-# 运行示例
+# Interactive streaming chat
 python demo/stream_chat.py
+
+# Batch generation
 python demo/generate_batch.py
+
+# Auto‑regressive generation
 python demo/generate_ar.py
 ```
 
-- [bilibili](https://www.bilibili.com/video/BV1z5RPYHEkd)
+Watch a video walkthrough on [bilibili](https://www.bilibili.com/video/BV1z5RPYHEkd).
 
-
----
-
-<a id="documentation"></a>
-
-### Document | 文档
+### Documentation
 
 | Document | Description |
 |----------|-------------|
-| *Parameter Guide* <br> [参数说明](./assets/docs/params.md) | *Training & inference parameters* <br> 训练与推理参数配置 |
-| *Design Document* <br> [设计文档](./assets/docs/design.md) | *Framework architecture & module design* <br> 系统架构与模块设计 |
-| *Data Flow* <br> [数据流程](./assets/docs/dataflow.md) | *Data processing pipeline details* <br> 数据处理管道详解 |
-| *Model Introduction* <br> [模型介绍](./assets/docs/introduction.md) | *Model architecture & technical details* <br> 模型架构与技术细节 |
+| [Parameter Guide](./assets/docs/params.md) | Training & inference parameters |
+| [Design Document](./assets/docs/design.md) | Framework architecture & module design |
+| [Data Flow](./assets/docs/dataflow.md) | Data processing pipeline details |
+| [Model Introduction](./assets/docs/introduction.md) | Model architecture & technical details |
 
-### Download | 下载
+### Contributing
 
-- [HuggingFace](https://huggingface.co/ViperEk/AstrAI)
-- `python demo/download.py`
+We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
 
-### Lincence | 许可证
+1. Fork the repository.
+2. Create a feature branch.
+3. Commit your changes.
+4. Open a Pull Request.
 
-- [GPL-3.0](LICENSE)
+For major changes, please open an issue first to discuss what you would like to change.
+
+### Community
+
+- **GitHub Issues**: [Issue Tracker](https://github.com/ViperEkura/AstrAI/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/ViperEkura/AstrAI/discussions)
+- **HuggingFace**: [Model Hub](https://huggingface.co/ViperEk/AstrAI)
+
+### License
+
+This project is licensed under the [GPL-3.0 License](LICENSE).
+
+---
+
+<div align="center">
+  <em>A lightweight Transformer framework designed for both high performance and ease of use.</em>
+</div>
