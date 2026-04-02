@@ -10,7 +10,6 @@ from astrai.config.model_config import ModelConfig
 
 @pytest.fixture
 def transformer_test_env():
-    """创建Transformer测试专用环境"""
     test_dir = tempfile.mkdtemp(prefix="transformer_test_")
     config_path = os.path.join(test_dir, "config.json")
 

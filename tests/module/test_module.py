@@ -1,56 +1,10 @@
 import os
-import json
 import torch
-import shutil
-import pytest
-import tempfile
-import safetensors.torch as st
 from astrai.trainer import *
 from astrai.config import *
 from astrai.model import *
 from astrai.data import *
 from astrai.inference.generator import EmbeddingEncoderCore, GeneratorCore
-from tokenizers import pre_tokenizers
-
-
-@pytest.fixture
-def test_env(request: pytest.FixtureRequest):
-    func_name = request.function.__name__
-    test_dir = tempfile.mkdtemp(prefix=f"{func_name}_")
-    config_path = os.path.join(test_dir, "config.json")
-    tokenizer_path = os.path.join(test_dir, "tokenizer.json")
-    model_path = os.path.join(test_dir, "model.safetensors")
-
-    config = {
-        "vocab_size": 1000,
-        "dim": 128,
-        "n_heads": 4,
-        "n_kv_heads": 2,
-        "dim_ffn": 256,
-        "max_len": 64,
-        "n_layers": 2,
-        "norm_eps": 1e-5,
-    }
-    with open(config_path, "w") as f:
-        json.dump(config, f)
-
-    tokenizer = BpeTokenizer()
-    sp_token_iter = iter(pre_tokenizers.ByteLevel.alphabet())
-    tokenizer.train_from_iterator(sp_token_iter, config["vocab_size"], 1)
-    tokenizer.save(tokenizer_path)
-
-    transformer_config = ModelConfig().load(config_path)
-    model = Transformer(transformer_config)
-    st.save_file(model.state_dict(), model_path)
-
-    yield {
-        "test_dir": test_dir,
-        "model": model,
-        "tokenizer": tokenizer,
-        "transformer_config": transformer_config,
-    }
-
-    shutil.rmtree(test_dir)
 
 
 def test_model_parameter(test_env):

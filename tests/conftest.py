@@ -5,14 +5,18 @@ import tempfile
 import shutil
 import torch
 import pytest
-
+import safetensors.torch as st
+from tokenizers import pre_tokenizers
 from torch.utils.data import Dataset
+
 from astrai.config.model_config import ModelConfig
 from astrai.data.tokenizer import BpeTokenizer
 from astrai.model.transformer import Transformer
 
 
 class RandomDataset(Dataset):
+    """Random dataset for testing purposes."""
+
     def __init__(self, length=None, max_length=64, vocab_size=1000):
         self.length = length or int(np.random.randint(100, 200))
         self.max_length = max_length
@@ -29,6 +33,8 @@ class RandomDataset(Dataset):
 
 
 class MultiTurnDataset(Dataset):
+    """Multi-turn dataset with loss mask for SFT training tests."""
+
     def __init__(self, length=None, max_length=64, vocab_size=1000):
         self.length = length or int(np.random.randint(100, 200))
         self.max_length = max_length
@@ -50,6 +56,8 @@ class MultiTurnDataset(Dataset):
 
 
 class EarlyStoppingDataset(Dataset):
+    """Dataset that triggers early stopping after a specified number of iterations."""
+
     def __init__(self, length=10, stop_after=5):
         self.length = length
         self.stop_after = stop_after
@@ -71,6 +79,7 @@ class EarlyStoppingDataset(Dataset):
 
 @pytest.fixture
 def base_test_env(request: pytest.FixtureRequest):
+    """Create base test environment with randomly configured model and tokenizer"""
     func_name = request.function.__name__
     test_dir = tempfile.mkdtemp(prefix=f"{func_name}_")
     config_path = os.path.join(test_dir, "config.json")
@@ -129,3 +138,44 @@ def multi_turn_dataset():
 def early_stopping_dataset():
     dataset = EarlyStoppingDataset()
     yield dataset
+
+
+@pytest.fixture
+def test_env(request: pytest.FixtureRequest):
+    """Create a test environment with saved model and tokenizer files."""
+    func_name = request.function.__name__
+    test_dir = tempfile.mkdtemp(prefix=f"{func_name}_")
+    config_path = os.path.join(test_dir, "config.json")
+    tokenizer_path = os.path.join(test_dir, "tokenizer.json")
+    model_path = os.path.join(test_dir, "model.safetensors")
+
+    config = {
+        "vocab_size": 1000,
+        "dim": 128,
+        "n_heads": 4,
+        "n_kv_heads": 2,
+        "dim_ffn": 256,
+        "max_len": 64,
+        "n_layers": 2,
+        "norm_eps": 1e-5,
+    }
+    with open(config_path, "w") as f:
+        json.dump(config, f)
+
+    tokenizer = BpeTokenizer()
+    sp_token_iter = iter(pre_tokenizers.ByteLevel.alphabet())
+    tokenizer.train_from_iterator(sp_token_iter, config["vocab_size"], 1)
+    tokenizer.save(tokenizer_path)
+
+    transformer_config = ModelConfig().load(config_path)
+    model = Transformer(transformer_config)
+    st.save_file(model.state_dict(), model_path)
+
+    yield {
+        "test_dir": test_dir,
+        "model": model,
+        "tokenizer": tokenizer,
+        "transformer_config": transformer_config,
+    }
+
+    shutil.rmtree(test_dir)
