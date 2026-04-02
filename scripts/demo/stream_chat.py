@@ -3,7 +3,7 @@ from pathlib import Path
 from astrai.config.param_config import ModelParameter
 from astrai.inference.generator import GeneratorFactory, GenerationRequest
 
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PARAMETER_ROOT = Path(PROJECT_ROOT, "params")
 
 
@@ -25,6 +25,7 @@ def chat():
             max_len=param.config.max_len,
             history=history,
             system_prompt=None,
+            stream=True,
         )
         generator = GeneratorFactory.create(param, request)
 

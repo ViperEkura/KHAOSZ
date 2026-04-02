@@ -6,11 +6,15 @@
 
 # Allow specific file types and root files
 !*.py
-!*.md
-!*.png
 
-!LICENSE
-!pyproject.toml
-!.github/ISSUE_TEMPLATE/*
-!.github/workflows/lint.yml
-!.github/workflows/tests.yml
+# Allow GitHub files
+!/.github/ISSUE_TEMPLATE/*
+!/.github/workflows/lint.yml
+!/.github/workflows/tests.yml
+
+# Allow root files
+!/assets/*
+!/CONTRIBUTING.md
+!/LICENSE
+!/pyproject.toml
+!/README.md

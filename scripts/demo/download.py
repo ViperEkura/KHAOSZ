@@ -1,7 +1,7 @@
 from pathlib import Path
 from huggingface_hub import snapshot_download
 
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PARAMETER_ROOT = Path(PROJECT_ROOT, "params")
 
 if __name__ == "__main__":

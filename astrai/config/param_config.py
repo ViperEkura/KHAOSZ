@@ -81,7 +81,7 @@ class BaseModelIO:
         self.config.load(str(paths["config"]))
         self.tokenizer.load(str(paths["tokenizer"]))
 
-        if self.model is None:
+        if isinstance(self.model, nn.Identity):
             with disable_random_init(enable=disable_init):
                 self.model = Transformer(self.config)
 
