@@ -225,7 +225,7 @@ def train(
     scheduler_fn = partial(
         create_scheduler,
         **{
-            "scheduler": "cosine",
+            "schedule_type": "cosine",
             "warmup_steps": warmup_steps,
             "lr_decay_steps": toltal_steps - warmup_steps,
         },

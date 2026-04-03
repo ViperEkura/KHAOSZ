@@ -13,7 +13,7 @@ def main():
         "--port", type=int, default=8000, help="Port number (default: 8000)"
     )
     parser.add_argument(
-        "--reload", action="store_true", help="Enable auto‑reload for development"
+        "--reload", action="store_true", help="Enable auto-reload for development"
     )
     parser.add_argument(
         "--param-path",
