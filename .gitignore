@@ -8,12 +8,10 @@
 !*.py
 
 # Allow GitHub files
-!/.github/ISSUE_TEMPLATE/*
-!/.github/workflows/lint.yml
-!/.github/workflows/tests.yml
+!/.github/**
 
 # Allow root files
-!/assets/*
+!/assets/**
 !/CONTRIBUTING.md
 !/LICENSE
 !/pyproject.toml
