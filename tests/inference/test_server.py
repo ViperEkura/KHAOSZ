@@ -1,9 +1,6 @@
 """Unit tests for the inference HTTP server."""
 
 import pytest
-from unittest.mock import MagicMock, patch
-from fastapi.testclient import TestClient
-from astrai.inference.server import app
 
 
 def test_health_no_model(client, monkeypatch):

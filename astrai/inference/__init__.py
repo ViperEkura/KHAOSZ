@@ -1,16 +1,15 @@
 from astrai.inference.core import (
-    GeneratorCore,
     EmbeddingEncoderCore,
+    GeneratorCore,
     KVCacheManager,
 )
-
 from astrai.inference.generator import (
-    GenerationRequest,
-    LoopGenerator,
-    StreamGenerator,
     BatchGenerator,
     EmbeddingEncoder,
+    GenerationRequest,
     GeneratorFactory,
+    LoopGenerator,
+    StreamGenerator,
 )
 
 __all__ = [

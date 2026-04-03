@@ -1,8 +1,8 @@
+from typing import Optional
+
 import torch
 import torch.distributed as dist
-
 from torch.utils.data import Dataset, Sampler
-from typing import Optional
 
 
 class ResumableDistributedSampler(Sampler[int]):

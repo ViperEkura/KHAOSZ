@@ -1,25 +1,25 @@
-import os
 import json
+import os
 import time
-import torch.nn as nn
-
 from pathlib import Path
-from tqdm import tqdm
-from torch.nn.utils import clip_grad_norm_
 from typing import Callable, List, Optional, Protocol
 
+import torch.nn as nn
+from torch.nn.utils import clip_grad_norm_
+from tqdm import tqdm
+
+from astrai.data.serialization import Checkpoint
 from astrai.parallel import only_on_rank
 from astrai.trainer.metric_util import (
+    ctx_get_grad_max,
+    ctx_get_grad_mean,
+    ctx_get_grad_min,
+    ctx_get_grad_nan_num,
+    ctx_get_grad_norm,
+    ctx_get_grad_std,
     ctx_get_loss,
     ctx_get_lr,
-    ctx_get_grad_max,
-    ctx_get_grad_min,
-    ctx_get_grad_norm,
-    ctx_get_grad_mean,
-    ctx_get_grad_std,
-    ctx_get_grad_nan_num,
 )
-from astrai.data.serialization import Checkpoint
 from astrai.trainer.train_context import TrainContext
 
 

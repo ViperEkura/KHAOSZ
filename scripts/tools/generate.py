@@ -1,6 +1,7 @@
-import torch
-import json
 import argparse
+import json
+
+import torch
 
 from astrai.config.param_config import ModelParameter
 from astrai.inference.generator import BatchGenerator, GenerationRequest

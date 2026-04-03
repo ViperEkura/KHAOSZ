@@ -1,7 +1,9 @@
-import torch
 from pathlib import Path
+
+import torch
+
 from astrai.config.param_config import ModelParameter
-from astrai.inference.generator import GeneratorFactory, GenerationRequest
+from astrai.inference.generator import GenerationRequest, GeneratorFactory
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PARAMETER_ROOT = Path(PROJECT_ROOT, "params")

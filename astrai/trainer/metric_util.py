@@ -1,5 +1,6 @@
-import torch.nn as nn
 from typing import Dict
+
+import torch.nn as nn
 
 
 def grad_norm(model: nn.Module, norm_type: int = 2) -> Dict[str, float]:

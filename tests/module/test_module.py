@@ -1,10 +1,12 @@
 import os
+
 import torch
-from astrai.trainer import *
+
 from astrai.config import *
-from astrai.model import *
 from astrai.data import *
 from astrai.inference.generator import EmbeddingEncoderCore, GeneratorCore
+from astrai.model import *
+from astrai.trainer import *
 
 
 def test_model_parameter(test_env):

@@ -1,5 +1,3 @@
-import torch
-
 from astrai.data.dataset import *
 from astrai.trainer import Trainer
 

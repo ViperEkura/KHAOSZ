@@ -1,11 +1,13 @@
-import os
 import json
-import torch
-import pytest
+import os
 import tempfile
+
+import pytest
 import safetensors.torch as st
-from astrai.model.transformer import Transformer
+import torch
+
 from astrai.config.model_config import ModelConfig
+from astrai.model.transformer import Transformer
 
 
 @pytest.fixture

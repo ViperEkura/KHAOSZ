@@ -5,17 +5,17 @@ from astrai.config import (
     ModelConfig,
     TrainConfig,
 )
-from astrai.model.transformer import Transformer
-from astrai.data import DatasetLoader, BpeTokenizer
+from astrai.data import BpeTokenizer, DatasetLoader
 from astrai.inference.generator import (
-    GenerationRequest,
-    LoopGenerator,
-    StreamGenerator,
     BatchGenerator,
     EmbeddingEncoder,
+    GenerationRequest,
     GeneratorFactory,
+    LoopGenerator,
+    StreamGenerator,
 )
-from astrai.trainer import Trainer, StrategyFactory, SchedulerFactory
+from astrai.model.transformer import Transformer
+from astrai.trainer import SchedulerFactory, StrategyFactory, Trainer
 
 __all__ = [
     "Transformer",

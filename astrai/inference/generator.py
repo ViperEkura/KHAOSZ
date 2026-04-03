@@ -1,10 +1,11 @@
-import torch
 from dataclasses import dataclass
-from torch import Tensor
-from typing import List, Tuple, Union, Optional, Generator
-from astrai.inference.core import GeneratorCore, EmbeddingEncoderCore, KVCacheManager
-from astrai.config.param_config import ModelParameter
+from typing import Generator, List, Optional, Tuple, Union
 
+import torch
+from torch import Tensor
+
+from astrai.config.param_config import ModelParameter
+from astrai.inference.core import EmbeddingEncoderCore, GeneratorCore, KVCacheManager
 
 HistoryType = List[Tuple[str, str]]
 

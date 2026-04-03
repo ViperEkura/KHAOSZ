@@ -1,10 +1,10 @@
 """Learning rate scheduler implementations with factory pattern."""
 
 import math
-from abc import abstractmethod, ABC
+from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Type
+
 from torch.optim.lr_scheduler import LRScheduler
-from astrai.config.schedule_config import ScheduleConfig
 
 
 class BaseScheduler(LRScheduler, ABC):
@@ -37,10 +37,6 @@ class SchedulerFactory:
             ...
 
         scheduler = SchedulerFactory.create(optimizer, "custom", **kwargs)
-
-        # Or from config
-        config = CosineScheduleConfig(total_steps=10000)
-        scheduler = SchedulerFactory.load(optimizer, config)
     """
 
     SCHEDULER_MAP: Dict[str, Type[BaseScheduler]] = {}
@@ -67,7 +63,7 @@ class SchedulerFactory:
         return decorator
 
     @classmethod
-    def create(cls, optimizer, schedule_type: str, **kwargs) -> BaseScheduler:
+    def create(cls, optimizer, schedule_type: str = "none", **kwargs) -> BaseScheduler:
         """Create a scheduler instance by type name.
 
         Args:
@@ -90,29 +86,13 @@ class SchedulerFactory:
         scheduler_cls = cls.SCHEDULER_MAP[schedule_type]
         return scheduler_cls(optimizer, **kwargs)
 
-    @staticmethod
-    def load(optimizer, schedule_config: ScheduleConfig) -> BaseScheduler:
-        """Create a scheduler from a ScheduleConfig object.
-
-        Args:
-            optimizer: PyTorch optimizer
-            schedule_config: ScheduleConfig instance
-
-        Returns:
-            Scheduler instance
-        """
-        kwargs = schedule_config.get_kwargs()
-        schedule_type = kwargs.pop("schedule_type")
-        return SchedulerFactory.create(optimizer, schedule_type, **kwargs)
-
     @classmethod
     def available_types(cls) -> list:
         """Return list of registered scheduler type names."""
         return list(cls.SCHEDULER_MAP.keys())
 
 
-# ============== Scheduler Classes ==============
-# All scheduler classes are registered at class definition time using the decorator
+# ----------- Scheduler implementations -----------
 
 
 @SchedulerFactory.register("cosine")

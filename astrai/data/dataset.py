@@ -1,13 +1,14 @@
 """Dataset implementations with factory pattern for training."""
 
-import torch
 import bisect
-
 from abc import ABC, abstractmethod
+from typing import Dict, List, Optional, Union
+
+import torch
 from torch import Tensor
 from torch.utils.data import Dataset
+
 from astrai.data.serialization import load_h5
-from typing import List, Dict, Optional, Union
 
 
 class BaseSegmentFetcher:

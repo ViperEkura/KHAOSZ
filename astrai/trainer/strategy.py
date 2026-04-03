@@ -1,14 +1,14 @@
 """Training strategy implementations with factory pattern."""
 
 import copy
+from abc import ABC, abstractmethod
+from typing import Any, Callable, Dict, Union
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.parallel import DistributedDataParallel as DDP
-
 from torch import Tensor
-from typing import Any, Callable, Dict, Union
-from abc import ABC, abstractmethod
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 
 def unwrap_model(model: nn.Module) -> nn.Module:

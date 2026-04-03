@@ -1,12 +1,13 @@
+from typing import Any, Mapping, Optional, Tuple
+
 import torch
 import torch.nn as nn
-
 from torch import Tensor
-from typing import Any, Mapping, Optional, Tuple
+
 from astrai.config.model_config import ModelConfig
 from astrai.model.module import (
-    Embedding,
     DecoderBlock,
+    Embedding,
     Linear,
     RMSNorm,
     RotaryEmbedding,

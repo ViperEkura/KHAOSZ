@@ -1,6 +1,8 @@
-import torch
-from typing import Dict, Any
 from dataclasses import dataclass
+from typing import Any, Dict
+
+import torch
+
 from astrai.model.transformer import ModelConfig, Transformer
 
 

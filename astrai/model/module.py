@@ -1,9 +1,9 @@
+from typing import Optional, Tuple
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from torch import Tensor
-from typing import Optional, Tuple
 
 
 def repeat_kv(x: Tensor, n_rep: int) -> Tensor:

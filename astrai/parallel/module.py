@@ -1,10 +1,10 @@
+from typing import Dict
+
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.distributed as dist
-
 from torch import Tensor
-from typing import Dict
 
 
 class ParallelModel(nn.Module):

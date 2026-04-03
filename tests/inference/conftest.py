@@ -1,8 +1,10 @@
 """Shared fixtures for inference tests."""
 
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 from fastapi.testclient import TestClient
+
 from astrai.inference.server import app
 
 

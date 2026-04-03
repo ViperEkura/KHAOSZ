@@ -1,17 +1,18 @@
 import logging
-from typing import Optional, List
+from typing import List, Optional
+
 from astrai.config import TrainConfig
-from astrai.trainer.train_callback import (
-    TrainCallback,
-    ProgressBarCallback,
-    CheckpointCallback,
-    MetricLoggerCallback,
-    GradientClippingCallback,
-    SchedulerCallback,
-)
-from astrai.trainer.train_context import TrainContext, TrainContextBuilder
 from astrai.data.serialization import Checkpoint
 from astrai.parallel.setup import spawn_parallel_fn
+from astrai.trainer.train_callback import (
+    CheckpointCallback,
+    GradientClippingCallback,
+    MetricLoggerCallback,
+    ProgressBarCallback,
+    SchedulerCallback,
+    TrainCallback,
+)
+from astrai.trainer.train_context import TrainContext, TrainContextBuilder
 
 logger = logging.getLogger(__name__)
 

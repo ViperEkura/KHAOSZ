@@ -6,10 +6,10 @@ from astrai.trainer import *
 
 def test_callback_integration(base_test_env, random_dataset):
     """Test that all callbacks are properly integrated"""
-    schedule_config = CosineScheduleConfig(warmup_steps=10, total_steps=20)
-
     optimizer_fn = lambda model: torch.optim.AdamW(model.parameters())
-    scheduler_fn = lambda optim: SchedulerFactory.load(optim, schedule_config)
+    scheduler_fn = lambda optim: SchedulerFactory.create(
+        optim, "cosine", warmup_steps=10, lr_decay_steps=10, min_rate=0.05
+    )
 
     train_config = TrainConfig(
         model=base_test_env["model"],

@@ -1,11 +1,11 @@
 import os
+from contextlib import contextmanager
+from functools import wraps
+from typing import Callable, List, Optional
+
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-
-from functools import wraps
-from contextlib import contextmanager
-from typing import Callable, List, Optional
 
 
 def get_current_device():

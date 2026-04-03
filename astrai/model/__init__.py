@@ -1,9 +1,9 @@
 from astrai.model.module import (
+    GQA,
+    MLP,
+    DecoderBlock,
     Linear,
     RMSNorm,
-    MLP,
-    GQA,
-    DecoderBlock,
 )
 from astrai.model.transformer import Transformer
 

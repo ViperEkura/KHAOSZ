@@ -1,18 +1,20 @@
 import os
-import torch
+
 import numpy as np
+import torch
+
 from astrai.config import *
-from astrai.trainer import *
 from astrai.data.serialization import Checkpoint
+from astrai.trainer import *
 
 
 def test_early_stopping_simulation(base_test_env, early_stopping_dataset):
     """Simulate early stopping behavior"""
 
-    schedule_config = CosineScheduleConfig(warmup_steps=10, total_steps=20)
-
     optimizer_fn = lambda model: torch.optim.AdamW(model.parameters())
-    scheduler_fn = lambda optim: SchedulerFactory.load(optim, schedule_config)
+    scheduler_fn = lambda optim: SchedulerFactory.create(
+        optim, "cosine", warmup_steps=10, lr_decay_steps=10, min_rate=0.05
+    )
 
     train_config = TrainConfig(
         strategy="seq",

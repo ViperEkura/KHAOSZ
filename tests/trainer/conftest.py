@@ -1,6 +1,9 @@
+import pytest
 import torch
 from torch.utils.data import Dataset
-import pytest
+
+from astrai.config import TrainConfig
+from astrai.trainer.schedule import SchedulerFactory
 
 
 class TrainerDataset(Dataset):
@@ -54,13 +57,11 @@ def create_train_config(
     Returns:
         TrainConfig instance configured for testing
     """
-    from astrai.config import TrainConfig
-    from astrai.config.schedule_config import CosineScheduleConfig
-    from astrai.trainer.schedule import SchedulerFactory
 
-    schedule_config = CosineScheduleConfig(warmup_steps=10, total_steps=20)
     optimizer_fn = lambda m: torch.optim.AdamW(m.parameters(), lr=0.001)
-    scheduler_fn = lambda optim: SchedulerFactory.load(optim, schedule_config)
+    scheduler_fn = lambda optim: SchedulerFactory.create(
+        optim, "cosine", warmup_steps=10, lr_decay_steps=10, min_rate=0.05
+    )
 
     return TrainConfig(
         strategy=strategy,

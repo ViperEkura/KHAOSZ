@@ -1,13 +1,13 @@
-import torch.nn as nn
-import safetensors.torch as st
-
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Optional, Self, Union
 from pathlib import Path
+from typing import Self, Union
 
-from astrai.data.tokenizer import BpeTokenizer
+import safetensors.torch as st
+import torch.nn as nn
+
 from astrai.config.model_config import ModelConfig
+from astrai.data.tokenizer import BpeTokenizer
 from astrai.model.transformer import Transformer
 
 

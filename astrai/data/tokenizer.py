@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
-from tokenizers import Tokenizer, decoders, processors, normalizers, pre_tokenizers
+from typing import List, Union
+
+from tokenizers import Tokenizer, decoders, normalizers, pre_tokenizers, processors
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer as BpeTrainerImpl
-from typing import List, Union
 
 
 class BaseTokenizer(ABC):

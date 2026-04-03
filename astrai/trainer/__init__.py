@@ -1,15 +1,14 @@
-from astrai.trainer.trainer import Trainer
-from astrai.trainer.strategy import StrategyFactory, BaseStrategy
-from astrai.trainer.schedule import SchedulerFactory, BaseScheduler
-
+from astrai.trainer.schedule import BaseScheduler, SchedulerFactory
+from astrai.trainer.strategy import BaseStrategy, StrategyFactory
 from astrai.trainer.train_callback import (
-    TrainCallback,
-    GradientClippingCallback,
-    SchedulerCallback,
     CheckpointCallback,
-    ProgressBarCallback,
+    GradientClippingCallback,
     MetricLoggerCallback,
+    ProgressBarCallback,
+    SchedulerCallback,
+    TrainCallback,
 )
+from astrai.trainer.trainer import Trainer
 
 __all__ = [
     # Main trainer

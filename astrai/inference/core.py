@@ -1,8 +1,9 @@
-import torch
+from typing import Any, Callable, List, Optional, Self, Tuple, Union
 
+import torch
 from torch import Tensor
-from typing import Any, Callable, List, Tuple, Union, Optional, Self
-from astrai.config import ModelParameter, ModelConfig
+
+from astrai.config import ModelConfig, ModelParameter
 
 
 def apply_sampling_strategies(

@@ -1,11 +1,12 @@
-import os
 import json
-import numpy as np
-import tempfile
+import os
 import shutil
-import torch
+import tempfile
+
+import numpy as np
 import pytest
 import safetensors.torch as st
+import torch
 from tokenizers import pre_tokenizers
 from torch.utils.data import Dataset
 

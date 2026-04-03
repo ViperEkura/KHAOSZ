@@ -1,8 +1,8 @@
-import torch
 import numpy as np
+import torch
 
-from astrai.data.serialization import save_h5
 from astrai.data.dataset import *
+from astrai.data.serialization import save_h5
 
 
 def test_dataset_loader_random_paths(base_test_env):

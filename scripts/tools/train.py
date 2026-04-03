@@ -1,15 +1,16 @@
-import os
 import argparse
+import os
+from functools import partial
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from functools import partial
+from astrai.config import ModelParameter, TrainConfig
 from astrai.data import DatasetLoader
-from astrai.config import ModelParameter, TrainConfig, CosineScheduleConfig
-from astrai.trainer import Trainer, SchedulerFactory
 from astrai.parallel import get_rank
+from astrai.trainer import SchedulerFactory, Trainer
 
 
 def parse_args() -> argparse.Namespace:
@@ -158,7 +159,7 @@ def create_optimizer(model: nn.Module, **kwargs) -> optim.Optimizer:
 def create_scheduler(
     optimizer: optim.Optimizer, **kwargs
 ) -> optim.lr_scheduler.LRScheduler:
-    return SchedulerFactory.load(optimizer, **kwargs)
+    return SchedulerFactory.create(optimizer, **kwargs)
 
 
 def prepare_checkpoint(model: nn.Module) -> dict:
@@ -211,11 +212,6 @@ def train(
         stride=stride,
     )
 
-    schedule_config = CosineScheduleConfig(
-        warmup_steps=warmup_steps,
-        total_steps=len(dataset) * n_epoch // (batch_size * nprocs),
-    )
-
     optimizer_fn = partial(
         create_optimizer,
         **{
@@ -224,7 +220,16 @@ def train(
             "weight_decay": adamw_weight_decay,
         },
     )
-    scheduler_fn = partial(create_scheduler, **{"schedule_config": schedule_config})
+
+    toltal_steps = len(dataset) * n_epoch // (batch_size * nprocs)
+    scheduler_fn = partial(
+        create_scheduler,
+        **{
+            "scheduler": "cosine",
+            "warmup_steps": warmup_steps,
+            "lr_decay_steps": toltal_steps - warmup_steps,
+        },
+    )
 
     train_config = TrainConfig(
         model=model,

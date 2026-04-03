@@ -1,13 +1,15 @@
-import torch
-import uvicorn
 import logging
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+import torch
+import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+
 from astrai.config.param_config import ModelParameter
-from astrai.inference.generator import GeneratorFactory, GenerationRequest
+from astrai.inference.generator import GenerationRequest, GeneratorFactory
 
 logger = logging.getLogger(__name__)
 

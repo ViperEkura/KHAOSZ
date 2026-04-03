@@ -1,11 +1,12 @@
+import argparse
 import json
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import argparse
 import tqdm
-
 from torch import Tensor
+
 from astrai.config.param_config import ModelParameter
 
 

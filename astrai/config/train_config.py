@@ -1,10 +1,10 @@
-import torch.nn as nn
-from torch.utils.data import Dataset
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LRScheduler
-
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
+
+import torch.nn as nn
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LRScheduler
+from torch.utils.data import Dataset
 
 
 @dataclass

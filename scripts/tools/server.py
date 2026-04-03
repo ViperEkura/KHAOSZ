@@ -1,5 +1,6 @@
 import argparse
 from pathlib import Path
+
 from astrai.inference.server import run_server
 
 
