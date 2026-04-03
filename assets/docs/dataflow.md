@@ -61,7 +61,7 @@ flowchart LR
 
 #### 1.1 Tokenizer (`tokenizer.py`)
 - Implemented based on Byte-Level BPE (BBPE)
-- Supports special tokens: `<bos>`, `<eos>`, `<pad>`, `<|im_start|>`, `<|im_end|>`
+- Supports special tokens: `<｜begin▁of▁sentence｜>`, `<｜end▁of▁sentence｜>`, `<｜▁pad▁｜>`, `<｜im▁start｜>`, `<｜im▁end｜>`
 - Provides `encode`/`decode` methods for mutual conversion between text and token IDs
 - Learns vocabulary from corpus during training, saved as `.json` files
 

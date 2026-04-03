@@ -28,16 +28,16 @@ def build_prompt(
     result = ""
 
     if system_prompt:
-        result += f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
+        result += f"<｜im▁start｜>system\n{system_prompt}<｜im▁end｜>\n"
 
     # (convert tuple format to ChatML)
     if history:
         for user_msg, assistant_msg in history:
-            result += f"<|im_start|>user\n{user_msg}<|im_end|>\n"
-            result += f"<|im_start|>assistant\n{assistant_msg}<|im_end|>\n"
+            result += f"<｜im▁start｜>user\n{user_msg}<｜im▁end｜>\n"
+            result += f"<｜im▁start｜>assistant\n{assistant_msg}<｜im▁end｜>\n"
 
-    result += f"<|im_start|>user\n{query}<|im_end|>\n"
-    result += "<|im_start|>assistant\n"
+    result += f"<｜im▁start｜>user\n{query}<｜im▁end｜>\n"
+    result += "<｜im▁start｜>assistant\n"
 
     return result
 
