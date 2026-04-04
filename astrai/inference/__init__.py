@@ -1,25 +1,34 @@
-from astrai.inference.core import (
-    EmbeddingEncoderCore,
-    GeneratorCore,
-    KVCacheManager,
-)
-from astrai.inference.generator import (
-    BatchGenerator,
-    EmbeddingEncoder,
+"""
+AstrAI Inference Module
+
+Provides inference components for text generation with continuous batching support.
+
+Main Components:
+- InferenceEngine: Unified inference engine for continuous batching
+- InferenceScheduler: Task scheduling with dynamic batch composition
+- Task, TaskStatus: Task management for continuous batching
+- GenerationRequest: Request parameters for generation
+- apply_sampling_strategies: Sampling utilities for text generation
+
+Author: AstrAI Team
+"""
+
+from astrai.inference.engine import (
     GenerationRequest,
-    GeneratorFactory,
-    LoopGenerator,
-    StreamGenerator,
+    InferenceEngine,
+    InferenceScheduler,
+    Task,
+    TaskStatus,
+    apply_sampling_strategies,
 )
 
 __all__ = [
-    "GeneratorCore",
-    "EmbeddingEncoderCore",
-    "KVCacheManager",
+    # Engine
+    "InferenceEngine",
+    "InferenceScheduler",
+    "Task",
+    "TaskStatus",
     "GenerationRequest",
-    "LoopGenerator",
-    "StreamGenerator",
-    "BatchGenerator",
-    "EmbeddingEncoder",
-    "GeneratorFactory",
+    # Sampling
+    "apply_sampling_strategies",
 ]

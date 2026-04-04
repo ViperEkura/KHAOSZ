@@ -1,11 +1,11 @@
 """Shared fixtures for inference tests."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
-from astrai.inference.server import app
+from astrai.inference.server import app, _engine
 
 
 @pytest.fixture
@@ -30,13 +30,17 @@ def mock_model_param():
 
 
 @pytest.fixture
-def mock_generator(mock_model_param):
-    """Mock the GeneratorFactory and its generators."""
-    with patch("astrai.inference.server.GeneratorFactory") as MockFactory:
-        mock_gen = MagicMock()
-        mock_gen.generate.return_value = "mock response"
-        MockFactory.create.return_value = mock_gen
-        yield MockFactory, mock_gen
+def mock_engine():
+    """Create a mock InferenceEngine."""
+    mock = MagicMock()
+    mock.generate.return_value = "mock response"
+    mock.get_stats.return_value = {
+        "total_tasks": 0,
+        "total_tokens": 0,
+        "active_tasks": 0,
+        "waiting_queue": 0,
+    }
+    return mock
 
 
 @pytest.fixture

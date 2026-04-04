@@ -6,24 +6,29 @@ import pytest
 def test_health_no_model(client, monkeypatch):
     """GET /health should return 200 even when model not loaded."""
     monkeypatch.setattr("astrai.inference.server._model_param", None)
+    monkeypatch.setattr("astrai.inference.server._engine", None)
     response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ok"
     assert not data["model_loaded"]
+    assert not data["engine_ready"]
 
 
-def test_health_with_model(client, loaded_model):
+def test_health_with_model(client, loaded_model, mock_engine, monkeypatch):
     """GET /health should return 200 when model is loaded."""
+    monkeypatch.setattr("astrai.inference.server._engine", mock_engine)
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "model_loaded": True}
+    data = response.json()
+    assert data["status"] == "ok"
+    assert data["model_loaded"] is True
+    assert data["engine_ready"] is True
 
 
-def test_generate_non_stream(client, loaded_model, mock_generator):
+def test_generate_non_stream(client, loaded_model, mock_engine, monkeypatch):
     """POST /generate with stream=false should return JSON response."""
-    MockFactory, mock_gen = mock_generator
-    mock_gen.generate.return_value = "Test response"
+    monkeypatch.setattr("astrai.inference.server._engine", mock_engine)
     response = client.post(
         "/generate",
         params={
@@ -37,15 +42,19 @@ def test_generate_non_stream(client, loaded_model, mock_generator):
     )
     assert response.status_code == 200
     data = response.json()
-    assert data["response"] == "Test response"
-    MockFactory.create.assert_called_once()
+    assert data["response"] == "mock response"
 
 
-def test_generate_stream(client, loaded_model, mock_generator):
+def test_generate_stream(client, loaded_model, mock_engine, monkeypatch):
     """POST /generate with stream=true should return plain text stream."""
-    MockFactory, mock_gen = mock_generator
-    # Simulate a streaming generator that yields two chunks
-    mock_gen.generate.return_value = ["chunk1", "chunk2"]
+
+    # Create a streaming mock
+    def stream_gen():
+        yield "chunk1"
+        yield "chunk2"
+
+    mock_engine.generate.return_value = stream_gen()
+    monkeypatch.setattr("astrai.inference.server._engine", mock_engine)
     response = client.post(
         "/generate",
         params={
@@ -66,10 +75,10 @@ def test_generate_stream(client, loaded_model, mock_generator):
     assert "chunk2" in content
 
 
-def test_chat_completions_non_stream(client, loaded_model, mock_generator):
+def test_chat_completions_non_stream(client, loaded_model, mock_engine, monkeypatch):
     """POST /v1/chat/completions with stream=false returns OpenAI‑style JSON."""
-    MockFactory, mock_gen = mock_generator
-    mock_gen.generate.return_value = "Assistant reply"
+    mock_engine.generate.return_value = "Assistant reply"
+    monkeypatch.setattr("astrai.inference.server._engine", mock_engine)
     response = client.post(
         "/v1/chat/completions",
         json={
@@ -88,11 +97,17 @@ def test_chat_completions_non_stream(client, loaded_model, mock_generator):
     assert data["choices"][0]["message"]["content"] == "Assistant reply"
 
 
-def test_chat_completions_stream(client, loaded_model, mock_generator):
+def test_chat_completions_stream(client, loaded_model, mock_engine, monkeypatch):
     """POST /v1/chat/completions with stream=true returns SSE stream."""
-    MockFactory, mock_gen = mock_generator
+
     # Simulate a streaming generator that yields cumulative responses
-    mock_gen.generate.return_value = ["cumulative1", "cumulative2"]
+    def stream_gen():
+        yield "cumulative1"
+        yield "cumulative2"
+        yield "[DONE]"
+
+    mock_engine.generate.return_value = stream_gen()
+    monkeypatch.setattr("astrai.inference.server._engine", mock_engine)
     response = client.post(
         "/v1/chat/completions",
         json={
@@ -116,10 +131,9 @@ def test_chat_completions_stream(client, loaded_model, mock_generator):
     assert any("cumulative2" in line for line in lines)
 
 
-def test_generate_with_history(client, loaded_model, mock_generator):
+def test_generate_with_history(client, loaded_model, mock_engine, monkeypatch):
     """POST /generate with history parameter."""
-    MockFactory, mock_gen = mock_generator
-    mock_gen.generate.return_value = "Response with history"
+    monkeypatch.setattr("astrai.inference.server._engine", mock_engine)
     response = client.post(
         "/generate",
         params={
@@ -129,12 +143,8 @@ def test_generate_with_history(client, loaded_model, mock_generator):
         },
     )
     assert response.status_code == 200
-    MockFactory.create.assert_called_once()
-    # Check that history was passed correctly (currently history is not parsed due to FastAPI limitation)
-    call_args = MockFactory.create.call_args
-    req = call_args[0][1]  # second argument is GenerationRequest
-    # Because history cannot be passed via query params, it will be None
-    assert req.history is None
+    # Verify the engine.generate was called
+    mock_engine.generate.assert_called_once()
 
 
 if __name__ == "__main__":

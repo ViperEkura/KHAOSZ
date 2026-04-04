@@ -8,13 +8,9 @@ from astrai.config import (
 from astrai.factory import BaseFactory
 from astrai.dataset import DatasetFactory
 from astrai.tokenize import BpeTokenizer
-from astrai.inference.generator import (
-    BatchGenerator,
-    EmbeddingEncoder,
+from astrai.inference import (
     GenerationRequest,
-    GeneratorFactory,
-    LoopGenerator,
-    StreamGenerator,
+    InferenceEngine,
 )
 from astrai.model.transformer import Transformer
 from astrai.trainer import SchedulerFactory, StrategyFactory, Trainer
@@ -26,11 +22,7 @@ __all__ = [
     "DatasetFactory",
     "BpeTokenizer",
     "GenerationRequest",
-    "LoopGenerator",
-    "StreamGenerator",
-    "BatchGenerator",
-    "EmbeddingEncoder",
-    "GeneratorFactory",
+    "InferenceEngine",
     "Trainer",
     "StrategyFactory",
     "SchedulerFactory",

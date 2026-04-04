@@ -1,3 +1,13 @@
+"""
+Inference Server with Continuous Batching Support
+
+FastAPI server for inference with continuous batching.
+Provides OpenAI-compatible chat completion endpoints.
+
+Author: AstrAI Team
+"""
+
+import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -10,12 +20,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from astrai.config.param_config import ModelParameter
-from astrai.inference.generator import GenerationRequest, GeneratorFactory
+from astrai.inference.engine import GenerationRequest, InferenceEngine
 
 logger = logging.getLogger(__name__)
 
-# Global model parameter (loaded once)
+# Global model parameter and engine (loaded once)
 _model_param: Optional[ModelParameter] = None
+_engine: Optional[InferenceEngine] = None
 _project_root = Path(__file__).parent.parent.parent
 
 # Server configuration (set before running server)
@@ -23,6 +34,7 @@ _server_config: Dict[str, Any] = {
     "device": "cuda",
     "dtype": torch.bfloat16,
     "param_path": None,
+    "max_batch_size": 16,
 }
 
 
@@ -30,6 +42,7 @@ def configure_server(
     device: str = "cuda",
     dtype: torch.dtype = torch.bfloat16,
     param_path: Optional[Path] = None,
+    max_batch_size: int = 16,
 ):
     """Configure server settings before starting.
 
@@ -37,40 +50,47 @@ def configure_server(
         device: Device to load model on (e.g., "cuda", "cpu", "cuda:0")
         dtype: Data type for model weights (e.g., torch.bfloat16, torch.float16)
         param_path: Path to model parameters directory
+        max_batch_size: Maximum batch size for continuous batching
     """
     _server_config["device"] = device
     _server_config["dtype"] = dtype
     _server_config["param_path"] = param_path
+    _server_config["max_batch_size"] = max_batch_size
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events."""
+    global _model_param, _engine
     # Startup: Load model with configured settings
     try:
         load_model(
             param_path=_server_config["param_path"],
             device=_server_config["device"],
             dtype=_server_config["dtype"],
+            max_batch_size=_server_config["max_batch_size"],
         )
     except Exception as e:
         logger.error(f"Failed to load model: {e}")
         raise
     yield
-    # Shutdown: Cleanup if needed
-    pass
+    # Shutdown: Cleanup engine
+    if _engine:
+        _engine.shutdown()
+        logger.info("Inference engine shutdown complete")
 
 
-app = FastAPI(title="AstrAI Inference Server", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="AstrAI Inference Server", version="0.2.0", lifespan=lifespan)
 
 
 def load_model(
     param_path: Optional[Path] = None,
     device: str = "cuda",
     dtype: torch.dtype = torch.bfloat16,
+    max_batch_size: int = 16,
 ):
-    """Load model parameters into global variable."""
-    global _model_param
+    """Load model parameters and initialize inference engine."""
+    global _model_param, _engine
     if param_path is None:
         param_path = _project_root / "params"
     if not param_path.exists():
@@ -78,6 +98,13 @@ def load_model(
     _model_param = ModelParameter.load(param_path, disable_init=True)
     _model_param.to(device=device, dtype=dtype)
     logger.info(f"Model loaded on {device} with dtype {dtype}")
+
+    # Initialize inference engine with continuous batching
+    _engine = InferenceEngine(
+        parameter=_model_param,
+        max_batch_size=max_batch_size,
+    )
+    logger.info(f"Inference engine initialized with max_batch_size={max_batch_size}")
 
 
 # Pydantic models for API request/response
@@ -134,54 +161,77 @@ def convert_messages_to_history(
             assistant_buffer.append(msg.content)
         else:
             logger.warning(f"Unknown role {msg.role}")
-    # If there is a pending user message without assistant, treat as current query
-    # We'll handle this later
     return system_prompt, history if history else None
+
+
+def convert_messages_to_prompt(messages: List[ChatMessage]) -> str:
+    """Convert messages to prompt string.
+
+    Args:
+        messages: List of ChatMessage objects
+
+    Returns:
+        str: Formatted prompt string
+    """
+    system_prompt, history = convert_messages_to_history(messages)
+
+    # Get the last user message as query
+    user_messages = [m.content for m in messages if m.role == "user"]
+    if not user_messages:
+        raise ValueError("No user message found")
+    query = user_messages[-1]
+
+    # Build prompt using chat template
+    from astrai.tokenize.chat_template import build_prompt
+
+    return build_prompt(query, history)
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model_loaded": _model_param is not None}
+    return {
+        "status": "ok",
+        "model_loaded": _model_param is not None,
+        "engine_ready": _engine is not None,
+    }
+
+
+@app.get("/stats")
+async def get_stats():
+    """Get inference engine statistics."""
+    if _engine is None:
+        raise HTTPException(status_code=503, detail="Engine not initialized")
+    return _engine.get_stats()
 
 
 @app.post("/v1/chat/completions", response_model=CompletionResponse)
 async def chat_completion(request: ChatCompletionRequest):
-    """OpenAI‑compatible chat completion endpoint.
+    """OpenAI-compatible chat completion endpoint.
 
-    Supports both streaming and non‑streaming modes.
+    Supports both streaming and non-streaming modes with continuous batching.
     """
-    if _model_param is None:
-        raise HTTPException(status_code=503, detail="Model not loaded")
-    # Convert messages to query/history
-    # For simplicity, assume the last user message is the query, previous messages are history
-    system_prompt, history = convert_messages_to_history(request.messages)
-    # Extract last user message as query
-    user_messages = [m.content for m in request.messages if m.role == "user"]
-    if not user_messages:
-        raise HTTPException(status_code=400, detail="No user message found")
-    query = user_messages[-1]
-    # If there are multiple user messages, we could merge them, but for demo we keep simple
+    if _engine is None:
+        raise HTTPException(status_code=503, detail="Engine not initialized")
 
-    gen_request = GenerationRequest(
-        query=query,
-        temperature=request.temperature,
-        top_p=request.top_p,
-        top_k=request.top_k,
-        max_len=request.max_tokens,
-        history=history,
-        system_prompt=system_prompt,
-        stream=request.stream,
-    )
+    # Convert messages to prompt
+    prompt = convert_messages_to_prompt(request.messages)
 
     if request.stream:
-        # Return streaming response
+        # Streaming response (use synchronous generator)
+        generator = _engine.generate(
+            prompt=prompt,
+            stream=True,
+            max_tokens=request.max_tokens,
+            temperature=request.temperature,
+            top_p=request.top_p,
+            top_k=request.top_k,
+        )
+
         def generate_stream():
-            generator = GeneratorFactory.create(_model_param, gen_request)
-            for chunk in generator.generate(gen_request):
-                # chunk is the cumulative response string
-                # For OpenAI compatibility, we send incremental delta
-                # For simplicity, we send the whole chunk each time
-                yield f"data: {chunk}\n\n"
+            for token in generator:
+                if token == "[DONE]":
+                    break
+                yield f"data: {json.dumps({'choices': [{'delta': {'content': token}}]})}\n\n"
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(
@@ -190,13 +240,17 @@ async def chat_completion(request: ChatCompletionRequest):
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
     else:
-        # Non‑streaming
-        generator = GeneratorFactory.create(_model_param, gen_request)
-        if gen_request.stream:
-            # Should not happen because we set stream=False
-            pass
-        response_text = generator.generate(gen_request)
-        # Build OpenAI‑style response
+        # Non-streaming response
+        result = _engine.generate(
+            prompt=prompt,
+            stream=False,
+            max_tokens=request.max_tokens,
+            temperature=request.temperature,
+            top_p=request.top_p,
+            top_k=request.top_k,
+        )
+
+        # Build OpenAI-style response
         import time
 
         resp = CompletionResponse(
@@ -205,7 +259,7 @@ async def chat_completion(request: ChatCompletionRequest):
             choices=[
                 {
                     "index": 0,
-                    "message": {"role": "assistant", "content": response_text},
+                    "message": {"role": "assistant", "content": result},
                     "finish_reason": "stop",
                 }
             ],
@@ -223,35 +277,58 @@ async def generate(
     max_len: int = 2048,
     stream: bool = False,
 ):
-    """Simple generation endpoint compatible with existing GenerationRequest."""
-    if _model_param is None:
-        raise HTTPException(status_code=503, detail="Model not loaded")
+    """Simple generation endpoint.
+
+    Args:
+        query: Input query string
+        history: Conversation history as list of [user, assistant] pairs
+        temperature: Sampling temperature
+        top_p: Top-p sampling parameter
+        top_k: Top-k sampling parameter
+        max_len: Maximum tokens to generate
+        stream: Enable streaming output
+
+    Returns:
+        dict: Generation result with response field
+    """
+    if _engine is None:
+        raise HTTPException(status_code=503, detail="Engine not initialized")
+
     # Convert history format
     hist: Optional[List[Tuple[str, str]]] = None
     if history:
-        hist = [
-            (h[0], h[1]) for h in history
-        ]  # assuming each item is [user, assistant]
-    gen_request = GenerationRequest(
-        query=query,
-        temperature=temperature,
-        top_p=top_p,
-        top_k=top_k,
-        max_len=max_len,
-        history=hist,
-        stream=stream,
-    )
+        hist = [(h[0], h[1]) for h in history]
+
+    # Build prompt
+    from astrai.tokenize.chat_template import build_prompt
+
+    prompt = build_prompt(query, hist)
+
     if stream:
+        # Synchronous streaming
+        result = _engine.generate(
+            prompt=prompt,
+            stream=True,
+            max_tokens=max_len,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+        )
 
         def stream_generator():
-            generator = GeneratorFactory.create(_model_param, gen_request)
-            for chunk in generator.generate(gen_request):
-                yield chunk + "\n"
+            for token in result:
+                yield token + "\n"
 
         return StreamingResponse(stream_generator(), media_type="text/plain")
     else:
-        generator = GeneratorFactory.create(_model_param, gen_request)
-        result = generator.generate(gen_request)
+        result = _engine.generate(
+            prompt=prompt,
+            stream=False,
+            max_tokens=max_len,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+        )
         return {"response": result}
 
 
@@ -262,6 +339,7 @@ def run_server(
     device: str = "cuda",
     dtype: torch.dtype = torch.bfloat16,
     param_path: Optional[Path] = None,
+    max_batch_size: int = 16,
 ):
     """Run the FastAPI server with uvicorn.
 
@@ -272,6 +350,17 @@ def run_server(
         device: Device to load model on (e.g., "cuda", "cpu", "cuda:0")
         dtype: Data type for model weights (e.g., torch.bfloat16, torch.float16)
         param_path: Path to model parameters directory
+        max_batch_size: Maximum batch size for continuous batching
     """
-    configure_server(device=device, dtype=dtype, param_path=param_path)
-    uvicorn.run("astrai.inference.server:app", host=host, port=port, reload=reload)
+    configure_server(
+        device=device,
+        dtype=dtype,
+        param_path=param_path,
+        max_batch_size=max_batch_size,
+    )
+    uvicorn.run(
+        "astrai.inference.server:app",
+        host=host,
+        port=port,
+        reload=reload,
+    )

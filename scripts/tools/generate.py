@@ -4,7 +4,7 @@ import json
 import torch
 
 from astrai.config.param_config import ModelParameter
-from astrai.inference.generator import BatchGenerator, GenerationRequest
+from astrai.inference import InferenceEngine
 
 
 def processor(
@@ -19,24 +19,21 @@ def processor(
 ):
     param = ModelParameter.load(model_dir, disable_init=True)
     param.to(device="cuda", dtype=torch.bfloat16)
-    generator = BatchGenerator(param)
+    engine = InferenceEngine(param)
 
     with open(input_json_file, "r", encoding="utf-8") as f:
         input_data = [json.loads(line) for line in f]
 
     queries = [item[question_key] for item in input_data]
 
-    request = GenerationRequest(
-        query=queries,
+    responses = engine.generate(
+        prompt=queries,
+        stream=False,
+        max_tokens=param.config.max_len,
         temperature=temperature,
         top_p=top_p,
         top_k=top_k,
-        max_len=param.config.max_len,
-        history=None,
-        system_prompt=None,
     )
-
-    responses = generator.generate(request)
 
     with open(output_json_file, "w", encoding="utf-8") as f:
         for query, response in zip(queries, responses):
