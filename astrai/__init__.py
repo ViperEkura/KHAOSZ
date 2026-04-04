@@ -5,7 +5,8 @@ from astrai.config import (
     ModelConfig,
     TrainConfig,
 )
-from astrai.data import BpeTokenizer, DatasetLoader
+from astrai.core.factory import BaseFactory
+from astrai.data import BpeTokenizer, DatasetFactory
 from astrai.inference.generator import (
     BatchGenerator,
     EmbeddingEncoder,
@@ -21,7 +22,7 @@ __all__ = [
     "Transformer",
     "ModelConfig",
     "TrainConfig",
-    "DatasetLoader",
+    "DatasetFactory",
     "BpeTokenizer",
     "GenerationRequest",
     "LoopGenerator",
@@ -32,4 +33,5 @@ __all__ = [
     "Trainer",
     "StrategyFactory",
     "SchedulerFactory",
+    "BaseFactory",
 ]

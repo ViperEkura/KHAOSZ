@@ -10,6 +10,8 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.nn.parallel import DistributedDataParallel as DDP
 
+from astrai.core.factory import BaseFactory
+
 
 def unwrap_model(model: nn.Module) -> nn.Module:
     """Unwrap DDP wrapper if present to get the original model."""
@@ -106,7 +108,7 @@ class BaseStrategy(ABC):
         return self.compute_loss(batch)
 
 
-class StrategyFactory:
+class StrategyFactory(BaseFactory["BaseStrategy"]):
     """Factory class for creating training strategy instances.
 
     Supports decorator-based registration for extensible strategy types.
@@ -117,68 +119,36 @@ class StrategyFactory:
         class CustomStrategy(BaseStrategy):
             ...
 
-        strategy = StrategyFactory.create(model, "custom", device)
+        strategy = StrategyFactory.create("custom", model, device)
     """
 
-    SUPPORTED_STRATEGIES = frozenset({"seq", "sft", "dpo", "grpo"})
-    STRATEGY_MAP: Dict[str, type] = {}
+    _registry: Dict[str, type] = {}
 
     @classmethod
-    def register(cls, name: str):
-        """Decorator to register a new strategy class.
-
-        Args:
-            name: Registration name for the strategy
-
-        Returns:
-            Decorator function that registers the strategy class
-        """
-
-        def decorator(strategy_cls: type) -> type:
-            if not issubclass(strategy_cls, BaseStrategy):
-                raise TypeError(
-                    f"{strategy_cls.__name__} must inherit from BaseStrategy"
-                )
-            cls.STRATEGY_MAP[name] = strategy_cls
-            return strategy_cls
-
-        return decorator
+    def _validate_component(cls, strategy_cls: type) -> None:
+        """Validate that the strategy class inherits from BaseStrategy."""
+        if not issubclass(strategy_cls, BaseStrategy):
+            raise TypeError(f"{strategy_cls.__name__} must inherit from BaseStrategy")
 
     @classmethod
-    def create(cls, model, train_type: str, device: str, **kwargs) -> BaseStrategy:
+    def create(cls, train_type: str, model, device: str, **kwargs) -> "BaseStrategy":
         """Create a strategy instance based on training type.
 
         Args:
-            model: Model instance for the strategy
             train_type: Type of training ("seq", "sft", "dpo", "grpo")
+            model: Model instance for the strategy
             device: Device to run the strategy on
             **kwargs: Additional arguments passed to strategy constructor
 
         Returns:
             Strategy instance
-
-        Raises:
-            ValueError: If train_type is not supported
-            NotImplementedError: If train_type is in supported list but not implemented
         """
-        if train_type not in cls.SUPPORTED_STRATEGIES:
-            raise ValueError(
-                f"Unknown training strategy: '{train_type}'. "
-                f"Supported strategies: {sorted(cls.SUPPORTED_STRATEGIES)}"
-            )
-
-        if train_type not in cls.STRATEGY_MAP:
-            raise NotImplementedError(
-                f"Strategy '{train_type}' is supported but not yet implemented."
-            )
-
-        strategy_cls = cls.STRATEGY_MAP[train_type]
-        return strategy_cls(model, device, **kwargs)
+        return super().create(train_type, model, device, **kwargs)
 
     @classmethod
     def available_strategies(cls) -> list:
         """Return list of registered strategy names."""
-        return list(cls.STRATEGY_MAP.keys())
+        return cls.list_registered()
 
 
 # ============== Strategy Classes ==============

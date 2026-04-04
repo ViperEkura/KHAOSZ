@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Type
 
 from torch.optim.lr_scheduler import LRScheduler
 
+from astrai.core.factory import BaseFactory
+
 
 class BaseScheduler(LRScheduler, ABC):
     """Base scheduler class for all other schedulers."""
@@ -25,7 +27,7 @@ class BaseScheduler(LRScheduler, ABC):
         super().load_state_dict(state_dict)
 
 
-class SchedulerFactory:
+class SchedulerFactory(BaseFactory["BaseScheduler"]):
     """Factory class for creating learning rate schedulers.
 
     Supports decorator-based registration for extensible scheduler types.
@@ -36,34 +38,21 @@ class SchedulerFactory:
         class CustomScheduler(BaseScheduler):
             ...
 
-        scheduler = SchedulerFactory.create(optimizer, "custom", **kwargs)
+        scheduler = SchedulerFactory.create("custom", optimizer, **kwargs)
     """
 
-    SCHEDULER_MAP: Dict[str, Type[BaseScheduler]] = {}
+    _registry: Dict[str, Type[BaseScheduler]] = {}
 
     @classmethod
-    def register(cls, name: str):
-        """Decorator to register a new scheduler class.
-
-        Args:
-            name: Registration name for the scheduler
-
-        Returns:
-            Decorator function that registers the scheduler class
-        """
-
-        def decorator(scheduler_cls: Type[BaseScheduler]) -> Type[BaseScheduler]:
-            if not issubclass(scheduler_cls, BaseScheduler):
-                raise TypeError(
-                    f"{scheduler_cls.__name__} must inherit from BaseScheduler"
-                )
-            cls.SCHEDULER_MAP[name] = scheduler_cls
-            return scheduler_cls
-
-        return decorator
+    def _validate_component(cls, scheduler_cls: Type[BaseScheduler]) -> None:
+        """Validate that the scheduler class inherits from BaseScheduler."""
+        if not issubclass(scheduler_cls, BaseScheduler):
+            raise TypeError(f"{scheduler_cls.__name__} must inherit from BaseScheduler")
 
     @classmethod
-    def create(cls, optimizer, schedule_type: str = "none", **kwargs) -> BaseScheduler:
+    def create(
+        cls, optimizer, schedule_type: str = "none", **kwargs
+    ) -> "BaseScheduler":
         """Create a scheduler instance by type name.
 
         Args:
@@ -73,23 +62,13 @@ class SchedulerFactory:
 
         Returns:
             Scheduler instance
-
-        Raises:
-            ValueError: If schedule_type is not supported
         """
-        if schedule_type not in cls.SCHEDULER_MAP:
-            raise ValueError(
-                f"Unknown schedule type: '{schedule_type}'. "
-                f"Supported types: {sorted(cls.SCHEDULER_MAP.keys())}"
-            )
-
-        scheduler_cls = cls.SCHEDULER_MAP[schedule_type]
-        return scheduler_cls(optimizer, **kwargs)
+        return super().create(schedule_type, optimizer, **kwargs)
 
     @classmethod
     def available_types(cls) -> list:
         """Return list of registered scheduler type names."""
-        return list(cls.SCHEDULER_MAP.keys())
+        return cls.list_registered()
 
 
 # ----------- Scheduler implementations -----------

@@ -8,7 +8,7 @@ import torch.optim as optim
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from astrai.config import ModelParameter, TrainConfig
-from astrai.data import DatasetLoader
+from astrai.data import DatasetFactory
 from astrai.parallel import get_rank
 from astrai.trainer import SchedulerFactory, Trainer
 
@@ -205,7 +205,7 @@ def train(
 
     strategy_kwargs = {"dpo_beta": dpo_beta, "label_smoothing": label_smoothing}
 
-    dataset = DatasetLoader.load(
+    dataset = DatasetFactory.load(
         train_type=train_type,
         load_path=data_root_path,
         window_size=window_size,

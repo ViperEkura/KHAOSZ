@@ -1,7 +1,7 @@
 from astrai.data.dataset import (
     BaseDataset,
     DatasetFactory,
-    DatasetLoader,
+    DatasetFactory,
     DPODataset,
     GRPODataset,
     MultiSegmentFetcher,
@@ -21,8 +21,8 @@ __all__ = [
     "GRPODataset",
     # Fetchers
     "MultiSegmentFetcher",
-    # Factory (DatasetLoader is alias for backward compatibility)
-    "DatasetLoader",
+    # Factory (DatasetFactory is alias for backward compatibility)
+    "DatasetFactory",
     "DatasetFactory",
     # Tokenizer and sampler
     "BpeTokenizer",

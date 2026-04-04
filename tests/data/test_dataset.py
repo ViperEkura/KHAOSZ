@@ -23,7 +23,7 @@ def test_dataset_loader_random_paths(base_test_env):
         save_h5(test_dir, f"data_{i}", dummy_data)
 
         # Test loading with multiple paths
-        loaded_dataset = DatasetLoader.load(
+        loaded_dataset = DatasetFactory.load(
             train_type="seq",
             load_path=test_dir,
             window_size=64,
@@ -57,7 +57,7 @@ def test_dpo_strategy_with_random_data(base_test_env):
     save_h5(test_dir, "dpo_data", dummy_data)
 
     # Load DPO dataset
-    dpo_dataset = DatasetLoader.load(
+    dpo_dataset = DatasetFactory.load(
         train_type="dpo",
         load_path=test_dir,
         window_size=64,
@@ -93,7 +93,7 @@ def test_sft_dataset_with_random_data(base_test_env):
     save_h5(test_dir, "sft_data", dummy_data)
 
     # Load SFT dataset
-    sft_dataset = DatasetLoader.load(
+    sft_dataset = DatasetFactory.load(
         train_type="sft",
         load_path=test_dir,
         window_size=64,
@@ -127,7 +127,7 @@ def test_dataset_with_custom_stride(base_test_env):
 
     # Test with custom stride
     custom_stride = 32
-    dataset = DatasetLoader.load(
+    dataset = DatasetFactory.load(
         train_type="seq", load_path=test_dir, window_size=64, stride=custom_stride
     )
 
@@ -136,7 +136,7 @@ def test_dataset_with_custom_stride(base_test_env):
 
     # With stride 32 and window 64 on 200 length data, we should get more samples
     # than with default stride (which equals window size)
-    default_stride_dataset = DatasetLoader.load(
+    default_stride_dataset = DatasetFactory.load(
         train_type="seq",
         load_path=test_dir,
         window_size=64,

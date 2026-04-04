@@ -8,6 +8,7 @@ import torch
 from torch import Tensor
 from torch.utils.data import Dataset
 
+from astrai.core.factory import BaseFactory
 from astrai.data.serialization import load_h5
 
 
@@ -165,7 +166,7 @@ class BaseDataset(Dataset, ABC):
         return (self.total_samples - 1 - self.window_size) // self.stride + 1
 
 
-class DatasetFactory:
+class DatasetFactory(BaseFactory["BaseDataset"]):
     """Factory class for creating dataset instances.
 
     Supports decorator-based registration for extensible dataset types.
@@ -180,30 +181,16 @@ class DatasetFactory:
         dataset = DatasetFactory.create("custom", window_size, stride)
     """
 
-    SUPPORTED_TYPES = frozenset({"seq", "sft", "dpo", "grpo"})
-    DATASET_MAP: Dict[str, type] = {}
+    _registry: Dict[str, type] = {}
 
     @classmethod
-    def register(cls, name: str):
-        """Decorator to register a new dataset class.
-
-        Args:
-            name: Registration name for the dataset type
-
-        Returns:
-            Decorator function that registers the dataset class
-        """
-
-        def decorator(dataset_cls: type) -> type:
-            if not issubclass(dataset_cls, BaseDataset):
-                raise TypeError(f"{dataset_cls.__name__} must inherit from BaseDataset")
-            cls.DATASET_MAP[name] = dataset_cls
-            return dataset_cls
-
-        return decorator
+    def _validate_component(cls, dataset_cls: type) -> None:
+        """Validate that the dataset class inherits from BaseDataset."""
+        if not issubclass(dataset_cls, BaseDataset):
+            raise TypeError(f"{dataset_cls.__name__} must inherit from BaseDataset")
 
     @classmethod
-    def create(cls, train_type: str, window_size: int, stride: int) -> BaseDataset:
+    def create(cls, train_type: str, window_size: int, stride: int) -> "BaseDataset":
         """Create a dataset instance.
 
         Args:
@@ -214,19 +201,7 @@ class DatasetFactory:
         Returns:
             Dataset instance
         """
-        if train_type not in cls.SUPPORTED_TYPES:
-            raise ValueError(
-                f"Unknown dataset type: '{train_type}'. "
-                f"Supported types: {sorted(cls.SUPPORTED_TYPES)}"
-            )
-
-        if train_type not in cls.DATASET_MAP:
-            raise NotImplementedError(
-                f"Dataset type '{train_type}' is supported but not yet implemented."
-            )
-
-        dataset_cls = cls.DATASET_MAP[train_type]
-        return dataset_cls(window_size, stride)
+        return super().create(train_type, window_size, stride)
 
     @classmethod
     def load(
@@ -235,7 +210,7 @@ class DatasetFactory:
         load_path: str,
         window_size: int,
         stride: Optional[int] = None,
-    ) -> BaseDataset:
+    ) -> "BaseDataset":
         """Create and load a dataset in one step.
 
         Args:
@@ -258,7 +233,7 @@ class DatasetFactory:
     @classmethod
     def available_types(cls) -> list:
         """Return list of registered dataset type names."""
-        return list(cls.DATASET_MAP.keys())
+        return cls.list_registered()
 
 
 # ============== Dataset Classes ==============
@@ -362,7 +337,3 @@ class GRPODataset(BaseDataset):
             "masks": masks,
             "rewards": rewards,
         }
-
-
-# Backward compatibility alias
-DatasetLoader = DatasetFactory
