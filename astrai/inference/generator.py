@@ -7,7 +7,7 @@ from torch import Tensor
 from astrai.config.param_config import ModelParameter
 from astrai.factory import BaseFactory
 from astrai.inference.core import EmbeddingEncoderCore, GeneratorCore, KVCacheManager
-from astrai.tokenizer.chat_template import HistoryType, build_prompt
+from astrai.tokenize.chat_template import HistoryType, build_prompt
 
 
 def pad_sequence(ids_list: List[List[int]], pad_id: int) -> Tuple[List[List[int]], int]:

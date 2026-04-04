@@ -11,7 +11,7 @@ from tokenizers import pre_tokenizers
 from torch.utils.data import Dataset
 
 from astrai.config.model_config import ModelConfig
-from astrai.tokenizer import BpeTokenizer, BpeTrainer
+from astrai.tokenize import BpeTokenizer, BpeTrainer
 from astrai.model.transformer import Transformer
 
 

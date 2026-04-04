@@ -1,10 +1,10 @@
-from astrai.tokenizer.tokenizer import (
+from astrai.tokenize.tokenizer import (
     BaseTokenizer,
     BpeTokenizer,
     BaseTrainer,
     BpeTrainer,
 )
-from astrai.tokenizer.chat_template import (
+from astrai.tokenize.chat_template import (
     HistoryType,
     MessageType,
     build_prompt,
