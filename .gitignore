@@ -6,11 +6,13 @@
 
 # Allow specific file types and root files
 !*.py
+!*.sh
 
 # Allow GitHub files
 !/.github/**
 
 # Allow root files
+!/.gitattributes
 !/assets/**
 !/CONTRIBUTING.md
 !/LICENSE
