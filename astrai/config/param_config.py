@@ -7,7 +7,7 @@ import safetensors.torch as st
 import torch.nn as nn
 
 from astrai.config.model_config import ModelConfig
-from astrai.data.tokenizer import BpeTokenizer
+from astrai.tokenizer import BpeTokenizer
 from astrai.model.transformer import Transformer
 
 

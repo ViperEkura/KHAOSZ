@@ -4,7 +4,7 @@ import numpy as np
 import torch
 
 from astrai.config.train_config import TrainConfig
-from astrai.data.serialization import Checkpoint
+from astrai.serialization import Checkpoint
 from astrai.trainer.schedule import SchedulerFactory
 from astrai.trainer.trainer import Trainer
 

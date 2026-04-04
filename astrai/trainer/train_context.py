@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 
 from astrai.config.train_config import TrainConfig
 from astrai.data import ResumableDistributedSampler
-from astrai.data.serialization import Checkpoint
+from astrai.serialization import Checkpoint
 from astrai.parallel.setup import get_current_device, get_rank, get_world_size
 from astrai.trainer.strategy import BaseStrategy, StrategyFactory
 

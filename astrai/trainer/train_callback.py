@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
 from tqdm import tqdm
 
-from astrai.data.serialization import Checkpoint
+from astrai.serialization import Checkpoint
 from astrai.parallel import only_on_rank
 from astrai.trainer.metric_util import (
     ctx_get_grad_max,

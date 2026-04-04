@@ -2,7 +2,7 @@ import logging
 from typing import List, Optional
 
 from astrai.config import TrainConfig
-from astrai.data.serialization import Checkpoint
+from astrai.serialization import Checkpoint
 from astrai.parallel.setup import spawn_parallel_fn
 from astrai.trainer.train_callback import (
     TrainCallback,

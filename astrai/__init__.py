@@ -6,7 +6,8 @@ from astrai.config import (
     TrainConfig,
 )
 from astrai.factory import BaseFactory
-from astrai.data import BpeTokenizer, DatasetFactory
+from astrai.data import DatasetFactory
+from astrai.tokenizer import BpeTokenizer
 from astrai.inference.generator import (
     BatchGenerator,
     EmbeddingEncoder,

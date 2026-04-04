@@ -9,7 +9,7 @@ from torch import Tensor
 from torch.utils.data import Dataset
 
 from astrai.factory import BaseFactory
-from astrai.data.serialization import load_h5
+from astrai.serialization import load_h5
 
 
 class BaseSegmentFetcher:
