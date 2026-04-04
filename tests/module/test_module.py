@@ -4,6 +4,7 @@ import torch
 
 from astrai.config.param_config import ModelParameter
 
+
 def test_model_parameter(test_env):
     save_dir = os.path.join(test_env["test_dir"], "save")
     model_param = ModelParameter(

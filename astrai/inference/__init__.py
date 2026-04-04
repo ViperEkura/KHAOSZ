@@ -1,21 +1,10 @@
-"""
-AstrAI Inference Module
-
-Provides inference components for text generation with continuous batching support.
-
-Main Components:
-- InferenceEngine: Unified inference engine for continuous batching
-- InferenceScheduler: Task scheduling with dynamic batch composition
-- Task, TaskStatus: Task management for continuous batching
-- GenerationRequest: Request parameters for generation
-- apply_sampling_strategies: Sampling utilities for text generation
-
-Author: AstrAI Team
-"""
+"""Inference module for continuous batching."""
 
 from astrai.inference.engine import (
     GenerationRequest,
     InferenceEngine,
+)
+from astrai.inference.scheduler import (
     InferenceScheduler,
     Task,
     TaskStatus,
@@ -25,9 +14,11 @@ from astrai.inference.engine import (
 __all__ = [
     # Engine
     "InferenceEngine",
+    # Scheduler
     "InferenceScheduler",
     "Task",
     "TaskStatus",
+    # Request
     "GenerationRequest",
     # Sampling
     "apply_sampling_strategies",
