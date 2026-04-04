@@ -13,6 +13,8 @@
 
 # Allow root files
 !/.gitattributes
+!/.dockerignore
+!/Dockerfile
 !/assets/**
 !/CONTRIBUTING.md
 !/LICENSE

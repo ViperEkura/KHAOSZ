@@ -1,5 +1,12 @@
 # Auto detect text files
 * text=auto
 
-# Shell scripts should always use LF line endings
+# Files that MUST use LF (Unix/Linux execution)
 *.sh text eol=lf
+Dockerfile text eol=lf
+.dockerignore text eol=lf
+
+# Windows scripts - use CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

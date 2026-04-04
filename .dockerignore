@@ -1,0 +1,8 @@
+# Ignore everything
+*
+
+# Allow necessary files
+!astrai/
+!scripts/tools/
+!pyproject.toml
+!README.md
