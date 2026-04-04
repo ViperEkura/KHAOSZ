@@ -1,10 +1,10 @@
-from astrai.data.dataset import (
+from astrai.dataset.dataset import (
     BaseDataset,
     DatasetFactory,
     BaseSegmentFetcher,
     MultiSegmentFetcher,
 )
-from astrai.data.sampler import ResumableDistributedSampler
+from astrai.dataset.sampler import ResumableDistributedSampler
 
 __all__ = [
     # Base classes

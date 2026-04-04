@@ -1,4 +1,4 @@
-from astrai.data import ResumableDistributedSampler
+from astrai.dataset import ResumableDistributedSampler
 
 
 def test_random_sampler_consistency(random_dataset):

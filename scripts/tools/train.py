@@ -8,7 +8,7 @@ import torch.optim as optim
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from astrai.config import ModelParameter, TrainConfig
-from astrai.data import DatasetFactory
+from astrai.dataset import DatasetFactory
 from astrai.parallel import get_rank
 from astrai.trainer import SchedulerFactory, Trainer
 
