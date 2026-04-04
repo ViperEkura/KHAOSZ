@@ -5,7 +5,7 @@ This document describes the data flow of the AstrAI project (a training and infe
 ## Overview
 
 AstrAI adopts a modular design with the following main components:
-- **Data Module** (`astrai/data/`): Dataset, sampler, tokenizer, serialization tools
+- **Dataset Module** (`astrai/dataset/`): Dataset, sampler, serialization tools
 - **Model Module** (`astrai/model/`): Transformer model and its submodules
 - **Training Module** (`astrai/trainer/`): Trainer, training context, strategies, schedulers
 - **Inference Module** (`astrai/inference/`): Generation core, KV cache management, streaming generation
@@ -20,35 +20,39 @@ The data flow can generally be divided into two main lines: **Training Data Flow
 flowchart LR
     subgraph A[Data Preparation]
         direction TB
-        A1[Raw Text] --> A2[BBPE Tokenizer]
+        A1[Raw Text] --> A2[BpeTokenizer]
         A2 --> A3[Serialize to .h5 files]
-        A3 --> A4[Dataset Loading<br/>BaseDataset]
-        A4 --> A5[Resumable Distributed Sampler<br/>ResumableDistributedSampler]
-        A5 --> A6[DataLoader Batch Loading]
+        A3 --> A4[BaseDataset]
+        A4 --> A5[ResumableDistributedSampler]
+        A5 --> A6[DataLoader]
     end
 
-    subgraph B[Training Loop]
+    subgraph B[Training]
         direction TB
-        B1[Batch Data] --> B2[Training Strategy<br/>BaseStrategy]
-        B2 --> B3[Transformer Model]
-        B3 --> B4[Output logits]
-        B4 --> B5[Loss Calculation]
-        B5 --> B6[Backpropagation]
-        B6 --> B7[Optimizer Update]
-        B7 --> B8[Learning Rate Scheduler]
-        B8 --> B9[Checkpoint Save]
+        B1[Batch Data] --> B2[TrainContextBuilder]
+        B2 --> B3[TrainContext]
+        B3 --> B4[BaseStrategy]
+        B4 --> B5[Transformer]
+        B5 --> B6[Compute Loss]
+        B6 --> B7[Backward]
+        B7 --> B8[Optimizer]
+        B8 --> B9[LRScheduler]
+        B9 --> B10[CheckpointCallback]
     end
 
-    subgraph C[Inference Generation]
+    subgraph C[Inference]
         direction TB
-        C1[Checkpoint Loading] --> C2[Inference Model Loading]
-        C2 --> C3[Generation Core<br/>GeneratorCore]
-        C3 --> C4[Sampling Strategy<br/>Temperature/top-k/top-p]
-        C4 --> C5[Generate Next Token]
-        C5 --> C6[KV Cache Update]
-        C6 --> C7{Max Length Reached?}
-        C7 -->|No| C5
-        C7 -->|Yes| C8[Output Generated Text]
+        C1[Checkpoint] --> C2[ModelParameter]
+        C2 --> C3[Transformer + BpeTokenizer]
+        C3 --> C4[GenerationRequest + build_prompt]
+        C4 --> C5[GeneratorFactory]
+        C5 --> C6[GeneratorCore]
+        C6 --> C7[apply_sampling_strategies]
+        C7 --> C8[Transformer Forward]
+        C8 --> C9[KVCacheManager]
+        C9 --> C10{End Condition?}
+        C10 -->|No| C8
+        C10 -->|Yes| C11[Output Text]
     end
 
     A --> B
@@ -57,13 +61,14 @@ flowchart LR
 
 ## Detailed Module Descriptions
 
-### 1. Data Module
+### 1. Dataset Module
 
 #### 1.1 Tokenizer (`tokenizer.py`)
-- Implemented based on Byte-Level BPE (BBPE)
+- Implemented based on Byte-Level BPE (BPE)
 - Supports special tokens: `<｜begin▁of▁sentence｜>`, `<｜end▁of▁sentence｜>`, `<｜▁pad▁｜>`, `<｜im▁start｜>`, `<｜im▁end｜>`
 - Provides `encode`/`decode` methods for mutual conversion between text and token IDs
 - Learns vocabulary from corpus during training, saved as `.json` files
+- `BpeTrainer` class handles vocabulary training from corpus
 
 #### 1.2 Serialization (`serialization.py`)
 - **`save_h5`**: Saves multiple tensors by groups as HDF5 files (`.h5`), each key corresponds to a list of tensors
@@ -108,7 +113,7 @@ flowchart LR
   1. `on_train_begin` → 2. `on_epoch_begin` → 3. `on_batch_begin` → 4. Forward/loss calculation → 5. `on_batch_end` → 6. Gradient accumulation → 7. `on_step_begin` → 8. Optimizer update → 9. `on_step_end` → 10. `on_epoch_end`
 
 #### 3.3 Strategy (`strategy.py`)
-- **`BaseStrategy`**: Defines training strategy interface (such as `SeqStrategy`, `SFTStrategy`, `DPOStrategy`)
+- **`BaseStrategy`**: Defines training strategy interface (such as `SEQStrategy`, `SFTStrategy`, `DPOStrategy`, `GRPOStrategy`)
 - Strategy receives batch data, executes model forward pass, loss calculation, returns loss tensor
 - Created dynamically by `StrategyFactory` according to configuration
 
@@ -130,14 +135,16 @@ flowchart LR
 
 #### 4.3 Generator (`generator.py`)
 - **`GenerationRequest`**: Encapsulates generation request parameters (top_k, top_p, temperature, max_len, query, history, etc.)
-- **`build_prompt`**: Converts query and history into ChatML format prompt string
+- **`build_prompt`** (from `chat_template.py`): Converts query and history into ChatML format prompt string
+- **`GeneratorCore`**: Base generator with generate_iterator and generate_loop methods
+- **`LoopGenerator`**, **`StreamGenerator`**, **`BatchGenerator`**: Different generation modes
 - **`pad_sequence`**: Pads input IDs to consistent length
 - Provides streaming and non-streaming generation interfaces
 
 ## Training Data Flow - Detailed Steps
 
 1. **Data Preparation**
-   - Raw text is converted to token ID sequences through BBPE tokenizer
+   - Raw text is converted to token ID sequences through BPE tokenizer
    - Token ID sequences (possibly with masks, labels, etc.) are saved by groups as `.h5` files
    - Files can contain multiple segments, each segment corresponds to a tensor
 
@@ -152,7 +159,7 @@ flowchart LR
    - Batch data shape is `[batch_size, window_size]` (or varies according to specific dataset type)
 
 4. **Strategy Forward and Loss Calculation**
-   - Batch data is passed to strategy (such as `SeqStrategy`)
+   - Batch data is passed to strategy (such as `SEQStrategy`)
    - Strategy internally calls `Transformer` model, obtaining logits
    - Calculate cross-entropy loss (or DPO loss, etc.) according to task type
    - Return loss tensor
@@ -174,7 +181,7 @@ flowchart LR
    - Set model to evaluation mode (`model.eval()`), enable inference mode (`torch.inference_mode`)
 
 2. **Prompt Construction and Encoding**
-   - User query and history are converted to ChatML format string through `build_prompt`
+   - User query and history are converted to ChatML format string through `build_prompt` function in chat_template module
    - Tokenizer encodes prompt string to token ID sequence `input_ids`
    - For batch generation, use `pad_sequence` for padding
 
