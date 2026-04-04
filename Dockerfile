@@ -11,7 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy project files
+# Copy project files first for version extraction
+COPY astrai/ ./astrai/
 COPY pyproject.toml .
 
 # Install dependencies
@@ -33,6 +34,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
 COPY astrai/ ./astrai/
+COPY scripts/tools/ ./scripts/tools/
 COPY pyproject.toml .
 
 # Create non-root user
