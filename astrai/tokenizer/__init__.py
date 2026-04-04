@@ -7,7 +7,6 @@ from astrai.tokenizer.tokenizer import (
 from astrai.tokenizer.chat_template import (
     HistoryType,
     MessageType,
-    CHAT_TEMPLATES,
     build_prompt,
 )
 
