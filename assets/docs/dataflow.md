@@ -8,7 +8,7 @@ AstrAI adopts a modular design with the following main components:
 - **Dataset Module** (`astrai/dataset/`): Dataset, sampler, serialization tools
 - **Model Module** (`astrai/model/`): Transformer model and its submodules
 - **Training Module** (`astrai/trainer/`): Trainer, training context, strategies, schedulers
-- **Inference Module** (`astrai/inference/`): Generation core, KV cache management, streaming generation
+- **Inference Module** (`astrai/inference/`): Inference engine with continuous batching, streaming generation
 - **Config Module** (`astrai/config/`): Model, training, scheduler, and other configurations
 - **Parallel Module** (`astrai/parallel/`): Distributed training support
 
@@ -45,11 +45,11 @@ flowchart LR
         C1[Checkpoint] --> C2[ModelParameter]
         C2 --> C3[Transformer + BpeTokenizer]
         C3 --> C4[GenerationRequest + build_prompt]
-        C4 --> C5[GeneratorFactory]
-        C5 --> C6[GeneratorCore]
+        C4 --> C5[InferenceEngine]
+        C5 --> C6[InferenceScheduler]
         C6 --> C7[apply_sampling_strategies]
         C7 --> C8[Transformer Forward]
-        C8 --> C9[KVCacheManager]
+        C8 --> C9[KV Cache]
         C9 --> C10{End Condition?}
         C10 -->|No| C8
         C10 -->|Yes| C11[Output Text]
@@ -124,22 +124,21 @@ flowchart LR
 
 ### 4. Inference Module
 
-#### 4.1 Generation Core (`core.py`)
-- **`GeneratorCore`**: Provides `generate_iterator` method, executes single-step generation
-- Applies sampling strategies (temperature, top-k, top-p) to filter logits
-- Supports KV cache to accelerate autoregressive generation
+#### 4.1 Inference Engine (`engine.py`)
+- **`InferenceEngine`**: Unified inference interface, supports streaming and non-streaming generation
+- **`InferenceScheduler`**: Continuous batching scheduler with dynamic batch composition
+- Manages task queue (`waiting_queue`, `active_tasks`) and KV cache allocation
 
-#### 4.2 KV Cache Management (`core.py`)
-- **`KVCacheManager`**: Manages K and V cache for each layer, supports batch generation and length extension
-- Cache shape is `[batch_size, n_kv_heads, seq_len, head_dim]`
+#### 4.2 Scheduler (`scheduler.py`)
+- **`Task`**: Individual generation task with state management (PENDING, RUNNING, FINISHED, ABORTED)
+- **`TaskStatus`**: Task state enumeration
+- **`apply_sampling_strategies`**: Applies temperature, top-k, top-p sampling to logits
+- Continuous batching: new requests can join at any time, completed requests are released immediately
 
-#### 4.3 Generator (`generator.py`)
-- **`GenerationRequest`**: Encapsulates generation request parameters (top_k, top_p, temperature, max_len, query, history, etc.)
+#### 4.3 Request (`engine.py`)
+- **`GenerationRequest`**: Encapsulates generation parameters (top_k, top_p, temperature, max_len, query, history, etc.)
 - **`build_prompt`** (from `chat_template.py`): Converts query and history into ChatML format prompt string
-- **`GeneratorCore`**: Base generator with generate_iterator and generate_loop methods
-- **`LoopGenerator`**, **`StreamGenerator`**, **`BatchGenerator`**: Different generation modes
-- **`pad_sequence`**: Pads input IDs to consistent length
-- Provides streaming and non-streaming generation interfaces
+- Provides streaming (`stream=True`) and non-streaming (`stream=False`) generation interfaces
 
 ## Training Data Flow - Detailed Steps
 

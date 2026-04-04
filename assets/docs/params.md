@@ -83,15 +83,15 @@
 ### Usage Example
 
 ```python
-from astrai.config.param_config import ModelParameter
-from astrai.inference.generator import StreamGenerator, GenerationRequest
+from astrai.config import ModelParameter
+from astrai.inference import InferenceEngine, GenerationRequest
 
 # Load model
 param = ModelParameter.load("your_model_dir")
 param.to(device="cuda", dtype=torch.bfloat16)
 
-# Create generator
-generator = StreamGenerator(param)
+# Create engine
+engine = InferenceEngine(param)
 
 # Build request
 request = GenerationRequest(
@@ -102,14 +102,14 @@ request = GenerationRequest(
     top_k=50,
 )
 
-# Generate
-response = generator.generate(request)
+# Generate (streaming)
+for token in engine.generate_with_request(request):
+    print(token, end="", flush=True)
 ```
 
-### Three Types of Generators
+### Generation Modes
 
-| Generator | Usage |
-|-----------|-------|
-| `StreamGenerator` | Streaming output, returns word by word |
-| `LoopGenerator` | Non-streaming output, returns at once |
-| `BatchGenerator` | Batch generation, processes multiple queries simultaneously |
+| Mode | Description |
+|------|-------------|
+| `stream=True` | Streaming output, yields token by token |
+| `stream=False` | Non-streaming output, returns complete result |
