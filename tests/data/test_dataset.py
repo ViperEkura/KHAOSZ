@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from astrai.data.dataset import *
+from astrai.data.dataset import DatasetFactory
 from astrai.data.serialization import save_h5
 
 

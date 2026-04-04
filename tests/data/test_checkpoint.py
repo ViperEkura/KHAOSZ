@@ -17,7 +17,6 @@ def test_single_process():
     for epoch in range(3):
         for iteration in range(10):
             x = torch.randn(32, 10)
-            y = torch.randn(32, 5)
             loss = model(x).mean()
             loss.backward()
             optimizer.step()
@@ -44,7 +43,6 @@ def simple_training():
     for epoch in range(2):
         for iteration in range(5):
             x = torch.randn(16, 10)
-            y = torch.randn(16, 5)
             loss = model(x).mean()
             loss.backward()
             optimizer.step()

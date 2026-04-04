@@ -1,4 +1,3 @@
-from astrai.data.dataset import *
 from astrai.trainer import Trainer
 
 # train_config_factory is injected via fixture

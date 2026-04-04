@@ -1,15 +1,21 @@
 import torch
 
-from astrai.config import *
-from astrai.trainer import *
+from astrai.config.train_config import TrainConfig
+from astrai.trainer.schedule import SchedulerFactory
+from astrai.trainer.train_callback import TrainCallback
+from astrai.trainer.trainer import Trainer
 
 
 def test_callback_integration(base_test_env, random_dataset):
     """Test that all callbacks are properly integrated"""
-    optimizer_fn = lambda model: torch.optim.AdamW(model.parameters())
-    scheduler_fn = lambda optim: SchedulerFactory.create(
-        optim, "cosine", warmup_steps=10, lr_decay_steps=10, min_rate=0.05
-    )
+
+    def optimizer_fn(model):
+        return torch.optim.AdamW(model.parameters())
+
+    def scheduler_fn(optim):
+        return SchedulerFactory.create(
+            optim, "cosine", warmup_steps=10, lr_decay_steps=10, min_rate=0.05
+        )
 
     train_config = TrainConfig(
         model=base_test_env["model"],

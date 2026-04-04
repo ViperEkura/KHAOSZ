@@ -94,7 +94,7 @@ class Transformer(nn.Module):
         self.norm = RMSNorm(config.dim, config.norm_eps)
         self.lm_head = Linear(config.dim, config.vocab_size)
 
-        if self.config.tie_weight == True:
+        if self.config.tie_weight:
             self.lm_head.weight = self.embed_tokens.weight
 
         self._init_parameters()
@@ -103,7 +103,7 @@ class Transformer(nn.Module):
         lm_head_key = "lm_head.weight"
         embed_key = "embed_tokens.weight"
 
-        if self.config.tie_weight == True:
+        if self.config.tie_weight:
             # same tensor
             state_dict[lm_head_key] = state_dict[embed_key]
         else:
@@ -118,7 +118,7 @@ class Transformer(nn.Module):
             destination=destination, prefix=prefix, keep_vars=keep_vars
         )
 
-        if self.config.tie_weight == True:
+        if self.config.tie_weight:
             lm_head_key = prefix + "lm_head.weight"
             if lm_head_key in state_dict:
                 del state_dict[lm_head_key]

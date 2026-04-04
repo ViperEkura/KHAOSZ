@@ -58,10 +58,13 @@ def create_train_config(
         TrainConfig instance configured for testing
     """
 
-    optimizer_fn = lambda m: torch.optim.AdamW(m.parameters(), lr=0.001)
-    scheduler_fn = lambda optim: SchedulerFactory.create(
-        optim, "cosine", warmup_steps=10, lr_decay_steps=10, min_rate=0.05
-    )
+    def optimizer_fn(m):
+        return torch.optim.AdamW(m.parameters(), lr=0.001)
+
+    def scheduler_fn(optim):
+        return SchedulerFactory.create(
+            optim, "cosine", warmup_steps=10, lr_decay_steps=10, min_rate=0.05
+        )
 
     return TrainConfig(
         strategy=strategy,

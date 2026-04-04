@@ -10,7 +10,7 @@ def test_health_no_model(client, monkeypatch):
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ok"
-    assert data["model_loaded"] == False
+    assert not data["model_loaded"]
 
 
 def test_health_with_model(client, loaded_model):

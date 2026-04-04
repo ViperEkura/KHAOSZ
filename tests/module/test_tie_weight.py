@@ -36,7 +36,7 @@ def transformer_test_env():
             for file in os.listdir(test_dir):
                 os.remove(os.path.join(test_dir, file))
             os.rmdir(test_dir)
-        except:
+        except Exception:
             pass
 
 
