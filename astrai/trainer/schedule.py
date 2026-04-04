@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Type
 
 from torch.optim.lr_scheduler import LRScheduler
 
-from astrai.core.factory import BaseFactory
+from astrai.factory import BaseFactory
 
 
 class BaseScheduler(LRScheduler, ABC):
@@ -40,8 +40,6 @@ class SchedulerFactory(BaseFactory["BaseScheduler"]):
 
         scheduler = SchedulerFactory.create("custom", optimizer, **kwargs)
     """
-
-    _registry: Dict[str, Type[BaseScheduler]] = {}
 
     @classmethod
     def _validate_component(cls, scheduler_cls: Type[BaseScheduler]) -> None:

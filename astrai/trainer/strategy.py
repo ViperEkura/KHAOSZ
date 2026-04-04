@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from astrai.core.factory import BaseFactory
+from astrai.factory import BaseFactory
 
 
 def unwrap_model(model: nn.Module) -> nn.Module:
@@ -121,8 +121,6 @@ class StrategyFactory(BaseFactory["BaseStrategy"]):
 
         strategy = StrategyFactory.create("custom", model, device)
     """
-
-    _registry: Dict[str, type] = {}
 
     @classmethod
     def _validate_component(cls, strategy_cls: type) -> None:

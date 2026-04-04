@@ -6,7 +6,7 @@ from jinja2 import Template
 from torch import Tensor
 
 from astrai.config.param_config import ModelParameter
-from astrai.core.factory import BaseFactory
+from astrai.factory import BaseFactory
 from astrai.inference.core import EmbeddingEncoderCore, GeneratorCore, KVCacheManager
 
 HistoryType = List[Tuple[str, str]]
@@ -298,8 +298,6 @@ class GeneratorFactory(BaseFactory[GeneratorCore]):
         generator = GeneratorFactory.create(parameter, request)
         result = generator.generate(request)
     """
-
-    _registry: Dict[str, type] = {}
 
     @staticmethod
     def create(parameter: ModelParameter, request: GenerationRequest) -> GeneratorCore:

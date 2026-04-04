@@ -8,7 +8,7 @@ import torch
 from torch import Tensor
 from torch.utils.data import Dataset
 
-from astrai.core.factory import BaseFactory
+from astrai.factory import BaseFactory
 from astrai.data.serialization import load_h5
 
 
@@ -180,8 +180,6 @@ class DatasetFactory(BaseFactory["BaseDataset"]):
 
         dataset = DatasetFactory.create("custom", window_size, stride)
     """
-
-    _registry: Dict[str, type] = {}
 
     @classmethod
     def _validate_component(cls, dataset_cls: type) -> None:

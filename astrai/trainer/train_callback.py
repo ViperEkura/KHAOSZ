@@ -2,7 +2,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Callable, List, Optional, Protocol
+from typing import Callable, List, Optional, Protocol, runtime_checkable
 
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
@@ -21,8 +21,10 @@ from astrai.trainer.metric_util import (
     ctx_get_lr,
 )
 from astrai.trainer.train_context import TrainContext
+from astrai.factory import BaseFactory
 
 
+@runtime_checkable
 class TrainCallback(Protocol):
     """
     Callback interface for trainer.
@@ -56,6 +58,25 @@ class TrainCallback(Protocol):
         """Called when an error occurs during training."""
 
 
+class CallbackFactory(BaseFactory[TrainCallback]):
+    """Factory for registering and creating training callbacks.
+
+    Example:
+        @CallbackFactory.register("my_callback")
+        class MyCallback(TrainCallback):
+            ...
+
+        callback = CallbackFactory.create("my_callback", **kwargs)
+    """
+
+    @classmethod
+    def _validate_component(cls, callback_cls: type) -> None:
+        """Validate that the callback class inherits from TrainCallback."""
+        if not issubclass(callback_cls, TrainCallback):
+            raise TypeError(f"{callback_cls.__name__} must inherit from TrainCallback")
+
+
+@CallbackFactory.register("gradient_clipping")
 class GradientClippingCallback(TrainCallback):
     """
     Gradient clipping callback for trainer.
@@ -69,6 +90,7 @@ class GradientClippingCallback(TrainCallback):
         clip_grad_norm_(context.model.parameters(), self.max_grad_norm)
 
 
+@CallbackFactory.register("scheduler")
 class SchedulerCallback(TrainCallback):
     """
     Scheduler callback for trainer.
@@ -87,6 +109,7 @@ class SchedulerCallback(TrainCallback):
             context.scheduler.step()
 
 
+@CallbackFactory.register("checkpoint")
 class CheckpointCallback(TrainCallback):
     """
     Checkpoint callback for trainer.
@@ -135,6 +158,7 @@ class CheckpointCallback(TrainCallback):
         self._save_checkpoint(context)
 
 
+@CallbackFactory.register("progress_bar")
 class ProgressBarCallback(TrainCallback):
     """
     Progress bar callback for trainer.
@@ -169,6 +193,7 @@ class ProgressBarCallback(TrainCallback):
             self.progress_bar.close()
 
 
+@CallbackFactory.register("metric_logger")
 class MetricLoggerCallback(TrainCallback):
     def __init__(
         self,

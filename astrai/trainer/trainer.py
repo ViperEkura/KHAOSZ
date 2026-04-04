@@ -5,12 +5,8 @@ from astrai.config import TrainConfig
 from astrai.data.serialization import Checkpoint
 from astrai.parallel.setup import spawn_parallel_fn
 from astrai.trainer.train_callback import (
-    CheckpointCallback,
-    GradientClippingCallback,
-    MetricLoggerCallback,
-    ProgressBarCallback,
-    SchedulerCallback,
     TrainCallback,
+    CallbackFactory,
 )
 from astrai.trainer.train_context import TrainContext, TrainContextBuilder
 
@@ -28,13 +24,13 @@ class Trainer:
         )
 
     def _get_default_callbacks(self) -> List[TrainCallback]:
-        train_config = self.train_config
+        cfg = self.train_config
         return [
-            ProgressBarCallback(train_config.n_epoch),
-            CheckpointCallback(train_config.ckpt_dir, train_config.ckpt_interval),
-            MetricLoggerCallback(train_config.ckpt_dir, train_config.ckpt_interval),
-            GradientClippingCallback(train_config.max_grad_norm),
-            SchedulerCallback(),
+            CallbackFactory.create("progress_bar", cfg.n_epoch),
+            CallbackFactory.create("checkpoint", cfg.ckpt_dir, cfg.ckpt_interval),
+            CallbackFactory.create("metric_logger", cfg.ckpt_dir, cfg.ckpt_interval),
+            CallbackFactory.create("gradient_clipping", cfg.max_grad_norm),
+            CallbackFactory.create("scheduler"),
         ]
 
     def _build_context(self, checkpoint: Optional[Checkpoint]) -> TrainContext:
