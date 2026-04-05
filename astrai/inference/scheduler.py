@@ -55,9 +55,7 @@ class Task:
         """Check if task is finished."""
         if self.output_ids and self.output_ids[-1] in stop_ids:
             return True
-        if self.output_tokens >= self.max_tokens:
-            return True
-        return False
+        return self.output_tokens >= self.max_tokens
 
 
 def apply_sampling_strategies(
