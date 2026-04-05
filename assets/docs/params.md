@@ -6,11 +6,12 @@
 
 | Parameter | Description | Default Value |
 |-----------|-------------|---------------|
-| `--train_type` | Training type (seq, sft, dpo) | required |
+| `--train_type` | Training type (seq, sft, dpo, grpo) | required |
+| `--model_type` | Model type for AutoModel loading (e.g., transformer) | transformer |
 | `--data_root_path` | Dataset root directory | required |
 | `--param_path` | Model parameters or checkpoint path | required |
 | `--n_epoch` | Total training epochs | 1 |
-| `--batch_size` | Batch size | 1 |
+| `--batch_size` | Batch size | 4 |
 | `--accumulation_steps` | Gradient accumulation steps | 1 |
 
 ### Learning Rate Scheduling
@@ -42,7 +43,9 @@
 | Parameter | Description | Default Value |
 |-----------|-------------|---------------|
 | `--random_seed` | Random seed | 3407 |
-| `--num_workers` | DataLoader workers | 4 |
+| `--num_workers` | DataLoader workers | 0 |
+| `--prefetch_factor` | Prefetch factor for dataloader | None |
+| `--pin_memory` | Enable pin_memory | False |
 | `--no_pin_memory` | Disable pin_memory | - |
 
 ### Distributed Training
@@ -71,44 +74,58 @@
 
 | Parameter | Description | Default Value |
 |-----------|-------------|---------------|
-| `query` | Input text or text list | required |
-| `history` | Conversation history | None |
-| `system_prompt` | System prompt | None |
-| `temperature` | Sampling temperature (higher = more random) | required |
-| `top_p` | Nucleus sampling threshold | required |
-| `top_k` | Top-k sampling count | required |
-| `max_len` | Maximum generation length | model config max_len |
+| `messages` | List of message dictionaries (role, content) | required |
+| `temperature` | Sampling temperature (higher = more random) | 1.0 |
+| `top_p` | Nucleus sampling threshold | 1.0 |
+| `top_k` | Top-k sampling count | 50 |
+| `max_len` | Maximum generation length | 1024 |
 | `stream` | Whether to stream output | False |
 
 ### Usage Example
 
 ```python
-from astrai.config import ModelParameter
+import torch
+from astrai.model import AutoModel
+from astrai.tokenize import Tokenizer
 from astrai.inference import InferenceEngine, GenerationRequest
 
-# Load model
-param = ModelParameter.load("your_model_dir")
-param.to(device="cuda", dtype=torch.bfloat16)
+# Load model using AutoModel
+model = AutoModel.from_pretrained("your_model_dir")
+
+# Load tokenizer
+tokenizer = Tokenizer("your_model_dir")
 
 # Create engine with separate model and tokenizer
 engine = InferenceEngine(
-    model=param.model,
-    tokenizer=param.tokenizer,
-    config=param.config,
+    model=model,
+    tokenizer=tokenizer,
 )
 
-# Build request
+# Build request with messages format
 request = GenerationRequest(
-    query="Hello",
-    history=[],
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Hello"},
+    ],
     temperature=0.8,
     top_p=0.95,
     top_k=50,
+    max_len=1024,
 )
 
 # Generate (streaming)
 for token in engine.generate_with_request(request):
     print(token, end="", flush=True)
+
+# Or use simple generate interface
+result = engine.generate(
+    prompt="Hello",
+    stream=False,
+    max_tokens=1024,
+    temperature=0.8,
+    top_p=0.95,
+    top_k=50,
+)
 ```
 
 ### Generation Modes

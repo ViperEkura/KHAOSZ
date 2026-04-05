@@ -380,7 +380,7 @@ class InferenceScheduler:
         self._running = False
         if hasattr(self, "_loop_thread"):
             self._loop_thread.join(timeout=1.0)
-        
+
         # Clear KV cache to free GPU memory
         if self.kv_cache is not None:
             k_cache, v_cache = self.kv_cache
@@ -388,10 +388,10 @@ class InferenceScheduler:
                 k_cache.detach()
             if v_cache is not None:
                 v_cache.detach()
-        
+
         # Clear seq mask
         self.seq_mask.detach()
-        
+
         # Clear task lists
         self.waiting_queue.clear()
         self.active_tasks.clear()

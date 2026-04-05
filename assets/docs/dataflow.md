@@ -6,10 +6,11 @@ This document describes the data flow of the AstrAI project (a training and infe
 
 AstrAI adopts a modular design with the following main components:
 - **Dataset Module** (`astrai/dataset/`): Dataset, sampler, serialization tools
-- **Model Module** (`astrai/model/`): Transformer model and its submodules
+- **Model Module** (`astrai/model/`): AutoModel, Transformer model and its submodules
 - **Training Module** (`astrai/trainer/`): Trainer, training context, strategies, schedulers
 - **Inference Module** (`astrai/inference/`): Inference engine with continuous batching, streaming generation
 - **Config Module** (`astrai/config/`): Model, training, scheduler, and other configurations
+- **Factory Module** (`astrai/factory/`): Registry, BaseFactory for component registration
 - **Parallel Module** (`astrai/parallel/`): Distributed training support
 
 The data flow can generally be divided into two main lines: **Training Data Flow** and **Inference Data Flow**.
@@ -42,9 +43,9 @@ flowchart LR
 
     subgraph C[Inference]
         direction TB
-        C1[Checkpoint] --> C2[ModelParameter]
-        C2 --> C3[Transformer + BpeTokenizer]
-        C3 --> C4[GenerationRequest + build_prompt]
+        C1[Checkpoint] --> C2[AutoModel]
+        C2 --> C3[Transformer + Tokenizer]
+        C3 --> C4[GenerationRequest + apply_chat_template]
         C4 --> C5[InferenceEngine]
         C5 --> C6[InferenceScheduler]
         C6 --> C7[apply_sampling_strategies]
@@ -88,8 +89,9 @@ flowchart LR
 
 ### 2. Model Module
 
-#### 2.1 Transformer (`transformer.py`)
-- Core autoregressive decoder architecture
+#### 2.1 Transformer / AutoModel (`transformer.py`, `automodel.py`)
+- **`AutoModel`**: Base class for autoregressive language models with `from_pretrained()` and `save_pretrained()` methods
+- **`Transformer`**: Core autoregressive decoder architecture (registered via `@AutoModel.register('transformer')`)
 - Contains embedding layer, multi-layer `DecoderBlock`, RMSNorm, and linear output head
 - Supports weight tying (`tie_weight=True`) to reduce parameter count
 - Uses Rotary Position Embedding (RoPE) to inject position information
@@ -122,22 +124,31 @@ flowchart LR
 - **`SchedulerFactory`**: Factory pattern, supports registration of various schedulers (such as `cosine`, `sgdr`)
 - Scheduler is automatically created according to configuration and bound to optimizer
 
-### 4. Inference Module
+### 4. Factory Module
 
-#### 4.1 Inference Engine (`engine.py`)
+#### 4.1 Registry and BaseFactory (`factory.py`)
+- **`Registry`**: Flexible registry for component classes with category and priority support
+- **`BaseFactory`**: Generic factory class for component registration and creation
+- Supports decorator-based registration pattern for extensible components
+- Provides methods for registration, retrieval, and listing with filtering
+
+### 5. Inference Module
+
+#### 5.1 Inference Engine (`engine.py`)
 - **`InferenceEngine`**: Unified inference interface, supports streaming and non-streaming generation
 - **`InferenceScheduler`**: Continuous batching scheduler with dynamic batch composition
 - Manages task queue (`waiting_queue`, `active_tasks`) and KV cache allocation
 
-#### 4.2 Scheduler (`scheduler.py`)
+#### 5.2 Scheduler (`scheduler.py`)
 - **`Task`**: Individual generation task with state management (PENDING, RUNNING, FINISHED, ABORTED)
 - **`TaskStatus`**: Task state enumeration
 - **`apply_sampling_strategies`**: Applies temperature, top-k, top-p sampling to logits
 - Continuous batching: new requests can join at any time, completed requests are released immediately
 
-#### 4.3 Request (`engine.py`)
-- **`GenerationRequest`**: Encapsulates generation parameters (top_k, top_p, temperature, max_len, query, history, etc.)
-- **`build_prompt`** (from `chat_template.py`): Converts query and history into ChatML format prompt string
+#### 5.3 Request (`engine.py`)
+- **`GenerationRequest`**: Encapsulates generation parameters (top_k, top_p, temperature, max_len, messages, etc.)
+- **`messages` format**: List of message dictionaries with `role` (system/user/assistant) and `content`
+- **`apply_chat_template`** (from `tokenizer.py`): Converts messages into prompt string using ChatML format
 - Provides streaming (`stream=True`) and non-streaming (`stream=False`) generation interfaces
 
 ## Training Data Flow - Detailed Steps
@@ -176,11 +187,11 @@ flowchart LR
 ## Inference Data Flow - Detailed Steps
 
 1. **Model Loading**
-   - Load `Transformer` model and tokenizer from checkpoint
+   - Load `Transformer` model from checkpoint via `AutoModel.from_pretrained()`
    - Set model to evaluation mode (`model.eval()`), enable inference mode (`torch.inference_mode`)
 
 2. **Prompt Construction and Encoding**
-   - User query and history are converted to ChatML format string through `build_prompt` function in chat_template module
+   - User messages (list of dict with role and content) are converted to ChatML format string through `apply_chat_template` method in tokenizer
    - Tokenizer encodes prompt string to token ID sequence `input_ids`
    - For batch generation, use `pad_sequence` for padding
 
@@ -207,5 +218,5 @@ flowchart LR
 
 The data flow design of AstrAI reflects the characteristics of modularity, extensibility, and resumability. The training data flow supports large-scale distributed training through chunk loading, resumable sampling, gradient accumulation, and other mechanisms; the inference data flow achieves efficient text generation using KV cache and sampling strategies. Clear interfaces between modules facilitate customization and extension.
 
-> Document Update Time: 2026-03-30  
+> Document Update Time: 2026-04-05  
 > Corresponding Code Version: Refer to version number defined in `pyproject.toml`

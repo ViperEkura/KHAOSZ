@@ -2,7 +2,21 @@
 
 ### 1. Model Architecture
 
-This model uses the Transformer architecture with GQA mechanism (q_head=24, kv_head=4), which saves KV cache memory compared to traditional MHA (although KV cache is not currently implemented). The model is built by stacking 24 layers of Transformer blocks, with 1.0 billion parameters. Transformer is an autoregressive model that calculates the relationship between all previous tokens to obtain the probability distribution of the next token.
+This model uses the Transformer architecture with GQA mechanism (q_head=24, kv_head=4), which saves KV cache memory compared to traditional MHA (although KV cache is not currently implemented). The model is built by stacking 32 layers of Transformer blocks, with 1.0 billion parameters. Transformer is an autoregressive model that calculates the relationship between all previous tokens to obtain the probability distribution of the next token.
+
+The model now uses the **AutoModel** base class for flexible loading and saving:
+
+```python
+from astrai.model import AutoModel
+
+# Load model from checkpoint
+model = AutoModel.from_pretrained("path/to/model")
+
+# Save model to new directory
+model.save_pretrained("path/to/save")
+```
+
+The Transformer model is registered via `@AutoModel.register('transformer')` decorator, allowing easy extension for new model types.
 
 ```mermaid
 flowchart TB

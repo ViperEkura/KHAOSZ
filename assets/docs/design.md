@@ -36,10 +36,23 @@ classDiagram
             +int batch_size
             +int accumulation_steps
             +float max_grad_norm
+            +int start_epoch
+            +int start_batch
             +str ckpt_dir
             +int ckpt_interval
+            +int random_seed
+            +int num_workers
+            +int prefetch_factor
+            +bool pin_memory
             +int nprocs
             +str backend
+            +str master_addr
+            +str master_port
+            +Callable parallel_wrapper
+            +Callable state_dict_fn
+            +List[int] device_ids
+            +str device_type
+            +dict extra_kwargs
             +validate()
         }
 
@@ -123,6 +136,16 @@ classDiagram
     }
 
     namespace astrai.model {
+        class AutoModel {
+            +ModelConfig config
+            +Dict _registry
+            +register(model_type) decorator
+            +get_model_class(model_type) Type
+            +from_pretrained(path, disable_random_init) nn.Module
+            +save_pretrained(save_directory)
+            +to(*args, **kwargs) Self
+        }
+
         class Transformer {
             +ModelConfig config
             +RotaryEmbedding rotary_embeding
@@ -440,6 +463,8 @@ classDiagram
     DatasetFactory ..> BaseDataset : creates
     BaseSegmentFetcher --> MultiSegmentFetcher : used by
     MultiSegmentFetcher --> BaseDataset : used by
+    AutoModel <|-- Transformer
+    AutoModel --> ModelConfig : contains
     Transformer --> DecoderBlock : uses
     Transformer --> RotaryEmbedding : uses
     Transformer --> Embedding : uses
@@ -458,11 +483,12 @@ classDiagram
 |--------|------------|-------------|
 | **astrai.config** | ModelConfig, TrainConfig, ModelParameter | Configuration management |
 | **astrai.dataset** | BaseDataset, SEQDataset, SFTDataset, DPODataset, GRPODataset, BaseSegmentFetcher, MultiSegmentFetcher, ResumableDistributedSampler, DatasetFactory, Checkpoint, DataLoader | Dataset loading and management |
-| **astrai.model** | Transformer, DecoderBlock, GQA, MLP, RMSNorm, Linear, RotaryEmbedding, Embedding | Neural network model |
+| **astrai.model** | AutoModel, Transformer, DecoderBlock, GQA, MLP, RMSNorm, Linear, RotaryEmbedding, Embedding | Neural network model |
 | **astrai.tokenize** | Tokenizer, BpeTokenizer | Tokenizer |
 | **astrai.trainer** | Trainer, TrainContext, TrainContextBuilder, BaseStrategy, StrategyFactory, BaseScheduler, SchedulerFactory, TrainCallback, CallbackFactory | Training workflow management |
 | **astrai.inference** | InferenceEngine, InferenceScheduler, Task, TaskStatus, Server, GenerationRequest | Inference service with continuous batching |
 | **astrai.parallel** | ParallelSetup, ColumnParallelLinear, RowParallelLinear | Distributed parallel |
+| **astrai.factory** | Registry, BaseFactory | Generic component registration |
 
 ### Design Patterns
 
@@ -470,12 +496,13 @@ classDiagram
 |---------|---------|---------|
 | **Strategy** | `BaseStrategy`, `SEQStrategy`, `SFTStrategy`, `DPOStrategy`, `GRPOStrategy`, `StrategyFactory` | Flexible training strategy switching, supports SEQ/SFT/DPO/GRPO |
 | **Builder** | `TrainContextBuilder` | Chain-building training context, step-by-step initialization of components |
-| **Factory** | `StrategyFactory`, `SchedulerFactory`, `DatasetFactory`, `CallbackFactory` | Decorator registration mechanism, dynamically create training strategies, schedulers, datasets, and callbacks |
+| **Factory** | `StrategyFactory`, `SchedulerFactory`, `DatasetFactory`, `CallbackFactory`, `BaseFactory` | Decorator registration mechanism, dynamically create training strategies, schedulers, datasets, and callbacks |
 | **Observer** | `TrainCallback`, `CallbackFactory` | Callback mechanism for training process monitoring (checkpoint, early stopping, metrics) |
 | **Singleton** | `TrainContext` | Training process global state management |
 | **Registry** | `BaseFactory`, `Registry` | Generic component registration with category and priority support |
 | **Producer-Consumer** | `InferenceScheduler`, `Task`, `waiting_queue`, `active_tasks` | Continuous batching with dynamic task queue management |
 | **Event-Driven** | `threading.Event`, `_task_event` | Non-blocking wait mechanism for task scheduling using Python's `threading` module |
+| **AutoModel Registry** | `AutoModel`, `Transformer` | Model type registration and dynamic loading via decorator pattern |
 
 ### Core Relationships
 
@@ -487,6 +514,7 @@ classDiagram
 6. **Dataset Loading**: `DatasetFactory` creates datasets (SEQDataset, SFTDataset, DPODataset, GRPODataset), supports HDF5 loading via `BaseSegmentFetcher` and `MultiSegmentFetcher`
 7. **Checkpoint Management**: `Checkpoint` handles model state serialization/deserialization with safetensors
 8. **Scheduler Support**: `SchedulerFactory` creates learning rate schedulers (CosineScheduler, SGDRScheduler)
+9. **AutoModel Loading**: `AutoModel.from_pretrained()` dynamically loads model based on `config.json` model_type, uses `Registry` pattern for model type registration
 
 ## 3. Training Process
 

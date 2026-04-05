@@ -47,7 +47,7 @@
 ### Features
 
 - 🚀 **High Performance**: Optimized for both training and inference with efficient parallelization.
-- 🔧 **Flexible**: Support for seq/sft/dpo training, customizable model architectures.
+- 🔧 **Flexible**: Support for seq/sft/dpo/grpo training, customizable model architectures.
 - 💡 **Easy to Use**: Simple API with comprehensive examples and demos.
 - 📦 **Lightweight**: Minimal dependencies, easy to deploy.
 - 🔬 **Research‑Friendly**: Modular design, easy to experiment with new ideas.

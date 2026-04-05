@@ -163,7 +163,7 @@ class InferenceEngine:
                 self.save_state("./inference_state")
             except Exception:
                 pass
-        
+
         self.shutdown()
         return False
 
@@ -178,9 +178,9 @@ class InferenceEngine:
         abort_on_exception: bool = True,
     ) -> Union[Generator[str, None, None], str, List[str]]:
         """Unified generation interface.
-        
+
         Args:
-            abort_on_exception: If True, abort the generation when consumer 
+            abort_on_exception: If True, abort the generation when consumer
                 stops iterating (GeneratorExit/StopIteration). Default: True.
         """
         is_batch = isinstance(prompt, list)
@@ -188,8 +188,13 @@ class InferenceEngine:
 
         if stream:
             return self._generate_streaming(
-                prompts, is_batch, max_tokens, temperature, top_p, top_k,
-                abort_on_exception
+                prompts,
+                is_batch,
+                max_tokens,
+                temperature,
+                top_p,
+                top_k,
+                abort_on_exception,
             )
         else:
             return self._generate_non_streaming(
@@ -223,9 +228,9 @@ class InferenceEngine:
         abort_on_exception: bool = True,
     ) -> Union[Generator[str, None, None], List[Generator[str, None, None]]]:
         """Generate with streaming output.
-        
+
         Args:
-            abort_on_exception: If True, abort the task when generator is 
+            abort_on_exception: If True, abort the task when generator is
                 stopped early by consumer (GeneratorExit/StopIteration).
         """
         if is_batch:
@@ -292,54 +297,53 @@ class InferenceEngine:
 
     def shutdown(self) -> None:
         """Shutdown the engine and release all resources."""
-        
+
         # Stop scheduler first
         self.scheduler.stop()
-        
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        
+
         gc.collect()
 
     def force_stop(self) -> None:
         """
         Force stop the engine immediately without saving state.
-        
+
         Use this for emergency shutdown when graceful shutdown is not possible.
         """
-        import os
-        
+
         # Stop watching threads if any
-        if hasattr(self, 'stop_watching'):
+        if hasattr(self, "stop_watching"):
             self.stop_watching()
-        
+
         # Unregister signal handlers
-        if hasattr(self, '_original_sigint'):
+        if hasattr(self, "_original_sigint"):
             signal.signal(signal.SIGINT, self._original_sigint)
-        if hasattr(self, '_original_sigterm'):
+        if hasattr(self, "_original_sigterm"):
             signal.signal(signal.SIGTERM, self._original_sigterm)
-        
+
         # Force stop scheduler
         self.scheduler._running = False
-        
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
-        
+
         gc.collect()
 
     @classmethod
     def create_and_run(cls, model, tokenizer, **kwargs):
         """
         Create engine, run generation, and shutdown automatically.
-        
+
         This is a convenience method for simple scripts.
-        
+
         Args:
             model: The model to use
             tokenizer: The tokenizer to use
             **kwargs: Arguments passed to generate()
-            
+
         Returns:
             Generated text result
         """
