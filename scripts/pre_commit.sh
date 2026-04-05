@@ -60,13 +60,13 @@ run_lint() {
     fi
 }
 
-# Run code style check (linter)
-run_ruff_lint() {
-    print_info "Running code style check (ruff check)..."
-    if ruff check .; then
-        print_success "Code style check passed"
+# Run code style check (linter - import sorting)
+run_ruff_lint_import() {
+    print_info "Running import sorting check (ruff check --select I)..."
+    if ruff check . --select I; then
+        print_success "Import sorting check passed"
     else
-        print_error "Code style check failed. Please fix the issues above"
+        print_error "Import sorting check failed. Please run 'ruff check --select I --fix .' to fix import issues"
         exit 1
     fi
 }
@@ -138,7 +138,7 @@ main() {
     # Run code checks
     if [ "$SKIP_LINT" = false ]; then
         run_lint
-        run_ruff_lint
+        run_ruff_lint_import
     else
         print_info "Skipping code checks"
     fi

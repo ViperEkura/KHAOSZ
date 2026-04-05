@@ -5,8 +5,13 @@
 *.sh text eol=lf
 *.py text eol=lf
 *.md text eol=lf
+*.yml text eol=lf
+
 Dockerfile text eol=lf
 .dockerignore text eol=lf
+
+.gitignore text eol=lf
+.gitattributes text eol=lf
 
 # Windows scripts - use CRLF
 *.bat text eol=crlf
