@@ -269,13 +269,20 @@ class InferenceEngine:
         result = _NonStreamingResult(len(prompts))
 
         for i, p in enumerate(prompts):
+            # Create closure to capture current index value using factory function
+            def make_callback(idx):
+                def callback(token):
+                    result.append(idx, token)
+
+                return callback
+
             self.scheduler.add_task(
                 prompt=p,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 top_p=top_p,
                 top_k=top_k,
-                stream_callback=result.append,
+                stream_callback=make_callback(i),
             )
 
         result.wait()

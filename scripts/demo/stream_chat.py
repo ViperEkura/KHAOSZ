@@ -33,7 +33,7 @@ def chat():
         for token in engine.generate(
             prompt=prompt,
             stream=True,
-            max_tokens=model.config.max_len,
+            max_tokens=2048,
             temperature=0.8,
             top_p=0.95,
             top_k=50,

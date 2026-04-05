@@ -97,7 +97,7 @@ def load_model(
 
     # Load tokenizer separately
     tokenizer = TextTokenizer.from_pretrained(param_path)
-    _model_param = AutoModel.from_pretrained(param_path, tokenizer=tokenizer)
+    _model_param = AutoModel.from_pretrained(param_path)
     _model_param.to(device=device, dtype=dtype)
     logger.info(f"Model loaded on {device} with dtype {dtype}")
 

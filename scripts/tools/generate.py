@@ -17,29 +17,55 @@ def processor(
     top_p: float,
     question_key: str,
     response_key: str,
+    max_tokens: int,
 ):
-    # Load model using AutoModel
-    model = AutoModel.from_pretrained(model_dir, device="cuda", dtype=torch.bfloat16)
-    engine = InferenceEngine(model=model.model, tokenizer=model.tokenizer)
+    # Load model and tokenizer
+    model = AutoModel.from_pretrained(model_dir)
+    tokenizer = AutoTokenizer.from_pretrained(model_dir)
+    model.to(device="cuda", dtype=torch.bfloat16)
+
+    # Create inference engine
+    engine = InferenceEngine(model=model, tokenizer=tokenizer)
 
     with open(input_json_file, "r", encoding="utf-8") as f:
         input_data = [json.loads(line) for line in f]
 
-    queries = [item[question_key] for item in input_data]
+    # Check input format: chat messages or raw text
+    if input_data and "messages" in input_data[0]:
+        # Chat format: [{"messages": [...]}]
+        prompts = [
+            tokenizer.apply_chat_template(item["messages"], tokenize=False)
+            for item in input_data
+        ]
+    else:
+        # Raw text format: [{"question": "..."}]
+        prompts = [item[question_key] for item in input_data]
 
+    # Use provided max_tokens or default to model config max_len
+    if max_tokens is None:
+        max_tokens = model.config.max_len
+
+    # Generate responses (batch)
     responses = engine.generate(
-        prompt=queries,
+        prompt=prompts,
         stream=False,
-        max_tokens=model.config.max_len,
+        max_tokens=max_tokens,
         temperature=temperature,
         top_p=top_p,
         top_k=top_k,
     )
 
+    # Write results
     with open(output_json_file, "w", encoding="utf-8") as f:
-        for query, response in zip(queries, responses):
-            output_item = {question_key: query, response_key: response}
+        for prompt, response in zip(prompts, responses):
+            if input_data and "messages" in input_data[0]:
+                output_item = {"response": response}
+            else:
+                output_item = {question_key: prompt, response_key: response}
             f.write(json.dumps(output_item, ensure_ascii=False) + "\n")
+
+    # Cleanup
+    engine.shutdown()
 
 
 if __name__ == "__main__":
@@ -89,6 +115,12 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--batch_size", type=int, default=1, help="Batch size for generating responses."
+    )
+    parser.add_argument(
+        "--max_tokens",
+        type=int,
+        default=2048,
+        help="Maximum tokens to generate (default: model config max_len).",
     )
 
     args = parser.parse_args()

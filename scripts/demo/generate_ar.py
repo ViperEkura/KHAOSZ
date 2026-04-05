@@ -13,10 +13,8 @@ PARAMETER_ROOT = Path(PROJECT_ROOT, "params")
 def generate_text():
     # Load model from pretrained
     model = AutoModel.from_pretrained(PARAMETER_ROOT)
+    tokenizer = AutoTokenizer.from_pretrained(PARAMETER_ROOT)
     model.to(device="cuda", dtype=torch.bfloat16)
-
-    # Load tokenizer from pretrained
-    tokenizer = AutoTokenizer.from_pretrained(PARAMETER_ROOT / "tokenizer")
 
     query = input(">> ")
 
