@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from astrai.inference.engine import InferenceEngine
 from astrai.model import AutoModel
-from astrai.tokenize import TextTokenizer
+from astrai.tokenize import AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,7 @@ def load_model(
         raise FileNotFoundError(f"Parameter directory not found: {param_path}")
 
     # Load tokenizer separately
-    tokenizer = TextTokenizer.from_pretrained(param_path)
+    tokenizer = AutoTokenizer.from_pretrained(param_path)
     _model_param = AutoModel.from_pretrained(param_path)
     _model_param.to(device=device, dtype=dtype)
     logger.info(f"Model loaded on {device} with dtype {dtype}")

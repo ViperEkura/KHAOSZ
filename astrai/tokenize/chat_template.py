@@ -1,9 +1,10 @@
-from typing import Dict, List, Optional, Tuple, Any
-from jinja2 import Template
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
-HistoryType = List[Tuple[str, str]]
-MessageType = Dict[str, str]
+from jinja2 import Template
+
+# Message type for chat messages
+type MessageType = Dict[str, Any]
 
 
 @dataclass

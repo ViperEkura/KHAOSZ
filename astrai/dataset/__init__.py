@@ -1,7 +1,7 @@
 from astrai.dataset.dataset import (
     BaseDataset,
-    DatasetFactory,
     BaseSegmentFetcher,
+    DatasetFactory,
     MultiSegmentFetcher,
 )
 from astrai.dataset.sampler import ResumableDistributedSampler

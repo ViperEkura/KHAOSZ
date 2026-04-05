@@ -3,9 +3,9 @@ import json
 
 import torch
 
+from astrai.inference import InferenceEngine
 from astrai.model import AutoModel
 from astrai.tokenize import AutoTokenizer
-from astrai.inference import InferenceEngine
 
 
 def processor(

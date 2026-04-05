@@ -2,12 +2,12 @@
 AutoModel base class for model loading and saving.
 """
 
-import torch.nn as nn
-import safetensors.torch as st
-
-from pathlib import Path
 from contextlib import contextmanager
-from typing import Self, Union, Dict, Type
+from pathlib import Path
+from typing import Dict, Self, Type, Union
+
+import safetensors.torch as st
+import torch.nn as nn
 
 from astrai.config import ModelConfig
 

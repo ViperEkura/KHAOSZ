@@ -8,10 +8,11 @@ from typing import Dict, List, Optional, Union
 
 from tokenizers import Tokenizer, decoders, normalizers, pre_tokenizers, processors
 from tokenizers.models import BPE
+
 from astrai.tokenize.chat_template import ChatTemplate
 
 
-class TextTokenizer:
+class AutoTokenizer:
     """Base tokenizer class with automatic loading support"""
 
     TOKENIZER_CLASSES = {}  # Registry for auto-loading
@@ -51,7 +52,7 @@ class TextTokenizer:
                 self.set_chat_template(config["chat_template"])
 
     @classmethod
-    def from_pretrained(cls, path: Union[str, Path], **kwargs) -> "TextTokenizer":
+    def from_pretrained(cls, path: Union[str, Path], **kwargs) -> "AutoTokenizer":
         """Load tokenizer from pretrained directory."""
         instance = cls(path)
         return instance
@@ -235,7 +236,7 @@ class TextTokenizer:
         return rendered
 
 
-class BpeTokenizer(TextTokenizer):
+class BpeTokenizer(AutoTokenizer):
     """BPE tokenizer implementation."""
 
     def __init__(

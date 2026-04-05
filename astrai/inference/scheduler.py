@@ -9,7 +9,7 @@ import torch
 from torch import Tensor
 
 from astrai.model.automodel import AutoModel
-from astrai.tokenize.tokenizer import TextTokenizer
+from astrai.tokenize import AutoTokenizer
 
 
 class TaskStatus:
@@ -101,7 +101,7 @@ class InferenceScheduler:
     def __init__(
         self,
         model: AutoModel,
-        tokenizer: TextTokenizer,
+        tokenizer: AutoTokenizer,
         max_batch_size: int = 16,
         max_seq_len: Optional[int] = None,
         device: str = "cuda",

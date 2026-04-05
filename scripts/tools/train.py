@@ -2,10 +2,10 @@ import argparse
 import os
 from functools import partial
 
+import safetensors.torch as st
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import safetensors.torch as st
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from astrai.config import ModelConfig, TrainConfig

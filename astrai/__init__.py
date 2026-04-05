@@ -5,14 +5,14 @@ from astrai.config import (
     ModelConfig,
     TrainConfig,
 )
-from astrai.factory import BaseFactory
 from astrai.dataset import DatasetFactory
-from astrai.tokenize import BpeTokenizer
+from astrai.factory import BaseFactory
 from astrai.inference import (
     GenerationRequest,
     InferenceEngine,
 )
 from astrai.model import AutoModel, Transformer
+from astrai.tokenize import BpeTokenizer
 from astrai.trainer import SchedulerFactory, StrategyFactory, Trainer
 
 __all__ = [

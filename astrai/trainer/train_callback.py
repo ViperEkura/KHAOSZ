@@ -8,8 +8,9 @@ import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
 from tqdm import tqdm
 
-from astrai.serialization import Checkpoint
+from astrai.factory import BaseFactory
 from astrai.parallel import only_on_rank
+from astrai.serialization import Checkpoint
 from astrai.trainer.metric_util import (
     ctx_get_grad_max,
     ctx_get_grad_mean,
@@ -21,7 +22,6 @@ from astrai.trainer.metric_util import (
     ctx_get_lr,
 )
 from astrai.trainer.train_context import TrainContext
-from astrai.factory import BaseFactory
 
 
 @runtime_checkable

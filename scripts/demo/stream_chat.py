@@ -1,10 +1,10 @@
 from pathlib import Path
 
 import torch
+
 from astrai.inference import InferenceEngine
 from astrai.model import AutoModel
 from astrai.tokenize import AutoTokenizer
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PARAMETER_ROOT = Path(PROJECT_ROOT, "params")

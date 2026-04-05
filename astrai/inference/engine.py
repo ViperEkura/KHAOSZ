@@ -8,8 +8,8 @@ from typing import Any, Dict, Generator, List, Optional, Union
 import torch
 import torch.nn as nn
 
-from astrai.tokenize.tokenizer import TextTokenizer
 from astrai.inference.scheduler import InferenceScheduler
+from astrai.tokenize import AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +109,7 @@ class InferenceEngine:
     def __init__(
         self,
         model: nn.Module,
-        tokenizer: TextTokenizer,
+        tokenizer: AutoTokenizer,
         max_batch_size: int = 1,
         max_seq_len: Optional[int] = None,
     ):

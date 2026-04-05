@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from astrai.trainer.schedule import SchedulerFactory, CosineScheduler, SGDRScheduler
+from astrai.trainer.schedule import CosineScheduler, SchedulerFactory, SGDRScheduler
 
 
 def test_schedule_factory_random_configs():

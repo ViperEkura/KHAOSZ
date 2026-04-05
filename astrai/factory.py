@@ -1,7 +1,7 @@
 """Base factory class for extensible component registration."""
 
 from abc import ABC
-from typing import Callable, Dict, Generic, Type, TypeVar, Optional, List, Tuple
+from typing import Callable, Dict, Generic, List, Optional, Tuple, Type, TypeVar
 
 T = TypeVar("T")
 

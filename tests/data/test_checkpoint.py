@@ -5,8 +5,8 @@ import torch.distributed as dist
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-from astrai.serialization import Checkpoint
 from astrai.parallel.setup import get_rank, spawn_parallel_fn
+from astrai.serialization import Checkpoint
 
 
 def test_single_process():

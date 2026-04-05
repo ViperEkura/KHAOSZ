@@ -1,3 +1,4 @@
+from astrai.model.automodel import AutoModel
 from astrai.model.module import (
     GQA,
     MLP,
@@ -6,8 +7,6 @@ from astrai.model.module import (
     RMSNorm,
 )
 from astrai.model.transformer import Transformer
-from astrai.model.automodel import AutoModel
-
 
 __all__ = [
     # Modules
