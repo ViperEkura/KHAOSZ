@@ -62,6 +62,9 @@
 | `--window_size` | Maximum input sequence length | model config max_len |
 | `--stride` | Input sequence stride | - |
 | `--dpo_beta` | DPO beta value | 0.1 |
+| `--grpo_clip_eps` | GRPO clip epsilon | 0.2 |
+| `--grpo_kl_coef` | GRPO KL coefficient | 0.01 |
+| `--grpo_group_size` | GRPO group size | 4 |
 | `--label_smoothing` | Label smoothing parameter | 0.1 |
 | `--start_epoch` | Starting epoch | 0 |
 | `--start_batch` | Starting batch | 0 |

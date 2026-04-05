@@ -175,6 +175,17 @@ classDiagram
             +forward(x, rotary_emb, mask, kv_cache, start_pos) Tensor
         }
 
+        class MLA {
+            +int n_heads
+            +int n_kv_heads
+            +int head_dim
+            +Linear q_a_proj, q_b_proj, q_c_proj
+            +Linear kv_a_proj, kv_b_proj, kv_c_proj
+            +Linear o_proj
+            +RMSNorm q_norm, k_norm
+            +forward(x, rotary_emb, mask, kv_cache, start_pos) Tensor
+        }
+
         class MLP {
             +Linear up, gate, down
             +forward(x) Tensor
@@ -469,6 +480,7 @@ classDiagram
     Transformer --> RotaryEmbedding : uses
     Transformer --> Embedding : uses
     DecoderBlock --> GQA : uses
+    DecoderBlock --> MLA : uses
     DecoderBlock --> MLP : uses
     DecoderBlock --> RMSNorm : uses
     BpeTokenizer --> Tokenizer : inherits
@@ -483,8 +495,8 @@ classDiagram
 |--------|------------|-------------|
 | **astrai.config** | ModelConfig, TrainConfig, ModelParameter | Configuration management |
 | **astrai.dataset** | BaseDataset, SEQDataset, SFTDataset, DPODataset, GRPODataset, BaseSegmentFetcher, MultiSegmentFetcher, ResumableDistributedSampler, DatasetFactory, Checkpoint, DataLoader | Dataset loading and management |
-| **astrai.model** | AutoModel, Transformer, DecoderBlock, GQA, MLP, RMSNorm, Linear, RotaryEmbedding, Embedding | Neural network model |
-| **astrai.tokenize** | Tokenizer, BpeTokenizer | Tokenizer |
+| **astrai.model** | AutoModel, Transformer, DecoderBlock, GQA, MLA, MLP, RMSNorm, Linear, RotaryEmbedding, Embedding | Neural network model |
+| **astrai.tokenize** | AutoTokenizer, BpeTokenizer, ChatTemplate, BpeTrainer | Tokenizer |
 | **astrai.trainer** | Trainer, TrainContext, TrainContextBuilder, BaseStrategy, StrategyFactory, BaseScheduler, SchedulerFactory, TrainCallback, CallbackFactory | Training workflow management |
 | **astrai.inference** | InferenceEngine, InferenceScheduler, Task, TaskStatus, Server, GenerationRequest | Inference service with continuous batching |
 | **astrai.parallel** | ParallelSetup, ColumnParallelLinear, RowParallelLinear | Distributed parallel |
@@ -503,6 +515,7 @@ classDiagram
 | **Producer-Consumer** | `InferenceScheduler`, `Task`, `waiting_queue`, `active_tasks` | Continuous batching with dynamic task queue management |
 | **Event-Driven** | `threading.Event`, `_task_event` | Non-blocking wait mechanism for task scheduling using Python's `threading` module |
 | **AutoModel Registry** | `AutoModel`, `Transformer` | Model type registration and dynamic loading via decorator pattern |
+| **Generator Pattern** | `_StreamingResult`, `_NonStreamingResult` | Event-based result notification for streaming/non-streaming generation |
 
 ### Core Relationships
 
@@ -539,5 +552,33 @@ $$
 $$
 L_{\text{DPO}} = -\mathbb{E}_{(x, y_w, y_l) \sim D} \left[ \log \sigma\left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \right) \right]
 $$
+
+**GRPO:**
+
+GRPO (Group Relative Policy Optimization) computes advantages from multiple responses to the same prompt, then optimizes using a PPO-style clipped objective:
+
+$$
+\text{Advantage}_i = \frac{r_i - \mu}{\sigma + \epsilon}
+$$
+
+Where $r_i$ is the reward for the $i$-th response, $\mu$ and $\sigma$ are the mean and standard deviation of group rewards.
+
+$$
+L_{\text{GRPO}} = -\mathbb{E} \left[ \min\left( \frac{\pi_\theta(a|s)}{\pi_{\text{ref}}(a|s)} \cdot A, \text{clip}\left(\frac{\pi_\theta(a|s)}{\pi_{\text{ref}}(a|s)}, 1-\epsilon, 1+\epsilon\right) \cdot A \right) \right] + \lambda \cdot D_{KL}
+$$
+
+In this implementation, an off-policy approach is used ($\pi_\theta = \pi_{\text{ref}}$), and the policy loss simplifies to:
+
+$$
+L_{\text{policy}} = -\mathbb{E}[A]
+$$
+
+The KL divergence term uses mean squared error approximation:
+
+$$
+L_{KL} = \lambda \cdot \mathbb{E} \left[ (\log \pi_\theta - \log \pi_{\text{ref}})^2 \right]
+$$
+
+The final loss is the sum of both: $L = L_{\text{policy}} + L_{KL}$
 
 Through the above three-stage progressive training, the model completes its evolution from a general language foundation to a specialized, highly-aligned dialogue intelligence.

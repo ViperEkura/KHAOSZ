@@ -140,3 +140,54 @@ o_n = \sum_j \text{softmax}\left(\frac{q_n k_{j}}{\sqrt{d_k}}\right)v_{j}
 $$
 
 In the above expression, only k and v have length indices, while $q$ does not. Therefore, during the calculation process, the input of $q$ is fixed as the last token from the previous input, while $k$ and $v$ need to be cached for parts of different lengths. Also, when caching, note that position encoding calculation should be performed before KV cache computation, otherwise there will be position encoding calculation errors.
+
+### 4. AutoModel Loading
+
+The project now uses the **AutoModel** base class for flexible model loading and saving:
+
+```python
+from astrai.model import AutoModel
+
+# Load model from checkpoint
+model = AutoModel.from_pretrained("path/to/model")
+
+# Save model to new directory
+model.save_pretrained("path/to/save")
+```
+
+The Transformer model is registered via `@AutoModel.register('transformer')` decorator, allowing easy extension for new model types. The `from_pretrained` method automatically loads the `config.json` to determine the model type and uses safetensors format for weights.
+
+### 5. Continuous Batching Inference
+
+The inference engine supports **continuous batching** for efficient batch processing:
+
+```python
+from astrai.inference import InferenceEngine, GenerationRequest
+
+# Create inference engine with continuous batching
+engine = InferenceEngine(
+    model=model,
+    tokenizer=tokenizer,
+    max_batch_size=8,
+    max_seq_len=4096,
+)
+
+# Use GenerationRequest with messages format
+request = GenerationRequest(
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Hello"},
+    ],
+    temperature=0.8,
+    top_p=0.95,
+    top_k=50,
+    max_len=1024,
+    stream=True,
+)
+
+# Generate with streaming
+for token in engine.generate_with_request(request):
+    print(token, end="", flush=True)
+```
+
+The continuous batching feature allows dynamic batch composition where new requests can join at any time and completed requests are released immediately.

@@ -95,6 +95,7 @@ flowchart LR
 - Contains embedding layer, multi-layer `DecoderBlock`, RMSNorm, and linear output head
 - Supports weight tying (`tie_weight=True`) to reduce parameter count
 - Uses Rotary Position Embedding (RoPE) to inject position information
+- Supports loading from safetensors format with automatic model type detection from `config.json`
 
 #### 2.2 Submodules (`module.py`)
 - **`RotaryEmbedding`**: Generates RoPE cos/sin cache
@@ -137,7 +138,12 @@ flowchart LR
 #### 5.1 Inference Engine (`engine.py`)
 - **`InferenceEngine`**: Unified inference interface, supports streaming and non-streaming generation
 - **`InferenceScheduler`**: Continuous batching scheduler with dynamic batch composition
-- Manages task queue (`waiting_queue`, `active_tasks`) and KV cache allocation
+- **`GenerationRequest`**: Encapsulates generation parameters (top_k, top_p, temperature, max_len, messages, etc.)
+- **`messages` format**: List of message dictionaries with `role` (system/user/assistant) and `content`
+- **`apply_chat_template`** (from `tokenizer.py`): Converts messages into prompt string using ChatML format
+- Provides streaming (`stream=True`) and non-streaming (`stream=False`) generation interfaces
+- Supports continuous batching with `max_batch_size` and `max_seq_len` parameters
+- Uses separate model and tokenizer initialization for flexibility
 
 #### 5.2 Scheduler (`scheduler.py`)
 - **`Task`**: Individual generation task with state management (PENDING, RUNNING, FINISHED, ABORTED)
