@@ -5,6 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from astrai.config.model_config import ModelConfig
+from astrai.model.automodel import AutoModel
 from astrai.model.module import (
     DecoderBlock,
     Embedding,
@@ -66,9 +67,14 @@ def process_attention_mask(
     return attention_mask
 
 
-class Transformer(nn.Module):
+@AutoModel.register("transformer")
+class Transformer(AutoModel):
+    """
+    Transformer language model.
+    """
+
     def __init__(self, config: ModelConfig):
-        super().__init__()
+        super().__init__(config)
         self.config = config
         self.rotary_embeding = RotaryEmbedding(
             config.dim // config.n_heads, config.max_len
@@ -97,16 +103,27 @@ class Transformer(nn.Module):
         if self.config.tie_weight:
             self.lm_head.weight = self.embed_tokens.weight
 
-        self._init_parameters()
+        self._init_weights()
+
+    def _init_weights(self):
+        for param in self.parameters():
+            if param.dim() > 1:
+                nn.init.normal_(param, mean=0.0, std=0.006)
 
     def load_state_dict(self, state_dict: Mapping[str, Any], strict=True, assign=False):
         lm_head_key = "lm_head.weight"
         embed_key = "embed_tokens.weight"
 
+        # Make a copy to avoid modifying the original state_dict
+        state_dict = dict(state_dict)
+
         if self.config.tie_weight:
             # same tensor
-            state_dict[lm_head_key] = state_dict[embed_key]
+            if embed_key in state_dict:
+                state_dict[lm_head_key] = state_dict[embed_key]
         else:
+            # If lm_head.weight exists in checkpoint, use it directly
+            # If not, copy from embed_tokens.weight
             if lm_head_key not in state_dict and embed_key in state_dict:
                 # use clone to avoid sharing the same tensor
                 state_dict[lm_head_key] = torch.clone(state_dict[embed_key])
@@ -124,11 +141,6 @@ class Transformer(nn.Module):
                 del state_dict[lm_head_key]
 
         return state_dict
-
-    def _init_parameters(self):
-        for param in self.parameters():
-            if param.dim() > 1:
-                nn.init.normal_(param, mean=0.0, std=0.006)
 
     def forward(
         self,

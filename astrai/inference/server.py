@@ -3,8 +3,6 @@ Inference Server with Continuous Batching Support
 
 FastAPI server for inference with continuous batching.
 Provides OpenAI-compatible chat completion endpoints.
-
-Author: AstrAI Team
 """
 
 import json
@@ -19,14 +17,15 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from astrai.config.param_config import ModelParameter
-from astrai.inference.engine import GenerationRequest, InferenceEngine
+from astrai.inference.engine import InferenceEngine
+from astrai.model import AutoModel
+from astrai.tokenize import TextTokenizer
 
 logger = logging.getLogger(__name__)
 
 # Global model parameter and engine (loaded once)
-_model_param: Optional[ModelParameter] = None
 _engine: Optional[InferenceEngine] = None
+_model_param: Optional[Any] = None
 _project_root = Path(__file__).parent.parent.parent
 
 # Server configuration (set before running server)
@@ -95,13 +94,17 @@ def load_model(
         param_path = _project_root / "params"
     if not param_path.exists():
         raise FileNotFoundError(f"Parameter directory not found: {param_path}")
-    _model_param = ModelParameter.load(param_path, disable_init=True)
+
+    # Load tokenizer separately
+    tokenizer = TextTokenizer.from_pretrained(param_path)
+    _model_param = AutoModel.from_pretrained(param_path, tokenizer=tokenizer)
     _model_param.to(device=device, dtype=dtype)
     logger.info(f"Model loaded on {device} with dtype {dtype}")
 
-    # Initialize inference engine with continuous batching
+    # Initialize inference engine with separate model and tokenizer
     _engine = InferenceEngine(
-        parameter=_model_param,
+        model=_model_param,
+        tokenizer=tokenizer,
         max_batch_size=max_batch_size,
     )
     logger.info(f"Inference engine initialized with max_batch_size={max_batch_size}")
@@ -164,27 +167,43 @@ def convert_messages_to_history(
     return system_prompt, history if history else None
 
 
-def convert_messages_to_prompt(messages: List[ChatMessage]) -> str:
+def convert_messages_to_prompt(
+    messages: List[ChatMessage], engine: InferenceEngine = None
+) -> str:
     """Convert messages to prompt string.
 
     Args:
         messages: List of ChatMessage objects
+        engine: InferenceEngine instance for accessing tokenizer
 
     Returns:
         str: Formatted prompt string
     """
-    system_prompt, history = convert_messages_to_history(messages)
+    # Convert to dict format for chat template
+    msg_dicts = [{"role": m.role, "content": m.content} for m in messages]
 
-    # Get the last user message as query
-    user_messages = [m.content for m in messages if m.role == "user"]
-    if not user_messages:
-        raise ValueError("No user message found")
-    query = user_messages[-1]
+    # Extract system prompt if present
+    system_prompt = None
+    filtered_messages = []
+    for msg in msg_dicts:
+        if msg["role"] == "system":
+            system_prompt = msg["content"]
+        else:
+            filtered_messages.append(msg)
 
-    # Build prompt using chat template
-    from astrai.tokenize.chat_template import build_prompt
+    # Use engine's tokenizer chat template if available
+    if engine is not None and engine.tokenizer is not None:
+        return engine.tokenizer.apply_chat_template(
+            filtered_messages, system_prompt=system_prompt, tokenize=False
+        )
 
-    return build_prompt(query, history)
+    # Fallback: simple concatenation (deprecated)
+    prompt_parts = []
+    for msg in filtered_messages:
+        prompt_parts.append(
+            f"<｜im▁start｜>{msg['role']}\n{msg['content']}<｜im▁end｜>"
+        )
+    return "\n".join(prompt_parts) + "\n<｜im▁start｜>assistant\n"
 
 
 @app.get("/health")
@@ -213,8 +232,8 @@ async def chat_completion(request: ChatCompletionRequest):
     if _engine is None:
         raise HTTPException(status_code=503, detail="Engine not initialized")
 
-    # Convert messages to prompt
-    prompt = convert_messages_to_prompt(request.messages)
+    # Convert messages to prompt using engine's tokenizer
+    prompt = convert_messages_to_prompt(request.messages, engine=_engine)
 
     if request.stream:
         # Streaming response (use synchronous generator)
@@ -294,15 +313,18 @@ async def generate(
     if _engine is None:
         raise HTTPException(status_code=503, detail="Engine not initialized")
 
-    # Convert history format
-    hist: Optional[List[Tuple[str, str]]] = None
+    # Build messages for chat template
+    messages = []
     if history:
-        hist = [(h[0], h[1]) for h in history]
+        # Convert history format: List[List[str]] -> List[Dict]
+        for h in history:
+            if len(h) >= 2:
+                messages.append({"role": "user", "content": h[0]})
+                messages.append({"role": "assistant", "content": h[1]})
+    messages.append({"role": "user", "content": query})
 
-    # Build prompt
-    from astrai.tokenize.chat_template import build_prompt
-
-    prompt = build_prompt(query, hist)
+    # Use tokenizer's chat template
+    prompt = _engine.tokenizer.apply_chat_template(messages, tokenize=False)
 
     if stream:
         # Synchronous streaming

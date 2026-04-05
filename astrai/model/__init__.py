@@ -6,5 +6,17 @@ from astrai.model.module import (
     RMSNorm,
 )
 from astrai.model.transformer import Transformer
+from astrai.model.automodel import AutoModel
 
-__all__ = ["Linear", "RMSNorm", "MLP", "GQA", "DecoderBlock", "Transformer"]
+
+__all__ = [
+    # Modules
+    "Linear",
+    "RMSNorm",
+    "MLP",
+    "GQA",
+    "DecoderBlock",
+    # Models
+    "Transformer",
+    "AutoModel",
+]

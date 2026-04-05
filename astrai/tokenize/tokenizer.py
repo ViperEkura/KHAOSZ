@@ -1,97 +1,254 @@
-from abc import ABC, abstractmethod
-from typing import List, Union
+"""
+Tokenizer module with implementation and auto-loading support.
+"""
+
+import json
+from pathlib import Path
+from typing import Dict, List, Optional, Union
 
 from tokenizers import Tokenizer, decoders, normalizers, pre_tokenizers, processors
 from tokenizers.models import BPE
-from tokenizers.trainers import BpeTrainer as BpeTrainerImpl
+from astrai.tokenize.chat_template import ChatTemplate
 
 
-class BaseTokenizer(ABC):
-    @abstractmethod
-    def _init_tokenizer(self):
-        pass
+class TextTokenizer:
+    """Base tokenizer class with automatic loading support"""
 
-    @abstractmethod
-    def save(self, path):
-        pass
+    TOKENIZER_CLASSES = {}  # Registry for auto-loading
 
-    @abstractmethod
-    def load(self, path):
-        pass
+    def __init__(
+        self,
+        path: Optional[Union[str, Path]] = None,
+        special_token_map: Optional[Dict[str, str]] = None,
+        chat_template: Optional[str] = None,
+    ):
+        self._tokenizer: Tokenizer = None
+        self._chat_template: Optional[ChatTemplate] = None
+        self._special_token_map: Optional[Dict] = special_token_map or {}
 
-    @abstractmethod
+        if chat_template:
+            self.set_chat_template(chat_template)
+
+        if path:
+            self.load(path)
+
+    def load(self, path: Union[str, Path]):
+        """Load tokenizer from directory."""
+        path = Path(path)
+        tokenizer_file = path / "tokenizer.json"
+        config_file = path / "tokenizer_config.json"
+        self._tokenizer = Tokenizer.from_file(str(tokenizer_file))
+
+        if config_file.exists():
+            with open(config_file, "r", encoding="utf-8") as f:
+                config = json.load(f)
+
+            if "special_tokens" in config:
+                self._special_token_map.update(config["special_tokens"])
+
+            # Load chat template from config
+            if "chat_template" in config:
+                self.set_chat_template(config["chat_template"])
+
+    @classmethod
+    def from_pretrained(cls, path: Union[str, Path], **kwargs) -> "TextTokenizer":
+        """Load tokenizer from pretrained directory."""
+        instance = cls(path)
+        return instance
+
+    def save_pretrained(self, tokenizer, save_path: str):
+        """
+        Save tokenizer to pretrained directory.
+
+        Args:
+            tokenizer: Tokenizer instance to save
+            save_path: Path to save the tokenizer
+        """
+        save_path = Path(save_path)
+        save_path.mkdir(parents=True, exist_ok=True)
+        self._tokenizer.save(tokenizer, save_path)
+
+    @classmethod
+    def register_tokenizer(cls, name: str, tokenizer_class: type):
+        """
+        Register a new tokenizer class.
+
+        Args:
+            name: Name to register the tokenizer class under
+            tokenizer_class: The tokenizer class to register
+        """
+        cls.TOKENIZER_CLASSES[name] = tokenizer_class
+
     def encode(
         self,
         tokens: Union[str, List[str]],
         out_ids: bool = True,
-        add_special_tokens: bool = False,
+        is_pretokenized: bool = False,
+        add_special_tokens: bool = True,
     ) -> List:
-        pass
+        """Encode text to tokens or token IDs."""
+        if self._tokenizer is None:
+            raise RuntimeError(
+                "Tokenizer not initialized. Load or create a tokenizer first."
+            )
 
-    @abstractmethod
+        if isinstance(tokens, str):
+            encoded = self._tokenizer.encode(
+                tokens,
+                is_pretokenized=is_pretokenized,
+                add_special_tokens=add_special_tokens,
+            )
+            return encoded.ids if out_ids else encoded.tokens
+        else:
+            encoded_list = self._tokenizer.encode_batch(
+                tokens,
+                is_pretokenized=is_pretokenized,
+                add_special_tokens=add_special_tokens,
+            )
+            return [
+                encoded.ids if out_ids else encoded.tokens for encoded in encoded_list
+            ]
+
     def decode(self, tokens: List[int], skip_special_tokens: bool = True) -> str:
-        pass
+        """Decode token IDs to text."""
+        if self._tokenizer is None:
+            raise RuntimeError(
+                "Tokenizer not initialized. Load or create a tokenizer first."
+            )
 
-    @abstractmethod
+        return self._tokenizer.decode(tokens, skip_special_tokens=skip_special_tokens)
+
     def __len__(self) -> int:
-        pass
+        if self._tokenizer is None:
+            return 0
+        return self._tokenizer.get_vocab_size()
+
+    def __getattr__(self, key: str):
+        """
+        Dynamically intercept special token attribute access.
+        Supports three forms:
+          - tokenizer.bos_token   → returns string
+          - tokenizer.bos_token_id → returns corresponding integer ID
+          - tokenizer.stop_ids → returns list of corresponding integer IDs
+        """
+        # Handle stop_ids
+        if key == "stop_ids":
+            return [
+                self._special_token_map.get(val)
+                for val in self._special_token_map.values()
+            ]
+
+        # Handle _id suffix (e.g., bos_token_id -> bos_token)
+        if key.endswith("_id"):
+            base_attr = key[:-3]  # Remove "_id"
+            token_str = self._special_token_map.get(base_attr)
+            if token_str is None:
+                return None
+            if self._tokenizer is None:
+                raise RuntimeError("Tokenizer not loaded, cannot convert token to id.")
+            return self._tokenizer.token_to_id(token_str)
+
+        # Handle regular string attributes
+        if key in self._special_token_map:
+            return self._special_token_map.get(key)
+
+        # Other attributes trigger default AttributeError
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'")
 
     @property
-    @abstractmethod
-    def stop_ids(self) -> List[int]:
-        pass
+    def vocab_size(self) -> int:
+        return len(self)
 
     @property
-    @abstractmethod
-    def bos_id(self) -> int:
-        pass
+    def pad_id(self) -> Optional[int]:
+        """Return the pad token ID if available."""
+        pad_token = self._special_token_map.get("pad")
+        if pad_token is None or self._tokenizer is None:
+            return None
+        return self._tokenizer.token_to_id(pad_token)
 
-    @property
-    @abstractmethod
-    def eos_id(self) -> int:
-        pass
+    def set_chat_template(self, template: Union[str, ChatTemplate]):
+        """
+        Set the chat template for the tokenizer.
 
-    @property
-    @abstractmethod
-    def pad_id(self) -> int:
-        pass
+        Args:
+            template: Either a template name (str) registered in the global registry,
+                      or a ChatTemplate instance, or a Jinja2 template string.
+
+        Raises:
+            KeyError: If template name is not registered.
+        """
+        if isinstance(template, str):
+            self._chat_template = ChatTemplate.from_string(template)
+        elif isinstance(template, ChatTemplate):
+            self._chat_template = template
+        else:
+            raise ValueError("Invalid template type, must be str or ChatTemplate.")
+
+    def apply_chat_template(
+        self,
+        messages: List[Dict[str, str]],
+        system_prompt: Optional[str] = None,
+        tokenize: bool = True,
+        **kwargs,
+    ) -> Union[str, List[int]]:
+        """
+        Apply the chat template to messages and optionally tokenize the result.
+
+        Args:
+            messages: List of message dicts with 'role' and 'content'.
+            system_prompt: Optional system prompt string.
+            tokenize: Whether to return token IDs (True) or raw string (False).
+            **kwargs: Additional variables to pass to the template.
+
+        Returns:
+            Either the rendered string or list of token IDs.
+
+        Raises:
+            RuntimeError: If chat template is not set.
+        """
+        if self._chat_template is None:
+            raise RuntimeError(
+                "Chat template not set. Use set_chat_template() to set a template first."
+            )
+
+        # Render the template
+        rendered = self._chat_template.render(
+            messages=messages,
+            system_prompt=system_prompt,
+            **kwargs,
+        )
+
+        if tokenize:
+            return self.encode(rendered)
+
+        return rendered
 
 
-class BaseTrainer(ABC):
-    def __init__(self, tokenizer: BaseTokenizer):
-        self.tokenizer = tokenizer
+class BpeTokenizer(TextTokenizer):
+    """BPE tokenizer implementation."""
 
-    @abstractmethod
-    def train(self, files, vocab_size, min_freq, **kwargs):
-        pass
-
-    @abstractmethod
-    def train_from_iterator(self, iterator, vocab_size, min_freq, **kwargs):
-        pass
-
-
-class BpeTokenizer(BaseTokenizer):
     def __init__(
         self,
-        control_tokens: List[str] = None,
-        special_tokens: List[str] = None,
-        path=None,
+        special_token_map: Dict[str, str] = None,
+        path: Optional[str] = None,
+        chat_template: Optional[str] = None,
     ):
-        self._control_tokens = control_tokens or [
-            "<｜begin▁of▁sentence｜>",
-            "<｜end▁of▁sentence｜>",
-            "<｜▁pad▁｜>",
-        ]
-        self._special_tokens = special_tokens or [
-            "<｜im▁start｜>",
-            "<｜im▁end｜>",
-        ]
+        special_token_map = special_token_map or {
+            "bos": "<｜begin▁of▁sentence｜>",
+            "eos": "<｜end▁of▁sentence｜>",
+            "pad": "<｜▁pad▁｜>",
+            "im_start": "<｜im▁start｜>",
+            "im_end": "<｜im▁end｜>",
+        }
         self._tokenizer = None
         self._init_tokenizer()
-        if path is not None:
-            self.load(path)
+        super().__init__(
+            path, special_token_map=special_token_map, chat_template=chat_template
+        )
 
     def _init_tokenizer(self):
+        """Initialize a new BPE tokenizer with default settings."""
         model = BPE()
         self._tokenizer = Tokenizer(model)
         self._tokenizer.normalizer = normalizers.Sequence(
@@ -105,108 +262,3 @@ class BpeTokenizer(BaseTokenizer):
         )
         self._tokenizer.decoder = decoders.ByteLevel()
         self._tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)
-
-    def save(self, path):
-        self._tokenizer.save(path)
-
-    def load(self, path):
-        self._tokenizer = Tokenizer.from_file(path)
-
-    def encode(
-        self,
-        tokens: Union[str, List[str]],
-        out_ids: bool = True,
-        add_special_tokens: bool = False,
-    ) -> List:
-        if isinstance(tokens, str):
-            encoded = self._tokenizer.encode(
-                tokens, add_special_tokens=add_special_tokens
-            )
-            return encoded.ids if out_ids else encoded.tokens
-        else:
-            encoded_list = self._tokenizer.encode_batch(
-                tokens, add_special_tokens=add_special_tokens
-            )
-            return [
-                encoded.ids if out_ids else encoded.tokens for encoded in encoded_list
-            ]
-
-    def decode(self, tokens: List[int], skip_special_tokens: bool = True) -> str:
-        return self._tokenizer.decode(tokens, skip_special_tokens=skip_special_tokens)
-
-    def __len__(self) -> int:
-        return self._tokenizer.get_vocab_size()
-
-    @property
-    def stop_ids(self) -> List[int]:
-        stop_token = self._control_tokens + self._special_tokens
-        return [self._tokenizer.token_to_id(tok) for tok in stop_token]
-
-    @property
-    def bos_id(self) -> int:
-        return self._tokenizer.token_to_id(self._control_tokens[0])
-
-    @property
-    def eos_id(self) -> int:
-        return self._tokenizer.token_to_id(self._control_tokens[1])
-
-    @property
-    def pad_id(self) -> int:
-        return self._tokenizer.token_to_id(self._control_tokens[2])
-
-
-class BpeTrainer(BaseTrainer):
-    def __init__(self, tokenizer: BaseTokenizer):
-        super().__init__(tokenizer)
-
-    def _prepare_trainer(
-        self,
-        vocab_size: int,
-        min_freq: int,
-        reserved_token_size: int,
-        max_token_length=18,
-    ):
-        assert reserved_token_size > len(self.tokenizer._special_tokens)
-        reserved_tokens = [
-            f"<|reserve{i:02d}|>"
-            for i in range(reserved_token_size - len(self.tokenizer._special_tokens))
-        ]
-        detail_vocab_size = vocab_size - (
-            len(reserved_tokens) + len(self.tokenizer._special_tokens)
-        )
-        alphabet = pre_tokenizers.ByteLevel.alphabet()
-        min_size = len(alphabet) + len(self.tokenizer._control_tokens)
-        assert detail_vocab_size > min_size
-
-        trainer = BpeTrainerImpl(
-            vocab_size=detail_vocab_size,
-            min_frequency=min_freq,
-            limit_alphabet=detail_vocab_size // 6,
-            max_token_length=max_token_length,
-            special_tokens=self.tokenizer._control_tokens,
-            initial_alphabet=alphabet,
-            show_progress=True,
-        )
-        return trainer, reserved_tokens
-
-    def train(self, files, vocab_size, min_freq, reserved_token_size=100, **kwargs):
-        trainer, reserved_tokens = self._prepare_trainer(
-            vocab_size, min_freq, reserved_token_size, **kwargs
-        )
-        self.tokenizer._tokenizer.train(files=files, trainer=trainer)
-        self.tokenizer._tokenizer.add_special_tokens(
-            self.tokenizer._special_tokens + reserved_tokens
-        )
-
-    def train_from_iterator(
-        self, iterator, vocab_size, min_freq, reserved_token_size=100, **kwargs
-    ):
-        trainer, reserved_tokens = self._prepare_trainer(
-            vocab_size, min_freq, reserved_token_size, **kwargs
-        )
-        self.tokenizer._tokenizer.train_from_iterator(
-            iterator=iterator, trainer=trainer
-        )
-        self.tokenizer._tokenizer.add_special_tokens(
-            self.tokenizer._special_tokens + reserved_tokens
-        )

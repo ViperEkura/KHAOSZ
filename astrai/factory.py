@@ -185,3 +185,6 @@ class BaseFactory(ABC, Generic[T]):
     def list_by_priority(cls, reverse: bool = False) -> List[str]:
         """List registered component names sorted by priority."""
         return cls._registry.list_by_priority(reverse)
+
+
+__all__ = ["Registry", "BaseFactory"]

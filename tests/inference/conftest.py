@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from astrai.inference.server import app, _engine
+from astrai.inference.server import app
 
 
 @pytest.fixture

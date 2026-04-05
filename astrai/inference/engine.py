@@ -1,11 +1,11 @@
 """Unified inference engine."""
 
 import threading
+import torch
+import torch.nn as nn
 from typing import Any, Dict, Generator, List, Optional, Union
 
-from astrai.config import ModelParameter
-from astrai.tokenize.chat_template import build_prompt
-
+from astrai.tokenize.tokenizer import TextTokenizer
 from astrai.inference.scheduler import InferenceScheduler
 
 
@@ -14,22 +14,18 @@ class GenerationRequest:
 
     def __init__(
         self,
-        query: Union[str, List[str]],
+        messages: List[Dict[str, str]],
         top_k: int = 50,
         top_p: float = 1.0,
         temperature: float = 1.0,
         max_len: int = 1024,
-        history: Optional[Any] = None,
-        system_prompt: Optional[str] = None,
         stream: bool = False,
     ):
-        self.query = query
+        self.messages = messages
         self.top_k = top_k
         self.top_p = top_p
         self.temperature = temperature
         self.max_len = max_len
-        self.history = history
-        self.system_prompt = system_prompt
         self.stream = stream
 
         self._validate()
@@ -107,26 +103,41 @@ class InferenceEngine:
 
     def __init__(
         self,
-        parameter: ModelParameter,
-        max_batch_size: int = 16,
+        model: nn.Module,
+        tokenizer: TextTokenizer,
+        max_batch_size: int = 1,
         max_seq_len: Optional[int] = None,
     ):
-        self.model = parameter.model
-        self.tokenizer = parameter.tokenizer
-        self.config = parameter.config
+        """
+        Initialize inference engine with separate model and tokenizer.
 
-        model_params = next(self.model.parameters())
-        self.device = model_params.device
-        self.dtype = model_params.dtype
+        Args:
+            model: The language model for inference (nn.Module, e.g., Transformer)
+            tokenizer: The tokenizer for encoding/decoding text
+            config: Model configuration
+            max_batch_size: Maximum batch size for continuous batching
+            max_seq_len: Maximum sequence length (defaults to config.max_len)
+        """
+        self.model = model
+        self.tokenizer = tokenizer
+
+        # Get device and dtype from model parameters
+        try:
+            first_param = next(model.parameters())
+            device = first_param.device
+            dtype = first_param.dtype
+        except StopIteration:
+            # Model has no parameters, use default device/dtype
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            dtype = torch.float32
 
         self.scheduler = InferenceScheduler(
             model=self.model,
             tokenizer=self.tokenizer,
-            config=self.config,
             max_batch_size=max_batch_size,
             max_seq_len=max_seq_len,
-            device=self.device,
-            dtype=self.dtype,
+            device=device,
+            dtype=dtype,
         )
 
         self.kv_cache = self.scheduler.kv_cache
@@ -160,7 +171,8 @@ class InferenceEngine:
         self, request: GenerationRequest
     ) -> Union[Generator[str, None, None], str, List[str]]:
         """Generate with GenerationRequest object."""
-        prompt = build_prompt(request.query, request.history)
+        # Use tokenizer's chat template with messages
+        prompt = self.tokenizer.apply_chat_template(request.messages, tokenize=False)
 
         return self.generate(
             prompt=prompt,

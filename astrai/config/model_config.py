@@ -6,6 +6,7 @@ from typing import Optional, Self
 @dataclass
 class ModelConfig:
     # basic config
+    model_type: Optional[str] = None
     vocab_size: Optional[int] = None
     dim: Optional[int] = None
 

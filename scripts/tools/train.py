@@ -5,10 +5,12 @@ from functools import partial
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import safetensors.torch as st
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from astrai.config import ModelParameter, TrainConfig
+from astrai.config import ModelConfig, TrainConfig
 from astrai.dataset import DatasetFactory
+from astrai.model import Transformer
 from astrai.parallel import get_rank
 from astrai.trainer import SchedulerFactory, Trainer
 
@@ -196,12 +198,23 @@ def train(
     assert train_type in ["seq", "sft", "dpo"]
     assert os.path.exists(param_path)
 
-    parameter = ModelParameter.load(param_path)
+    # Load config
+    config = ModelConfig()
+    config_path = os.path.join(param_path, "config.json")
+    if os.path.exists(config_path):
+        config.load(config_path)
 
     if window_size is None:
-        window_size = parameter.config.max_len
+        window_size = config.max_len
 
-    model = parameter.model
+    # Create bare Transformer (for training, no tokenizer needed)
+    model = Transformer(config)
+
+    # Load weights if available
+    weights_path = os.path.join(param_path, "model.safetensors")
+    if os.path.exists(weights_path):
+        state_dict = st.load_file(weights_path)
+        model.load_state_dict(state_dict, strict=False)
 
     strategy_kwargs = {"dpo_beta": dpo_beta, "label_smoothing": label_smoothing}
 

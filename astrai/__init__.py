@@ -12,7 +12,7 @@ from astrai.inference import (
     GenerationRequest,
     InferenceEngine,
 )
-from astrai.model.transformer import Transformer
+from astrai.model import AutoModel, Transformer
 from astrai.trainer import SchedulerFactory, StrategyFactory, Trainer
 
 __all__ = [
@@ -27,4 +27,5 @@ __all__ = [
     "StrategyFactory",
     "SchedulerFactory",
     "BaseFactory",
+    "AutoModel",
 ]

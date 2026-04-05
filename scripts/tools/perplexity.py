@@ -7,7 +7,7 @@ import torch.nn.functional as F
 import tqdm
 from torch import Tensor
 
-from astrai.config.param_config import ModelParameter
+from astrai.model import AutoModel
 
 
 def compute_perplexity(
@@ -20,7 +20,7 @@ def compute_perplexity(
     where PPL = exp(-(1/N) * sum(log P(w_i | w_<i))).
     """
 
-    output = model(input_ids, input_mask)
+    output = model(input_ids, input_mask=input_mask)
     logits = output["logits"]
 
     shifted_logits = logits[:, :-1, :]  # [batch_size, seq_len-1, vocab_size]
@@ -42,10 +42,9 @@ def compute_perplexity(
 def process_file(
     model_dir: str, input_file: str, output_file: str, batch_size: int, text_key: str
 ):
-    param = ModelParameter.load(model_dir, disable_init=True)
-    param.to(device="cuda", dtype=torch.bfloat16)
-    model = param.model
-    tokenizer = param.tokenizer
+    # Load model using AutoModel
+    model = AutoModel.from_pretrained(model_dir, device="cuda", dtype=torch.bfloat16)
+    tokenizer = model.tokenizer
 
     with open(input_file, "r", encoding="utf-8") as f:
         input_data = [json.loads(line) for line in f]
@@ -54,7 +53,7 @@ def process_file(
     encoded_texts = [tokenizer.encode(text) for text in texts]
     output_data = []
 
-    for i in tqdm(
+    for i in tqdm.tqdm(
         range(0, len(encoded_texts), batch_size), desc="Computing perplexity"
     ):
         batch_encoded = encoded_texts[i : i + batch_size]
@@ -72,7 +71,7 @@ def process_file(
 
         input_ids = torch.tensor(padded_ids, device="cuda", dtype=torch.long)
         input_mask = torch.tensor(masks, device="cuda", dtype=torch.bool)
-        perplexity = compute_perplexity(model, input_ids, input_mask)
+        perplexity = compute_perplexity(model.model, input_ids, input_mask)
 
         for text, ppl in zip(batch_texts, perplexity):
             output_data.append({text_key: text, "ppl": float(ppl.item())})

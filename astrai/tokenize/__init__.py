@@ -1,22 +1,23 @@
 from astrai.tokenize.tokenizer import (
-    BaseTokenizer,
+    TextTokenizer,
     BpeTokenizer,
-    BaseTrainer,
-    BpeTrainer,
 )
+from astrai.tokenize.trainer import BpeTrainer
 from astrai.tokenize.chat_template import (
+    ChatTemplate,
     HistoryType,
     MessageType,
-    build_prompt,
 )
 
+# Alias for compatibility
+AutoTokenizer = TextTokenizer
+
 __all__ = [
-    "BaseTokenizer",
+    "TextTokenizer",
+    "AutoTokenizer",
     "BpeTokenizer",
-    "BaseTrainer",
     "BpeTrainer",
+    "ChatTemplate",
     "HistoryType",
     "MessageType",
-    "CHAT_TEMPLATES",
-    "build_prompt",
 ]

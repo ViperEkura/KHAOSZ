@@ -3,7 +3,8 @@ import json
 
 import torch
 
-from astrai.config.param_config import ModelParameter
+from astrai.model import AutoModel
+from astrai.tokenize import AutoTokenizer
 from astrai.inference import InferenceEngine
 
 
@@ -17,9 +18,9 @@ def processor(
     question_key: str,
     response_key: str,
 ):
-    param = ModelParameter.load(model_dir, disable_init=True)
-    param.to(device="cuda", dtype=torch.bfloat16)
-    engine = InferenceEngine(param)
+    # Load model using AutoModel
+    model = AutoModel.from_pretrained(model_dir, device="cuda", dtype=torch.bfloat16)
+    engine = InferenceEngine(model=model.model, tokenizer=model.tokenizer)
 
     with open(input_json_file, "r", encoding="utf-8") as f:
         input_data = [json.loads(line) for line in f]
@@ -29,7 +30,7 @@ def processor(
     responses = engine.generate(
         prompt=queries,
         stream=False,
-        max_tokens=param.config.max_len,
+        max_tokens=model.config.max_len,
         temperature=temperature,
         top_p=top_p,
         top_k=top_k,

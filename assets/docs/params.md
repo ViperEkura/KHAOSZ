@@ -90,8 +90,12 @@ from astrai.inference import InferenceEngine, GenerationRequest
 param = ModelParameter.load("your_model_dir")
 param.to(device="cuda", dtype=torch.bfloat16)
 
-# Create engine
-engine = InferenceEngine(param)
+# Create engine with separate model and tokenizer
+engine = InferenceEngine(
+    model=param.model,
+    tokenizer=param.tokenizer,
+    config=param.config,
+)
 
 # Build request
 request = GenerationRequest(

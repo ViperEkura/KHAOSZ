@@ -8,7 +8,8 @@ from typing import Any, Callable, Dict, List, Optional
 import torch
 from torch import Tensor
 
-from astrai.config import ModelConfig
+from astrai.model.automodel import AutoModel
+from astrai.tokenize.tokenizer import TextTokenizer
 
 
 class TaskStatus:
@@ -98,23 +99,23 @@ class InferenceScheduler:
 
     def __init__(
         self,
-        model,
-        tokenizer,
-        config: ModelConfig,
+        model: AutoModel,
+        tokenizer: TextTokenizer,
         max_batch_size: int = 16,
         max_seq_len: Optional[int] = None,
         device: str = "cuda",
         dtype: torch.dtype = torch.bfloat16,
     ):
+        config = model.config
+
         self.model = model
         self.tokenizer = tokenizer
-        self.config = config
         self.max_batch_size = max_batch_size
         self.max_seq_len = max_seq_len or config.max_len
-        self.device = device
-        self.dtype = dtype
+        self.device = device or next(model.parameters()).device
+        self.dtype = dtype or next(model.parameters()).dtype
 
-        num_heads = config.n_kv_heads
+        num_kv_heads = config.n_kv_heads
         head_dim = config.dim // config.n_heads
         n_layers = config.n_layers
 
@@ -123,26 +124,26 @@ class InferenceScheduler:
                 max_batch_size,
                 self.max_seq_len,
                 n_layers,
-                num_heads,
+                num_kv_heads,
                 head_dim,
             ),
-            device=device,
-            dtype=dtype,
+            device=self.device,
+            dtype=self.dtype,
         )
         v_cache = torch.empty(
             (
                 max_batch_size,
                 self.max_seq_len,
                 n_layers,
-                num_heads,
+                num_kv_heads,
                 head_dim,
             ),
-            device=device,
-            dtype=dtype,
+            device=self.device,
+            dtype=self.dtype,
         )
         self.kv_cache = (k_cache, v_cache)
         self.seq_mask = torch.ones(
-            (max_batch_size, self.max_seq_len), device=device, dtype=torch.bool
+            (max_batch_size, self.max_seq_len), device=self.device, dtype=torch.bool
         )
 
         self.waiting_queue: List[Task] = []
@@ -259,7 +260,7 @@ class InferenceScheduler:
             )
 
         with torch.inference_mode():
-            outputs = self.model(
+            self.model(
                 input_ids,
                 input_mask=input_mask,
                 start_pos=0,

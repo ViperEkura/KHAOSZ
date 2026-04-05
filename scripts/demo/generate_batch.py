@@ -2,7 +2,7 @@ from pathlib import Path
 
 import torch
 
-from astrai.config.param_config import ModelParameter
+from astrai.model import AutoModel
 from astrai.inference import InferenceEngine
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -10,8 +10,10 @@ PARAMETER_ROOT = Path(PROJECT_ROOT, "params")
 
 
 def batch_generate():
-    param = ModelParameter.load(PARAMETER_ROOT, disable_init=True)
-    param.to(device="cuda", dtype=torch.bfloat16)
+    # Load model using AutoModel
+    model = AutoModel.from_pretrained(
+        PARAMETER_ROOT, device="cuda", dtype=torch.bfloat16
+    )
 
     inputs = [
         "你好",
@@ -21,11 +23,14 @@ def batch_generate():
         "请问什么是显卡",
     ]
 
-    engine = InferenceEngine(param)
+    engine = InferenceEngine(
+        model=model.model,
+        tokenizer=model.tokenizer,
+    )
     responses = engine.generate(
         prompt=inputs,
         stream=False,
-        max_tokens=param.config.max_len,
+        max_tokens=model.config.max_len,
         temperature=0.8,
         top_p=0.95,
         top_k=50,
