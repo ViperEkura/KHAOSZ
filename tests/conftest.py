@@ -7,12 +7,27 @@ import numpy as np
 import pytest
 import safetensors.torch as st
 import torch
-from tokenizers import pre_tokenizers
+from tokenizers import Tokenizer, models, pre_tokenizers, trainers
 from torch.utils.data import Dataset
 
 from astrai.config.model_config import ModelConfig
 from astrai.model.transformer import Transformer
-from astrai.tokenize import BpeTokenizer, BpeTrainer
+from astrai.tokenize import AutoTokenizer
+
+
+def create_test_tokenizer(vocab_size: int = 1000) -> AutoTokenizer:
+    """Create a simple tokenizer for testing purposes."""
+    tokenizer = Tokenizer(models.BPE())
+    tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel()
+    trainer = trainers.BpeTrainer(
+        vocab_size=vocab_size, min_frequency=1, special_tokens=["<unk>", "<pad>"]
+    )
+    # Train on empty iterator with single character
+    tokenizer.train_from_iterator([chr(i) for i in range(256)], trainer)
+    auto_tokenizer = AutoTokenizer()
+    auto_tokenizer._tokenizer = tokenizer
+    auto_tokenizer._special_token_map = {"unk_token": "<unk>", "pad_token": "<pad>"}
+    return auto_tokenizer
 
 
 class RandomDataset(Dataset):
@@ -109,7 +124,7 @@ def base_test_env(request: pytest.FixtureRequest):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     transformer_config = ModelConfig().load(config_path)
     model = Transformer(transformer_config).to(device=device)
-    tokenizer = BpeTokenizer()
+    tokenizer = create_test_tokenizer()
 
     yield {
         "device": device,
@@ -164,10 +179,7 @@ def test_env(request: pytest.FixtureRequest):
     with open(config_path, "w") as f:
         json.dump(config, f)
 
-    tokenizer = BpeTokenizer()
-    trainer = BpeTrainer(tokenizer)
-    sp_token_iter = iter(pre_tokenizers.ByteLevel.alphabet())
-    trainer.train_from_iterator(sp_token_iter, config["vocab_size"], 1)
+    tokenizer = create_test_tokenizer(vocab_size=config["vocab_size"])
     tokenizer.save(tokenizer_path)
 
     transformer_config = ModelConfig().load(config_path)

@@ -12,18 +12,19 @@ from astrai.inference import (
     InferenceEngine,
 )
 from astrai.model import AutoModel, Transformer
-from astrai.tokenize import BpeTokenizer
-from astrai.trainer import SchedulerFactory, StrategyFactory, Trainer
+from astrai.tokenize import AutoTokenizer
+from astrai.trainer import CallbackFactory, SchedulerFactory, StrategyFactory, Trainer
 
 __all__ = [
     "Transformer",
     "ModelConfig",
     "TrainConfig",
     "DatasetFactory",
-    "BpeTokenizer",
+    "AutoTokenizer",
     "GenerationRequest",
     "InferenceEngine",
     "Trainer",
+    "CallbackFactory",
     "StrategyFactory",
     "SchedulerFactory",
     "BaseFactory",
