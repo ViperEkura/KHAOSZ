@@ -57,17 +57,16 @@ class AutoTokenizer:
         instance = cls(path)
         return instance
 
-    def save_pretrained(self, tokenizer, save_path: str):
+    def save_pretrained(self, save_path: str):
         """
         Save tokenizer to pretrained directory.
 
         Args:
-            tokenizer: Tokenizer instance to save
             save_path: Path to save the tokenizer
         """
         save_path = Path(save_path)
         save_path.mkdir(parents=True, exist_ok=True)
-        self._tokenizer.save(tokenizer, save_path)
+        self._tokenizer.save(str(save_path / "tokenizer.json"))
 
     @classmethod
     def register_tokenizer(cls, name: str, tokenizer_class: type):
