@@ -76,7 +76,7 @@ class Transformer(AutoModel):
     def __init__(self, config: ModelConfig):
         super().__init__(config)
         self.config = config
-        self.rotary_embeding = RotaryEmbedding(
+        self.rotary_embedding = RotaryEmbedding(
             config.dim // config.n_heads, config.max_len
         )
         self.embed_tokens = Embedding(config.vocab_size, config.dim)
@@ -152,7 +152,7 @@ class Transformer(AutoModel):
         assert input_ids.ndim == 2
 
         x = self.embed_tokens(input_ids)
-        rotary_emb = self.rotary_embeding(x, start_pos)
+        rotary_emb = self.rotary_embedding(x, start_pos)
 
         attn_mask = process_attention_mask(input_mask, x, start_pos, is_causal=True)
 

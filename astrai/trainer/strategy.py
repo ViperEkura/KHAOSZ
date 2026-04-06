@@ -237,14 +237,14 @@ class DPOStrategy(BaseStrategy):
         chosen_ids, rejected_ids = batch["chosen"], batch["rejected"]
         chosen_mask, rejected_mask = batch["chosen_mask"], batch["rejected_mask"]
 
-        contact_ids = torch.cat([chosen_ids, rejected_ids], dim=0)
-        contact_mask = torch.cat([chosen_mask, rejected_mask], dim=0)
+        concat_ids = torch.cat([chosen_ids, rejected_ids], dim=0)
+        concat_mask = torch.cat([chosen_mask, rejected_mask], dim=0)
 
-        log_pi = get_logprobs(self.model, contact_ids, contact_mask, self.reduction)
+        log_pi = get_logprobs(self.model, concat_ids, concat_mask, self.reduction)
 
         with torch.no_grad():
             log_ref = get_logprobs(
-                self.ref_model, contact_ids, contact_mask, self.reduction
+                self.ref_model, concat_ids, concat_mask, self.reduction
             )
 
         log_pi_chosen = log_pi[: chosen_ids.shape[0]]
