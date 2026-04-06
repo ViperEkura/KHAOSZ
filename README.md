@@ -84,6 +84,38 @@ python scripts/tools/train.py \
 python scripts/tools/generate.py --param_path=/path/to/param_path
 ```
 
+#### Start HTTP Server
+
+Start the inference server with OpenAI-compatible HTTP API:
+
+```bash
+python -m scripts.tools.server --port 8000 --device cuda
+```
+
+Make requests:
+
+```bash
+# Chat API (OpenAI compatible)
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "Hello"}],
+    "max_tokens": 512
+  }'
+
+# Streaming response
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "Tell a story"}],
+    "stream": true,
+    "max_tokens": 500
+  }'
+
+# Health check
+curl http://localhost:8000/health
+```
+
 #### Demo
 
 Check out the demos in the `scripts/demo/` folder:

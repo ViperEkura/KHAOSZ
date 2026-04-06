@@ -191,3 +191,107 @@ for token in engine.generate_with_request(request):
 ```
 
 The continuous batching feature allows dynamic batch composition where new requests can join at any time and completed requests are released immediately.
+
+## HTTP API Usage
+
+The inference server provides HTTP endpoints for remote inference. Start the server first:
+
+```bash
+python -m scripts.tools.server --port 8000
+```
+
+### OpenAI-Compatible Endpoint
+
+The server provides an OpenAI-compatible chat completion endpoint at `/v1/chat/completions`:
+
+```bash
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": "Hello, how are you?"}
+    ],
+    "temperature": 0.8,
+    "max_tokens": 2048,
+    "stream": false
+  }'
+```
+
+**Request Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `messages` | List[dict] | Required | Chat messages with role and content |
+| `temperature` | float | 0.8 | Sampling temperature (0.0-2.0) |
+| `top_p` | float | 0.95 | Nucleus sampling threshold |
+| `top_k` | int | 50 | Top-k sampling parameter |
+| `max_tokens` | int | 2048 | Maximum tokens to generate |
+| `stream` | bool | false | Enable streaming response |
+| `system_prompt` | str | None | System prompt override |
+
+**Response (non-streaming):**
+```json
+{
+  "id": "chatcmpl-1234567890",
+  "object": "chat.completion",
+  "created": 1234567890,
+  "model": "astrai",
+  "choices": [
+    {
+      "index": 0,
+      "message": {"role": "assistant", "content": "Hello! I'm doing well..."},
+      "finish_reason": "stop"
+    }
+  ]
+}
+```
+
+### Streaming Response
+
+Enable streaming for real-time token-by-token output:
+
+```bash
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "Write a story"}],
+    "stream": true,
+    "max_tokens": 500
+  }'
+```
+
+The server uses Server-Sent Events (SSE) with content type `text/event-stream`.
+
+### Simple Generation Endpoint
+
+For basic text generation without chat format:
+
+```bash
+curl -X POST "http://localhost:8000/generate?query=Hello&max_len=1000" \
+  -H "Content-Type: application/json"
+```
+
+Or with conversation history:
+
+```bash
+curl -X POST "http://localhost:8000/generate" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What is AI?",
+    "history": [["Hello", "Hi there!"], ["How are you?", "I'm doing well"]],
+    "temperature": 0.8,
+    "max_len": 2048
+  }'
+```
+
+### Health Check
+
+Monitor server and model status:
+
+```bash
+curl http://localhost:8000/health
+# {"status": "ok", "model_loaded": true, "engine_ready": true}
+
+curl http://localhost:8000/stats
+# {"requests_total": 10, "tokens_generated": 5000, ...}
+```

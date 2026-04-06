@@ -85,6 +85,38 @@ python scripts/tools/train.py \
 python scripts/tools/generate.py --param_path=/path/to/param_path
 ```
 
+#### 启动 HTTP 服务
+
+启动推理服务器，支持 OpenAI 兼容的 HTTP API：
+
+```bash
+python -m scripts.tools.server --port 8000 --device cuda
+```
+
+发起请求：
+
+```bash
+# Chat API（OpenAI 兼容）
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "你好"}],
+    "max_tokens": 512
+  }'
+
+# 流式响应
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "讲个故事"}],
+    "stream": true,
+    "max_tokens": 500
+  }'
+
+# 健康检查
+curl http://localhost:8000/health
+```
+
 #### 演示
 
 查看 `scripts/demo/` 文件夹中的演示：
