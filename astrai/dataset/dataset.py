@@ -72,15 +72,16 @@ class MultiSegmentFetcher:
     Each key corresponds to a different type of data (e.g., "sequence", "mask").
     """
 
-    def __init__(self, muti_segments: Dict):
-        self.muti_keys = list(muti_segments.keys())
-        self.muti_fetchers = {
-            key: BaseSegmentFetcher(segments) for key, segments in muti_segments.items()
+    def __init__(self, multi_segments: Dict):
+        self.multi_keys = list(multi_segments.keys())
+        self.multi_fetchers = {
+            key: BaseSegmentFetcher(segments)
+            for key, segments in multi_segments.items()
         }
 
     def __len__(self) -> int:
         """Returns the minimum length across all fetchers."""
-        len_list = [len(seg) for seg in self.muti_fetchers.values()]
+        len_list = [len(seg) for seg in self.multi_fetchers.values()]
         return min(len_list)
 
     def key_fetch(
@@ -100,7 +101,7 @@ class MultiSegmentFetcher:
         keys = [keys] if isinstance(keys, str) else keys
 
         for key in keys:
-            fetcher = self.muti_fetchers[key]
+            fetcher = self.multi_fetchers[key]
             fetch_tensor = fetcher.fetch_data(begin_idx, end_idx)
             fetch_dict[key] = fetch_tensor
 
@@ -108,7 +109,7 @@ class MultiSegmentFetcher:
 
     def fetch_data(self, begin_idx: int, end_idx: int) -> Dict:
         """Fetch all keys."""
-        return self.key_fetch(begin_idx, end_idx, self.muti_keys)
+        return self.key_fetch(begin_idx, end_idx, self.multi_keys)
 
 
 class BaseDataset(Dataset, ABC):

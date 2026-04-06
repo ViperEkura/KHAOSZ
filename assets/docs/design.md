@@ -100,8 +100,8 @@ classDiagram
         }
 
         class MultiSegmentFetcher {
-            +Dict muti_fetchers
-            +List muti_keys
+            +Dict multi_fetchers
+            +List multi_keys
             +key_fetch(begin_idx, end_idx, keys) Dict
             +fetch_data(begin_idx, end_idx) Dict
         }
@@ -148,7 +148,7 @@ classDiagram
 
         class Transformer {
             +ModelConfig config
-            +RotaryEmbedding rotary_embeding
+            +RotaryEmbedding rotary_embedding
             +Embedding embed_tokens
             +ModuleList layers
             +RMSNorm norm

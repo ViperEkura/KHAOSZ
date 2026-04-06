@@ -257,7 +257,7 @@ class MLA(nn.Module):
 
         self.q_proj = Linear(dim, n_heads * self.head_dim, bias=False)
         self.kv_a_proj = Linear(dim, kv_lora_rank, bias=False)
-        self.kv_norm = RMSNorm(kv_lora_rank, eps=norm_eps)
+        self.kv_norm = RMSNorm(kv_lora_rank, norm_eps)
 
         # KV (k_nope, k_rope, v)
         self.kv_b_proj = Linear(
