@@ -123,8 +123,7 @@ class RMSNorm(nn.Module):
         self.norm_eps = norm_eps
 
     def forward(self, x: Tensor) -> Tensor:
-        rms = F.rms_norm(x.float(), self.normalized_shape, self.weight, self.norm_eps)
-        return rms.to(x.dtype)
+        return F.rms_norm(x, self.normalized_shape, self.weight, self.norm_eps)
 
 
 class MLP(nn.Module):
