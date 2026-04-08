@@ -6,8 +6,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
-from tokenizers import Tokenizer, decoders, normalizers, pre_tokenizers, processors
-from tokenizers.models import BPE
+from tokenizers import Tokenizer
 
 from astrai.tokenize.chat_template import ChatTemplate
 

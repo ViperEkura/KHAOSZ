@@ -112,6 +112,8 @@ class InferenceEngine:
         tokenizer: AutoTokenizer,
         max_batch_size: int = 1,
         max_seq_len: Optional[int] = None,
+        max_prefix_len: int = 512,
+        cache_capacity: int = 1000,
     ):
         """
         Initialize inference engine with separate model and tokenizer.
@@ -122,6 +124,8 @@ class InferenceEngine:
             config: Model configuration
             max_batch_size: Maximum batch size for continuous batching
             max_seq_len: Maximum sequence length (defaults to config.max_len)
+            max_prefix_len: Maximum prefix length for cache (default: 512)
+            cache_capacity: Maximum number of cached prefixes (default: 1000)
         """
         self.model = model
         self.tokenizer = tokenizer
@@ -141,6 +145,8 @@ class InferenceEngine:
             tokenizer=self.tokenizer,
             max_batch_size=max_batch_size,
             max_seq_len=max_seq_len,
+            max_prefix_len=max_prefix_len,
+            cache_capacity=cache_capacity,
             device=device,
             dtype=dtype,
         )
