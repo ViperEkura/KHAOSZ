@@ -8,7 +8,7 @@ Thus, the AstrAI project was born - 1B parameters, Chinese-English bilingual, su
 
 ```mermaid
 classDiagram
-    namespace astrai.config {
+    namespace config {
         class ModelConfig {
             +int vocab_size
             +int dim
@@ -56,17 +56,9 @@ classDiagram
             +validate()
         }
 
-        class ModelParameter {
-            +nn.Module model
-            +BpeTokenizer tokenizer
-            +ModelConfig config
-            +save(instance, save_dir)
-            +load(load_dir, disable_init) ModelParameter
-            +to(*args, **kwargs)
-        }
     }
 
-    namespace astrai.dataset {
+    namespace dataset {
         class BaseDataset {
             +int window_size
             +int stride
@@ -125,17 +117,9 @@ classDiagram
             +save(save_dir)
             +load(save_dir) Checkpoint
         }
-
-        class DataLoader {
-            +Dataset dataset
-            +int batch_size
-            +Sampler sampler
-            +__iter__()
-            +__len__()
-        }
     }
 
-    namespace astrai.model {
+    namespace model {
         class AutoModel {
             +ModelConfig config
             +Dict _registry
@@ -216,24 +200,46 @@ classDiagram
         }
     }
 
-    namespace astrai.tokenize {
-        class Tokenizer {
-            +encode(tokens, out_ids, add_special_tokens) List~int~
-            +decode(tokens, skip_special_tokens) str
-            +__len__() int
-        }
-
-        class BpeTokenizer {
+    namespace tokenize {
+        class AutoTokenizer {
             +List~str~ stop_ids
             +int bos_id
             +int eos_id
             +int pad_id
+            +vocab_size int
             +encode(tokens, out_ids, add_special_tokens) List~int~
             +decode(tokens, skip_special_tokens) str
+            +apply_chat_template(messages, tokenize) Union~str, List[int]~
+            +set_chat_template(template)
+            +load(path)
+            +from_pretrained(path) AutoTokenizer
+            +save_pretrained(save_path)
+        }
+
+        class ChatTemplate {
+            +String template_str
+            +render(messages, add_generation_prompt) str
+            +from_string(template) ChatTemplate
         }
     }
 
-    namespace astrai.trainer {
+    namespace factory {
+        class Registry {
+            +Dict _entries
+            +register(name, component_cls, category, priority)
+            +get(name) Type
+            +list_names() List~str~
+        }
+
+        class BaseFactory {
+            +Registry _registry
+            +register(name, category, priority) decorator
+            +create(name, *args, **kwargs) T
+            +list_registered() list
+        }
+    }
+
+    namespace trainer {
         class Trainer {
             +TrainConfig train_config
             +List~TrainCallback~ callbacks
@@ -337,6 +343,39 @@ classDiagram
             +on_error(context)
         }
 
+        class GradientClippingCallback {
+            +float max_grad_norm
+            +on_step_begin(context)
+        }
+
+        class SchedulerCallback {
+            +on_train_begin(context)
+            +on_batch_end(context)
+        }
+
+        class CheckpointCallback {
+            +str save_dir
+            +int interval
+            +_save_checkpoint(context)
+            +on_batch_end(context)
+            +on_train_end(context)
+            +on_error(context)
+        }
+
+        class ProgressBarCallback {
+            +int num_epoch
+            +on_epoch_begin(context)
+            +on_batch_end(context)
+            +on_epoch_end(context)
+        }
+
+        class MetricLoggerCallback {
+            +str log_dir
+            +int save_interval
+            +on_batch_end(context)
+            +on_train_end(context)
+        }
+
         class CallbackFactory {
             +Registry _registry
             +register(name) decorator
@@ -344,10 +383,17 @@ classDiagram
         }
     }
 
-    namespace astrai.inference {
+    namespace inference {
         class InferenceEngine {
-            +ModelParameter parameter
+            +nn.Module model
+            +AutoTokenizer tokenizer
             +InferenceScheduler scheduler
+            +int max_batch_size
+            +Optional int max_seq_len
+            +int max_prefix_len
+            +int cache_capacity
+            +Tensor kv_cache
+            +Tensor seq_mask
             +generate(prompt, stream, max_tokens, temperature, top_p, top_k) Union[Generator, str, List[str]]
             +generate_with_request(request) Union[Generator, str, List[str]]
             +get_stats() Dict
@@ -356,10 +402,11 @@ classDiagram
 
         class InferenceScheduler {
             +nn.Module model
-            +Tokenizer tokenizer
+            +AutoTokenizer tokenizer
             +ModelConfig config
             +Tuple kv_cache
             +Tensor seq_mask
+            +PrefixCacheManager prefix_cache
             +List waiting_queue
             +List active_tasks
             +add_task(prompt, max_tokens, temperature, top_p, top_k, stream_callback) str
@@ -367,6 +414,24 @@ classDiagram
             +start()
             +stop()
             +get_stats() Dict
+        }
+
+        class PrefixCacheManager {
+            +RadixNode root
+            +int max_capacity
+            +List lru
+            +insert(token_ids, slot)
+            +find_longest_prefix(token_ids) Tuple[int, int]
+            +release(token_ids)
+        }
+
+        class RadixNode {
+            +Dict children
+            +int hash
+            +int slot
+            +int ref_count
+            +float last_access
+            +List token_sequence
         }
 
         class Task {
@@ -392,14 +457,6 @@ classDiagram
             +str ABORTED
         }
 
-        class apply_sampling_strategies {
-            +Tensor logits
-            +float temperature
-            +int top_k
-            +float top_p
-            +forward() Tensor
-        }
-
         class Server {
             +start()
             +predict(request)
@@ -410,17 +467,52 @@ classDiagram
             +float top_p
             +float temperature
             +int max_len
-            +Union~str, List~str~~ query
-            +history Optional
-            +system_prompt Optional~str~
+            +List~Dict~ messages
             +stream bool
+        }
+
+        class _Result {
+            +List~str~ tokens
+            +List~str~ results
+            +List~bool~ done_flags
+            +append(token, idx)
+            +get_results() List~str~
+        }
+
+        class ChatMessage {
+            +str role
+            +str content
+        }
+
+        class ChatCompletionRequest {
+            +List~ChatMessage~ messages
+            +float temperature
+            +float top_p
+            +int top_k
+            +int max_tokens
+            +bool stream
+            +Optional~str~ system_prompt
+        }
+
+        class CompletionResponse {
+            +str id
+            +str object
+            +int created
+            +str model
+            +List~Dict~ choices
         }
     }
 
-    namespace astrai.parallel {
+    namespace parallel {
         class ParallelSetup {
             +spawn_parallel_fn(fn, nprocs)
             +setup_parallel(rank, world_size, backend, master_addr, master_port, device_type, device_ids)
+        }
+
+        class ParallelModel {
+            +dist.ProcessGroup process_group
+            +int rank
+            +int world_size
         }
 
         class ColumnParallelLinear {
@@ -433,9 +525,16 @@ classDiagram
     }
 
     %% Relationships
-    TrainConfig --> ModelConfig : contains
+    TrainConfig --> ModelConfig : uses
     TrainConfig --> BaseDataset : uses
-    TrainConfig --> Transformer : uses
+    TrainConfig --> StrategyFactory : selects
+    StrategyFactory ..> BaseStrategy : creates
+    BaseStrategy <|-- SEQStrategy
+    BaseStrategy <|-- SFTStrategy
+    BaseStrategy <|-- DPOStrategy
+    BaseStrategy <|-- GRPOStrategy
+    DPOStrategy --> Transformer : uses
+    GRPOStrategy --> Transformer : uses
     Trainer --> TrainConfig : configures
     Trainer --> TrainContextBuilder : builds
     Trainer --> TrainCallback : manages
@@ -443,30 +542,27 @@ classDiagram
     TrainContext --> Checkpoint : manages
     TrainContext --> BaseStrategy : uses
     TrainContext --> BaseScheduler : uses
-    StrategyFactory ..> BaseStrategy : creates
-    BaseStrategy <|-- SEQStrategy
-    BaseStrategy <|-- SFTStrategy
-    BaseStrategy <|-- DPOStrategy
-    BaseStrategy <|-- GRPOStrategy
-    DPOStrategy --> Transformer : creates ref_model
-    GRPOStrategy --> Transformer : creates ref_model
+    AutoModel --> ModelConfig : contains
     SchedulerFactory ..> BaseScheduler : creates
     BaseScheduler <|-- CosineScheduler
     BaseScheduler <|-- SGDRScheduler
     CallbackFactory ..> TrainCallback : creates
+    TrainCallback <|-- GradientClippingCallback
+    TrainCallback <|-- SchedulerCallback
+    TrainCallback <|-- CheckpointCallback
+    TrainCallback <|-- ProgressBarCallback
+    TrainCallback <|-- MetricLoggerCallback
     InferenceEngine --> InferenceScheduler : uses
     InferenceScheduler --> Task : manages
     InferenceScheduler --> TaskStatus : uses
-    InferenceScheduler --> apply_sampling_strategies : uses
     InferenceScheduler --> Transformer : uses
     InferenceEngine --> Transformer : uses
     InferenceEngine --> GenerationRequest : uses
     Server --> InferenceEngine : uses
+    Server --> ChatMessage : uses
+    Server --> ChatCompletionRequest : uses
+    Server --> CompletionResponse : uses
     ParallelSetup --> Trainer : enables
-    TrainConfig --> StrategyFactory : selects
-    ModelParameter --> Transformer : contains
-    ModelParameter --> BpeTokenizer : contains
-    ModelParameter --> ModelConfig : contains
     BaseDataset <|-- SEQDataset
     BaseDataset <|-- SFTDataset
     BaseDataset <|-- DPODataset
@@ -483,22 +579,34 @@ classDiagram
     DecoderBlock --> MLA : uses
     DecoderBlock --> MLP : uses
     DecoderBlock --> RMSNorm : uses
-    BpeTokenizer --> Tokenizer : inherits
     TrainContextBuilder --> ResumableDistributedSampler : creates
-    DataLoader --> BaseDataset : uses
     ResumableDistributedSampler --> BaseDataset : samples
+    ParallelModel <|-- RowParallelLinear
+    ParallelModel <|-- ColumnParallelLinear
+    AutoTokenizer --> ChatTemplate : uses
+    InferenceScheduler --> PrefixCacheManager : uses
+    InferenceScheduler --> RadixNode : uses
+    Checkpoint ..> Checkpoint : saves/loads
+    TrainConfig --> DatasetFactory : selects
+    TrainConfig --> SchedulerFactory : selects
+    TrainConfig --> CallbackFactory : selects
+    AutoModel ..> AutoTokenizer : loads with
+    BaseFactory <|-- DatasetFactory
+    BaseFactory <|-- StrategyFactory
+    BaseFactory <|-- SchedulerFactory
+    BaseFactory <|-- CallbackFactory
 ```
 
 ### Module Overview
 
 | Module | Components | Description |
 |--------|------------|-------------|
-| **astrai.config** | ModelConfig, TrainConfig, ModelParameter | Configuration management |
-| **astrai.dataset** | BaseDataset, SEQDataset, SFTDataset, DPODataset, GRPODataset, BaseSegmentFetcher, MultiSegmentFetcher, ResumableDistributedSampler, DatasetFactory, Checkpoint, DataLoader | Dataset loading and management |
+| **astrai.config** | ModelConfig, TrainConfig | Configuration management |
+| **astrai.dataset** | BaseDataset, SEQDataset, SFTDataset, DPODataset, GRPODataset, BaseSegmentFetcher, MultiSegmentFetcher, ResumableDistributedSampler, DatasetFactory, Checkpoint | Dataset loading and management |
 | **astrai.model** | AutoModel, Transformer, DecoderBlock, GQA, MLA, MLP, RMSNorm, Linear, RotaryEmbedding, Embedding | Neural network model |
-| **astrai.tokenize** | AutoTokenizer, BpeTokenizer, ChatTemplate, BpeTrainer | Tokenizer |
+| **astrai.tokenize** | AutoTokenizer, ChatTemplate | Tokenizer and chat template |
 | **astrai.trainer** | Trainer, TrainContext, TrainContextBuilder, BaseStrategy, StrategyFactory, BaseScheduler, SchedulerFactory, TrainCallback, CallbackFactory | Training workflow management |
-| **astrai.inference** | InferenceEngine, InferenceScheduler, Task, TaskStatus, Server, GenerationRequest | Inference service with continuous batching |
+| **astrai.inference** | InferenceEngine, InferenceScheduler, Task, TaskStatus, Server, GenerationRequest, PrefixCacheManager, ChatMessage, ChatCompletionRequest, CompletionResponse | Inference service with continuous batching |
 | **astrai.parallel** | ParallelSetup, ColumnParallelLinear, RowParallelLinear | Distributed parallel |
 | **astrai.factory** | Registry, BaseFactory | Generic component registration |
 
@@ -515,7 +623,7 @@ classDiagram
 | **Producer-Consumer** | `InferenceScheduler`, `Task`, `waiting_queue`, `active_tasks` | Continuous batching with dynamic task queue management |
 | **Event-Driven** | `threading.Event`, `_task_event` | Non-blocking wait mechanism for task scheduling using Python's `threading` module |
 | **AutoModel Registry** | `AutoModel`, `Transformer` | Model type registration and dynamic loading via decorator pattern |
-| **Generator Pattern** | `_StreamingResult`, `_NonStreamingResult` | Event-based result notification for streaming/non-streaming generation |
+| **Generator Pattern** | `_Result`, `GenerationRequest` | Event-based result notification for streaming/non-streaming generation |
 
 ### Core Relationships
 
@@ -582,3 +690,5 @@ $$
 The final loss is the sum of both: $L = L_{\text{policy}} + L_{KL}$
 
 Through the above three-stage progressive training, the model completes its evolution from a general language foundation to a specialized, highly-aligned dialogue intelligence.
+
+> Document Update Time: 2026-04-09

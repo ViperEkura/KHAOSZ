@@ -2,7 +2,7 @@
 
 ### 1. Model Architecture
 
-This model uses the Transformer architecture with GQA mechanism (q_head=24, kv_head=4), which saves KV cache memory compared to traditional MHA (although KV cache is not currently implemented). The model is built by stacking 32 layers of Transformer blocks, with 1.0 billion parameters. Transformer is an autoregressive model that calculates the relationship between all previous tokens to obtain the probability distribution of the next token.
+This model uses the Transformer architecture with GQA mechanism (q_head=24, kv_head=4), which saves KV cache memory compared to traditional MHA. The model is built by stacking 32 layers of Transformer blocks, with 1.0 billion parameters. Transformer is an autoregressive model that calculates the relationship between all previous tokens to obtain the probability distribution of the next token.
 
 The model now uses the **AutoModel** base class for flexible loading and saving:
 
@@ -295,3 +295,5 @@ curl http://localhost:8000/health
 curl http://localhost:8000/stats
 # {"requests_total": 10, "tokens_generated": 5000, ...}
 ```
+
+> Document Update Time: 2026-04-09
