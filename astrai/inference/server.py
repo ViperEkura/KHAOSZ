@@ -9,7 +9,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import torch
 import uvicorn
@@ -134,78 +134,6 @@ class CompletionResponse(BaseModel):
     choices: List[Dict[str, Any]]
 
 
-class StreamCompletionResponse(BaseModel):
-    id: str = "chatcmpl-default"
-    object: str = "chat.completion.chunk"
-    created: int = 0
-    model: str = "astrai"
-    choices: List[Dict[str, Any]]
-
-
-def convert_messages_to_history(
-    messages: List[ChatMessage],
-) -> tuple[Optional[str], Optional[List[Tuple[str, str]]]]:
-    """Convert OpenAI-style messages to system_prompt and history."""
-    system_prompt = None
-    history: List[Tuple[str, str]] = []
-    user_buffer = []
-    assistant_buffer = []
-    for msg in messages:
-        if msg.role == "system":
-            system_prompt = msg.content
-        elif msg.role == "user":
-            if assistant_buffer:
-                # Flush previous pair
-                history.append(("".join(user_buffer), "".join(assistant_buffer)))
-                user_buffer = []
-                assistant_buffer = []
-            user_buffer.append(msg.content)
-        elif msg.role == "assistant":
-            assistant_buffer.append(msg.content)
-        else:
-            logger.warning(f"Unknown role {msg.role}")
-    return system_prompt, history if history else None
-
-
-def convert_messages_to_prompt(
-    messages: List[ChatMessage], engine: InferenceEngine = None
-) -> str:
-    """Convert messages to prompt string.
-
-    Args:
-        messages: List of ChatMessage objects
-        engine: InferenceEngine instance for accessing tokenizer
-
-    Returns:
-        str: Formatted prompt string
-    """
-    # Convert to dict format for chat template
-    msg_dicts = [{"role": m.role, "content": m.content} for m in messages]
-
-    # Extract system prompt if present
-    system_prompt = None
-    filtered_messages = []
-    for msg in msg_dicts:
-        if msg["role"] == "system":
-            system_prompt = msg["content"]
-        else:
-            filtered_messages.append(msg)
-
-    # Use engine's tokenizer chat template if available
-    if engine is not None and engine.tokenizer is not None:
-        return engine.tokenizer.apply_chat_template(
-            filtered_messages, system_prompt=system_prompt, tokenize=False
-        )
-
-    # Fallback: simple concatenation (deprecated)
-    prompt_parts = []
-    for msg in filtered_messages:
-        prompt_parts.append(
-            f"<｜im▁start｜>{msg['role']}\n{msg['content']}<｜im▁end｜>"
-        )
-    return "\n".join(prompt_parts) + "\n<｜im▁start｜>assistant\n"
-
-
 @app.get("/health")
 async def health():
     return {
@@ -233,7 +161,12 @@ async def chat_completion(request: ChatCompletionRequest):
         raise HTTPException(status_code=503, detail="Engine not initialized")
 
     # Convert messages to prompt using engine's tokenizer
-    prompt = convert_messages_to_prompt(request.messages, engine=_engine)
+    # Extract system prompt if present, then apply chat template
+    # Apply chat template directly with messages
+    prompt = _engine.tokenizer.apply_chat_template(
+        [{"role": m.role, "content": m.content} for m in request.messages],
+        tokenize=False,
+    )
 
     if request.stream:
         # Streaming response (use synchronous generator)

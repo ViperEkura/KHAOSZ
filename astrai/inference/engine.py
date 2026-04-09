@@ -45,17 +45,31 @@ class GenerationRequest:
             raise ValueError("temperature must be a non-negative number")
 
 
-class _StreamingResult:
-    """Streaming result holder with event-based notification."""
+class _Result:
+    """Unified result holder for streaming/non-streaming modes."""
 
-    def __init__(self):
-        self.tokens: List[str] = []
-        self._event = threading.Event()
+    def __init__(self, count: int = 1, stream: bool = False):
+        self._stream = stream
         self._lock = threading.Lock()
+        self._event = threading.Event()
+        self.tokens: List[str] = []
+        self.results: List[str] = [""] * count if count > 1 else [""]
+        self.done_flags: List[bool] = [False] * count
+        self._completed_count = 0
 
-    def append(self, token: str):
+    def append(self, token: str, idx: int = 0):
         with self._lock:
-            self.tokens.append(token)
+            if self._stream:
+                self.tokens.append(token)
+            else:
+                if token == "[DONE]":
+                    if not self.done_flags[idx]:
+                        self.done_flags[idx] = True
+                        self._completed_count += 1
+                        if self._completed_count == len(self.results):
+                            self._event.set()
+                else:
+                    self.results[idx] += token
         self._event.set()
 
     def pop_all(self) -> List[str]:
@@ -65,35 +79,6 @@ class _StreamingResult:
             if not tokens:
                 self._event.clear()
             return tokens
-
-    def wait(self, timeout: float = None) -> bool:
-        return self._event.wait(timeout=timeout)
-
-
-class _NonStreamingResult:
-    """Non-streaming result holder with event-based completion notification."""
-
-    def __init__(self, count: int):
-        self.results: List[str] = [""] * count
-        self.done_flags: List[bool] = [False] * count
-        self._completed_count = 0
-        self._event = threading.Event()
-        self._lock = threading.Lock()
-
-    def append(self, idx: int, token: str):
-        with self._lock:
-            if token == "[DONE]":
-                if not self.done_flags[idx]:
-                    self.done_flags[idx] = True
-                    self._completed_count += 1
-                    if self._completed_count == len(self.results):
-                        self._event.set()
-            else:
-                self.results[idx] += token
-
-    def is_all_done(self) -> bool:
-        with self._lock:
-            return all(self.done_flags)
 
     def wait(self, timeout: float = None) -> bool:
         return self._event.wait(timeout=timeout)
@@ -233,7 +218,7 @@ class InferenceEngine:
         if is_batch:
             raise NotImplementedError("Batch streaming is not implemented yet")
 
-        result = _StreamingResult()
+        result = _Result(stream=True)
 
         task_id = self.scheduler.add_task(
             prompt=prompts[0],
@@ -272,7 +257,7 @@ class InferenceEngine:
         top_k: int,
     ) -> Union[str, List[str]]:
         """Generate without streaming."""
-        result = _NonStreamingResult(len(prompts))
+        result = _Result(count=len(prompts))
 
         for i, p in enumerate(prompts):
             # Create closure to capture current index value using factory function

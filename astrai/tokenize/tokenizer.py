@@ -209,9 +209,9 @@ class AutoTokenizer:
 
         Args:
             messages: List of message dicts with 'role' and 'content'.
-            system_prompt: Optional system prompt string.
+            system_prompt: Optional system prompt string (auto-converted to first message).
             tokenize: Whether to return token IDs (True) or raw string (False).
-            add_generation_prompt: Whether to add the generation prompt (default: False).
+            add_generation_prompt: Whether to add the generation prompt (default: True).
             **kwargs: Additional variables to pass to the template.
 
         Returns:
@@ -225,10 +225,13 @@ class AutoTokenizer:
                 "Chat template not set. Use set_chat_template() to set a template first."
             )
 
+        # Auto-convert system_prompt to first message if provided
+        if system_prompt:
+            messages = [{"role": "system", "content": system_prompt}] + list(messages)
+
         # Render the template
         rendered = self._chat_template.render(
             messages=messages,
-            system_prompt=system_prompt,
             add_generation_prompt=add_generation_prompt,
             **kwargs,
         )

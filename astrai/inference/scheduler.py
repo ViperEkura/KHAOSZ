@@ -168,9 +168,10 @@ class Task:
 
     def is_finished(self, stop_ids: List[int]) -> bool:
         """Check if task is finished."""
-        if self.output_ids and self.output_ids[-1] in stop_ids:
-            return True
-        return self.output_tokens >= self.max_tokens
+        return (
+            bool(self.output_ids and self.output_ids[-1] in stop_ids)
+            or self.output_tokens >= self.max_tokens
+        )
 
 
 def apply_sampling_strategies(
@@ -360,58 +361,48 @@ class InferenceScheduler:
             return
 
         with self._lock:
-            to_add = []
-            for _ in range(min(available_slots, len(self.waiting_queue))):
-                if self.waiting_queue:
-                    task = self.waiting_queue.pop(0)
-                    task.status = TaskStatus.RUNNING
-                    to_add.append(task)
-
+            to_add = [
+                self.waiting_queue.pop(0)
+                for _ in range(min(available_slots, len(self.waiting_queue)))
+            ]
             for task in to_add:
-                for i in range(self.max_batch_size):
-                    if all(t.slot != i for t in self.active_tasks):
-                        task.slot = i
-                        break
+                task.slot = self._allocate_slot()
+                task.status = TaskStatus.RUNNING
                 self.active_tasks.append(task)
+
+    def _allocate_slot(self) -> int:
+        """Allocate an available slot for a task."""
+        for i in range(self.max_batch_size):
+            if not any(t.slot == i for t in self.active_tasks):
+                return i
+        return -1
 
     def _execute_prefill(self, tasks: List[Task]) -> None:
         """Execute Prefill phase with incremental prefill support."""
         if not tasks:
             return
 
-        # Group tasks by their prefix_len to handle different prefill scenarios
-        fully_cached_tasks = []  # prefix_len == total_len, skip prefill
-        partial_prefill_tasks = []  # prefix_len > 0, need incremental prefill
-        full_prefill_tasks = []  # prefix_len == 0, full prefill
-
+        # Group tasks by prefix cache status
+        fully_cached, partial, full = [], [], []
         for task in tasks:
-            total_len = len(task.prompt_ids)
-            prefix_len = task.prefix_len
-
+            total_len, prefix_len = len(task.prompt_ids), task.prefix_len
             if prefix_len == total_len:
-                # Scenario 1: complete match, skip prefill
-                task.input_tokens = total_len
-                task.output_tokens = 0
-                fully_cached_tasks.append(task)
+                fully_cached.append(task)
             elif prefix_len > 0:
-                # Scenario 2: partial match, incremental prefill
-                partial_prefill_tasks.append(task)
+                partial.append(task)
             else:
-                # Scenario 3: no match, full prefill
-                full_prefill_tasks.append(task)
+                full.append(task)
 
-        # Handle fully cached tasks - update seq_mask
-        for task in fully_cached_tasks:
-            if task.slot >= 0:
-                self.seq_mask[task.slot, : task.input_tokens] = True
+        # Handle fully cached tasks
+        for t in fully_cached:
+            t.input_tokens, t.output_tokens = len(t.prompt_ids), 0
+            if t.slot >= 0:
+                self.seq_mask[t.slot, : t.input_tokens] = True
 
-        # Execute full prefill for new prefixes
-        if full_prefill_tasks:
-            self._execute_full_prefill(full_prefill_tasks)
-
-        # Execute incremental prefill for partial matches
-        if partial_prefill_tasks:
-            self._execute_partial_prefill(partial_prefill_tasks)
+        if full:
+            self._execute_full_prefill(full)
+        if partial:
+            self._execute_partial_prefill(partial)
 
     def _execute_full_prefill(self, tasks: List[Task]) -> None:
         """Execute full prefill for tasks without prefix cache."""
