@@ -85,6 +85,30 @@ python scripts/tools/train.py \
 python scripts/tools/generate.py --param_path=/path/to/param_path
 ```
 
+#### Docker
+
+使用 Docker 构建和运行（推荐用于 GPU 环境）：
+
+```bash
+# 构建镜像
+docker build -t astrai:latest .
+
+# 启用 GPU 运行
+docker run --gpus all -it astrai:latest
+
+# 指定特定 GPU
+docker run --gpus '"device=0,1"' -it astrai:latest
+
+# 运行推理服务
+docker run --gpus all -p 8000:8000 astrai:latest \
+  python -m scripts.tools.server --port 8000 --device cuda
+
+# 挂载数据卷
+docker run --gpus all -v /path/to/data:/data -it astrai:latest
+```
+
+> **注意**: 必须使用 `--gpus all` 才能启用 CUDA 支持，否则 `torch.cuda.is_available()` 将返回 `False`。
+
 #### 启动 HTTP 服务
 
 启动推理服务器，支持 OpenAI 兼容的 HTTP API：

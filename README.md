@@ -84,6 +84,30 @@ python scripts/tools/train.py \
 python scripts/tools/generate.py --param_path=/path/to/param_path
 ```
 
+#### Docker
+
+Build and run with Docker (recommended for GPU environments):
+
+```bash
+# Build image
+docker build -t astrai:latest .
+
+# Run with GPU support
+docker run --gpus all -it astrai:latest
+
+# Run with specific GPUs
+docker run --gpus '"device=0,1"' -it astrai:latest
+
+# Run inference server
+docker run --gpus all -p 8000:8000 astrai:latest \
+  python -m scripts.tools.server --port 8000 --device cuda
+
+# Run with volume mount for data
+docker run --gpus all -v /path/to/data:/data -it astrai:latest
+```
+
+> **Note**: `--gpus all` is required for CUDA support. Without it, `torch.cuda.is_available()` will return `False`.
+
 #### Start HTTP Server
 
 Start the inference server with OpenAI-compatible HTTP API:
