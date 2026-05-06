@@ -186,8 +186,6 @@ class InferenceEngine:
             dtype=dtype,
         )
 
-        self.kv_cache = self.scheduler.kv_cache
-        self.seq_mask = self.scheduler.seq_mask
         self.scheduler.start()
 
     def __enter__(self):
