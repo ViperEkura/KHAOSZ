@@ -21,7 +21,7 @@ def test_prefix_cache_concurrent_insert_find():
     def insert_worker():
         try:
             for i in range(50):
-                cache.insert((i,), slot=i % 10)
+                cache.insert((i,), slot=i % 10, slot_ver=0)
                 results["inserts"] += 1
         except Exception as e:
             results["errors"].append(str(e))
@@ -29,7 +29,7 @@ def test_prefix_cache_concurrent_insert_find():
     def find_worker():
         try:
             for i in range(50):
-                cache.find_longest_prefix([i])
+                cache.find([i])
                 results["finds"] += 1
         except Exception as e:
             results["errors"].append(str(e))
@@ -53,7 +53,7 @@ def test_prefix_cache_concurrent_release():
 
     # Insert some prefixes
     for i in range(10):
-        cache.insert((i,), slot=i)
+        cache.insert((i,), slot=i, slot_ver=0)
 
     results = {"errors": []}
 
@@ -84,10 +84,10 @@ def test_prefix_cache_concurrent_insert_release_find():
         try:
             for i in range(20):
                 token_ids = (worker_id * 100 + i,)
-                cache.insert(token_ids, slot=worker_id)
+                cache.insert(token_ids, slot=worker_id, slot_ver=0)
 
                 # Find after insert
-                cache.find_longest_prefix(list(token_ids))
+                cache.find(list(token_ids))
 
                 # Release
                 cache.release(token_ids)
@@ -277,7 +277,7 @@ def test_prefix_cache_insert_same_prefix_concurrently():
     def insert_worker():
         try:
             # All workers try to insert the same prefix
-            cache.insert((1, 2, 3), slot=threading.current_thread().name)
+            cache.insert((1, 2, 3), slot=0, slot_ver=0)
             node = cache.root.children.get(1)
             if node:
                 node = node.children.get(2)
@@ -306,8 +306,7 @@ def test_prefix_cache_ref_count_underflow_prevention():
     """Test that ref_count doesn't go negative."""
     cache = PrefixCacheManager(max_capacity=100)
 
-    # Insert a prefix
-    cache.insert((1, 2, 3), slot=0)
+    cache.insert((1, 2, 3), slot=0, slot_ver=0)
 
     # Release multiple times
     for _ in range(5):

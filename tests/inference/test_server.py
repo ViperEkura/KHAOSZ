@@ -100,13 +100,12 @@ def test_chat_completions_non_stream(client, loaded_model, mock_engine, monkeypa
 def test_chat_completions_stream(client, loaded_model, mock_engine, monkeypatch):
     """POST /v1/chat/completions with stream=true returns SSE stream."""
 
-    # Simulate a streaming generator that yields cumulative responses
-    def stream_gen():
+    async def async_gen():
         yield "cumulative1"
         yield "cumulative2"
         yield "[DONE]"
 
-    mock_engine.generate.return_value = stream_gen()
+    mock_engine.generate_async.return_value = async_gen()
     monkeypatch.setattr("astrai.inference.server._engine", mock_engine)
     response = client.post(
         "/v1/chat/completions",

@@ -32,8 +32,15 @@ def mock_model_param():
 @pytest.fixture
 def mock_engine():
     """Create a mock InferenceEngine."""
+
+    async def _async_gen():
+        yield "chunk1"
+        yield "chunk2"
+        yield "[DONE]"
+
     mock = MagicMock()
     mock.generate.return_value = "mock response"
+    mock.generate_async.return_value = _async_gen()
     mock.get_stats.return_value = {
         "total_tasks": 0,
         "total_tokens": 0,

@@ -23,12 +23,10 @@ from astrai.tokenize import AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
-# Global model parameter and engine (loaded once)
 _engine: Optional[InferenceEngine] = None
 _model_param: Optional[Any] = None
 _project_root = Path(__file__).parent.parent.parent
 
-# Server configuration (set before running server)
 _server_config: Dict[str, Any] = {
     "device": "cuda",
     "dtype": torch.bfloat16,
@@ -43,14 +41,6 @@ def configure_server(
     param_path: Optional[Path] = None,
     max_batch_size: int = 16,
 ):
-    """Configure server settings before starting.
-
-    Args:
-        device: Device to load model on (e.g., "cuda", "cpu", "cuda:0")
-        dtype: Data type for model weights (e.g., torch.bfloat16, torch.float16)
-        param_path: Path to model parameters directory
-        max_batch_size: Maximum batch size for continuous batching
-    """
     _server_config["device"] = device
     _server_config["dtype"] = dtype
     _server_config["param_path"] = param_path
@@ -59,9 +49,7 @@ def configure_server(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan context manager for startup and shutdown events."""
     global _model_param, _engine
-    # Startup: Load model with configured settings
     try:
         load_model(
             param_path=_server_config["param_path"],
@@ -73,7 +61,6 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to load model: {e}")
         raise
     yield
-    # Shutdown: Cleanup engine
     if _engine:
         _engine.shutdown()
         logger.info("Inference engine shutdown complete")
@@ -88,20 +75,17 @@ def load_model(
     dtype: torch.dtype = torch.bfloat16,
     max_batch_size: int = 16,
 ):
-    """Load model parameters and initialize inference engine."""
     global _model_param, _engine
     if param_path is None:
         param_path = _project_root / "params"
     if not param_path.exists():
         raise FileNotFoundError(f"Parameter directory not found: {param_path}")
 
-    # Load tokenizer separately
     tokenizer = AutoTokenizer.from_pretrained(param_path)
     _model_param = AutoModel.from_pretrained(param_path)
     _model_param.to(device=device, dtype=dtype)
     logger.info(f"Model loaded on {device} with dtype {dtype}")
 
-    # Initialize inference engine with separate model and tokenizer
     _engine = InferenceEngine(
         model=_model_param,
         tokenizer=tokenizer,
@@ -110,9 +94,8 @@ def load_model(
     logger.info(f"Inference engine initialized with max_batch_size={max_batch_size}")
 
 
-# Pydantic models for API request/response
 class ChatMessage(BaseModel):
-    role: str  # "user", "assistant", "system"
+    role: str
     content: str
 
 
@@ -145,7 +128,6 @@ async def health():
 
 @app.get("/stats")
 async def get_stats():
-    """Get inference engine statistics."""
     if _engine is None:
         raise HTTPException(status_code=503, detail="Engine not initialized")
     return _engine.get_stats()
@@ -153,46 +135,36 @@ async def get_stats():
 
 @app.post("/v1/chat/completions", response_model=CompletionResponse)
 async def chat_completion(request: ChatCompletionRequest):
-    """OpenAI-compatible chat completion endpoint.
-
-    Supports both streaming and non-streaming modes with continuous batching.
-    """
     if _engine is None:
         raise HTTPException(status_code=503, detail="Engine not initialized")
 
-    # Convert messages to prompt using engine's tokenizer
-    # Extract system prompt if present, then apply chat template
-    # Apply chat template directly with messages
     prompt = _engine.tokenizer.apply_chat_template(
         [{"role": m.role, "content": m.content} for m in request.messages],
         tokenize=False,
     )
 
     if request.stream:
-        # Streaming response (use synchronous generator)
-        generator = _engine.generate(
+        agen = _engine.generate_async(
             prompt=prompt,
-            stream=True,
             max_tokens=request.max_tokens,
             temperature=request.temperature,
             top_p=request.top_p,
             top_k=request.top_k,
         )
 
-        def generate_stream():
-            for token in generator:
+        async def event_stream():
+            async for token in agen:
                 if token == "[DONE]":
                     break
                 yield f"data: {json.dumps({'choices': [{'delta': {'content': token}}]})}\n\n"
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(
-            generate_stream(),
+            event_stream(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
     else:
-        # Non-streaming response
         result = _engine.generate(
             prompt=prompt,
             stream=False,
@@ -202,7 +174,6 @@ async def chat_completion(request: ChatCompletionRequest):
             top_k=request.top_k,
         )
 
-        # Build OpenAI-style response
         import time
 
         resp = CompletionResponse(
@@ -229,52 +200,35 @@ async def generate(
     max_len: int = 2048,
     stream: bool = False,
 ):
-    """Simple generation endpoint.
-
-    Args:
-        query: Input query string
-        history: Conversation history as list of [user, assistant] pairs
-        temperature: Sampling temperature
-        top_p: Top-p sampling parameter
-        top_k: Top-k sampling parameter
-        max_len: Maximum tokens to generate
-        stream: Enable streaming output
-
-    Returns:
-        dict: Generation result with response field
-    """
     if _engine is None:
         raise HTTPException(status_code=503, detail="Engine not initialized")
 
-    # Build messages for chat template
     messages = []
     if history:
-        # Convert history format: List[List[str]] -> List[Dict]
         for h in history:
             if len(h) >= 2:
                 messages.append({"role": "user", "content": h[0]})
                 messages.append({"role": "assistant", "content": h[1]})
     messages.append({"role": "user", "content": query})
 
-    # Use tokenizer's chat template
     prompt = _engine.tokenizer.apply_chat_template(messages, tokenize=False)
 
     if stream:
-        # Synchronous streaming
-        result = _engine.generate(
+        agen = _engine.generate_async(
             prompt=prompt,
-            stream=True,
             max_tokens=max_len,
             temperature=temperature,
             top_p=top_p,
             top_k=top_k,
         )
 
-        def stream_generator():
-            for token in result:
+        async def text_stream():
+            async for token in agen:
+                if token == "[DONE]":
+                    break
                 yield token + "\n"
 
-        return StreamingResponse(stream_generator(), media_type="text/plain")
+        return StreamingResponse(text_stream(), media_type="text/plain")
     else:
         result = _engine.generate(
             prompt=prompt,
@@ -296,17 +250,6 @@ def run_server(
     param_path: Optional[Path] = None,
     max_batch_size: int = 16,
 ):
-    """Run the FastAPI server with uvicorn.
-
-    Args:
-        host: Server host address
-        port: Server port number
-        reload: Enable auto-reload for development
-        device: Device to load model on (e.g., "cuda", "cpu", "cuda:0")
-        dtype: Data type for model weights (e.g., torch.bfloat16, torch.float16)
-        param_path: Path to model parameters directory
-        max_batch_size: Maximum batch size for continuous batching
-    """
     configure_server(
         device=device,
         dtype=dtype,
