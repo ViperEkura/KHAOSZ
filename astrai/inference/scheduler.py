@@ -449,35 +449,6 @@ class InferenceScheduler:
                 return cached_slot, True
         return -1, False
 
-    def _remap_kv(self, tasks: List[Task]) -> Tuple[Tensor, Tensor, Tensor]:
-        """Creates a contiguous KV cache view aligned with batch indices.
-
-        Args:
-            tasks: Tasks sorted by slot index.
-
-        Returns:
-            (k_batch, v_batch, slot_indices) where batch dim maps correctly.
-        """
-        slot_indices = torch.tensor([t.slot for t in tasks], device=self.device)
-        k_cache, v_cache = self.kv_cache
-        return (
-            k_cache.index_select(0, slot_indices),
-            v_cache.index_select(0, slot_indices),
-            slot_indices,
-        )
-
-    @staticmethod
-    def _writeback_kv(
-        kv_cache: Tuple[Tensor, Tensor],
-        k_batch: Tensor,
-        v_batch: Tensor,
-        slot_indices: Tensor,
-    ) -> None:
-        """Writes KV batch data back to original cache slots."""
-        k_cache, v_cache = kv_cache
-        k_cache.index_copy_(0, slot_indices, k_batch)
-        v_cache.index_copy_(0, slot_indices, v_batch)
-
     def add_task(
         self,
         prompt: str,
@@ -631,18 +602,18 @@ class InferenceScheduler:
                 groups.setdefault(t.prefix_len, []).append(t)
 
         for prefix_len, group in groups.items():
-            self._execute_prefill_batch(group, prefix_len)
+            slot_indices = torch.tensor([t.slot for t in group], device=self.device)
+            self._execute_prefill_batch(group, prefix_len, slot_indices)
 
-    def _execute_prefill_batch(self, tasks: List[Task], prefix_len: int) -> None:
+    def _execute_prefill_batch(
+        self, tasks: List[Task], prefix_len: int, slot_indices: Tensor
+    ) -> None:
         """Unified prefill for tasks sharing a common prefix_len.
-
-        Processes only the new tokens (beyond prefix_len). start_pos
-        is prefix_len, so full prefill (prefix_len=0) and partial prefill
-        use the same code path.
 
         Args:
             tasks: Tasks with the same prefix_len < len(prompt_ids).
             prefix_len: Number of cached prefix tokens (0 for full prefill).
+            slot_indices: Tensor of slot indices for KV cache mapping.
         """
         tasks = sorted(tasks, key=lambda t: t.slot)
         batch_sz = len(tasks)
@@ -664,17 +635,14 @@ class InferenceScheduler:
                 input_ids[i, :nl] = torch.tensor(new_ids, device=self.device)
             input_mask[i, : prefix_len + nl] = True
 
-        k_batch, v_batch, slot_indices = self._remap_kv(tasks)
-
         with torch.inference_mode():
             self.model(
                 input_ids,
                 input_mask=input_mask,
                 start_pos=prefix_len,
-                persistent_key_values=(k_batch, v_batch),
+                persistent_key_values=self.kv_cache,
+                slot_indices=slot_indices,
             )
-
-        self._writeback_kv(self.kv_cache, k_batch, v_batch, slot_indices)
 
         for i, t in enumerate(tasks):
             t.input_tokens = len(t.prompt_ids)
@@ -697,7 +665,7 @@ class InferenceScheduler:
 
         tasks = sorted(tasks, key=lambda t: t.slot)
         batch_sz = len(tasks)
-        k_batch, v_batch, slot_indices = self._remap_kv(tasks)
+        slot_indices = torch.tensor([t.slot for t in tasks], device=self.device)
 
         input_ids = torch.zeros(batch_sz, dtype=torch.long, device=self.device)
         for i, t in enumerate(tasks):
@@ -709,12 +677,11 @@ class InferenceScheduler:
             outputs = self.model(
                 input_ids.unsqueeze(1),
                 input_mask=active_mask,
-                persistent_key_values=(k_batch, v_batch),
+                persistent_key_values=self.kv_cache,
                 start_pos=start_pos,
+                slot_indices=slot_indices,
             )
             logits = outputs["logits"][:, -1, :]
-
-        self._writeback_kv(self.kv_cache, k_batch, v_batch, slot_indices)
 
         next_tokens = []
         for i, t in enumerate(tasks):

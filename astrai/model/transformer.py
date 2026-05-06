@@ -148,6 +148,7 @@ class Transformer(AutoModel):
         input_mask: Optional[Tensor] = None,
         persistent_key_values: Optional[Tuple[Tensor, Tensor]] = None,
         start_pos: int = 0,
+        slot_indices: Optional[Tensor] = None,
     ) -> Tensor:
         assert input_ids.ndim == 2
 
@@ -156,8 +157,13 @@ class Transformer(AutoModel):
 
         attn_mask = process_attention_mask(input_mask, x, start_pos, is_causal=True)
 
+        if slot_indices is None:
+            slot_indices = slice(input_ids.size(0))
+
         for layer in self.layers:
-            x = layer(x, rotary_emb, attn_mask, persistent_key_values, start_pos)
+            x = layer(
+                x, rotary_emb, attn_mask, persistent_key_values, start_pos, slot_indices
+            )
 
         hidden_states = self.norm(x)
         logits = self.lm_head(hidden_states)

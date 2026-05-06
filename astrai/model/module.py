@@ -187,6 +187,7 @@ class GQA(nn.Module):
         mask: Tensor = None,
         kv_cache: Optional[Tuple[Tensor, Tensor]] = None,
         start_pos: int = 0,
+        slot_indices: Optional[Tensor] = None,
     ) -> Tensor:
         bsz, seq_len, _ = x.size()
         is_causal = mask is None
@@ -202,14 +203,10 @@ class GQA(nn.Module):
 
         if kv_cache is not None:
             k_cache, v_cache = kv_cache
-
-            # copy to cache
-            k_cache[:bsz, start_pos : start_pos + seq_len, self.layer_id] = k
-            v_cache[:bsz, start_pos : start_pos + seq_len, self.layer_id] = v
-
-            # get cache
-            k = k_cache[:bsz, : start_pos + seq_len, self.layer_id]
-            v = v_cache[:bsz, : start_pos + seq_len, self.layer_id]
+            k_cache[slot_indices, start_pos : start_pos + seq_len, self.layer_id] = k
+            v_cache[slot_indices, start_pos : start_pos + seq_len, self.layer_id] = v
+            k = k_cache[slot_indices, : start_pos + seq_len, self.layer_id]
+            v = v_cache[slot_indices, : start_pos + seq_len, self.layer_id]
 
         k, v = repeat_kv(k, self.n_rep), repeat_kv(v, self.n_rep)
 
@@ -278,6 +275,7 @@ class MLA(nn.Module):
         mask: Tensor = None,
         kv_cache: Optional[Tuple[Tensor, Tensor]] = None,
         start_pos: int = 0,
+        slot_indices: Optional[Tensor] = None,
     ) -> Tensor:
         bsz, seq_len, _ = x.size()
         is_causal = mask is None
@@ -307,10 +305,10 @@ class MLA(nn.Module):
 
         if kv_cache is not None:
             k_cache, v_cache = kv_cache
-            k_cache[:bsz, start_pos : start_pos + seq_len, self.layer_id] = k
-            v_cache[:bsz, start_pos : start_pos + seq_len, self.layer_id] = v
-            k = k_cache[:bsz, : start_pos + seq_len, self.layer_id]
-            v = v_cache[:bsz, : start_pos + seq_len, self.layer_id]
+            k_cache[slot_indices, start_pos : start_pos + seq_len, self.layer_id] = k
+            v_cache[slot_indices, start_pos : start_pos + seq_len, self.layer_id] = v
+            k = k_cache[slot_indices, : start_pos + seq_len, self.layer_id]
+            v = v_cache[slot_indices, : start_pos + seq_len, self.layer_id]
 
         q = q.permute(0, 2, 1, 3)
         k = k.permute(0, 2, 1, 3)
@@ -360,10 +358,16 @@ class DecoderBlock(nn.Module):
         attention_mask: Optional[Tensor] = None,
         kv_cache: Optional[Tuple[Tensor, Tensor]] = None,
         start_pos: int = 0,
+        slot_indices: Optional[Tensor] = None,
     ) -> Tensor:
         # attention
         attn_output = self.attention(
-            self.input_norm(x), rotary_emb, attention_mask, kv_cache, start_pos
+            self.input_norm(x),
+            rotary_emb,
+            attention_mask,
+            kv_cache,
+            start_pos,
+            slot_indices,
         )
         x = attn_output + x
 
