@@ -9,7 +9,7 @@ from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Union
 import torch
 import torch.nn as nn
 
-from astrai.inference.scheduler import InferenceScheduler
+from astrai.inference.scheduler import _STOP, InferenceScheduler
 from astrai.tokenize import AutoTokenizer
 
 logger = logging.getLogger(__name__)
@@ -84,15 +84,15 @@ class _Result:
         """Appends a token to the result buffer.
 
         In non-streaming mode, tokens are concatenated into results[idx].
-        The sentinel "[DONE]" marks a task as complete.
+        The sentinel _STOP marks a task as complete.
 
         Args:
-            token: The decoded token string, or "[DONE]" sentinel.
+            token: The decoded token string, or _STOP sentinel.
             idx: Index of the generation task this token belongs to.
         """
         with self._lock:
             self.tokens.append(token)
-            if token != "[DONE]":
+            if token is not _STOP:
                 self.results[idx] += token
             else:
                 if not self._done[idx]:
@@ -349,14 +349,13 @@ class InferenceEngine:
                 while True:
                     tokens = result.pop_all()
                     for token in tokens:
-                        if token == "[DONE]":
+                        if token is _STOP:
                             return
                         yield token
                     if not result.wait(timeout=0.05):
                         pass
-            except GeneratorExit:
+            finally:
                 self.scheduler.remove_task(task_id)
-                raise
 
         return gen()
 

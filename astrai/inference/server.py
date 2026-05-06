@@ -154,8 +154,6 @@ async def chat_completion(request: ChatCompletionRequest):
 
         async def event_stream():
             async for token in agen:
-                if token == "[DONE]":
-                    break
                 yield f"data: {json.dumps({'choices': [{'delta': {'content': token}}]})}\n\n"
             yield "data: [DONE]\n\n"
 
@@ -224,8 +222,6 @@ async def generate(
 
         async def text_stream():
             async for token in agen:
-                if token == "[DONE]":
-                    break
                 yield token + "\n"
 
         return StreamingResponse(text_stream(), media_type="text/plain")

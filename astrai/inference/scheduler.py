@@ -12,6 +12,8 @@ from torch import Tensor
 from astrai.model.automodel import AutoModel
 from astrai.tokenize import AutoTokenizer
 
+_STOP = object()
+
 
 class _RadixNode:
     """Internal node for the radix tree prefix cache.
@@ -289,9 +291,6 @@ def apply_sampling_strategies(
     filter_value: float = -float("inf"),
 ) -> Tensor:
     """Applies temperature scaling, top-k filtering, and top-p (nucleus) filtering.
-
-    Operates on a clone of the input logits to avoid in-place modification
-    of the inference tensor.
 
     Args:
         logits: Raw logits tensor of shape (batch, vocab_size).
@@ -704,7 +703,7 @@ class InferenceScheduler:
         for t in tasks:
             if t.is_finished(self.tokenizer.stop_ids):
                 if t.stream_callback:
-                    t.stream_callback("[DONE]")
+                    t.stream_callback(_STOP)
 
     def _run_generation_loop(self) -> None:
         """Main generation loop run in a daemon thread.
