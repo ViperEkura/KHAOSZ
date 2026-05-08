@@ -15,7 +15,7 @@ def chat():
     tokenizer = AutoTokenizer.from_pretrained(PARAMETER_ROOT)
     model.to(device="cuda", dtype=torch.bfloat16)
 
-    messages = []
+    messages = [{"role": "system", "content": "You are a helpful assistant."}]
     engine = InferenceEngine(model=model, tokenizer=tokenizer)
 
     while True:

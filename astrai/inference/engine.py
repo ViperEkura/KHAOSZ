@@ -1,22 +1,41 @@
-"""Unified inference engine for continuous batching."""
+"""Unified inference engine for continuous batching.
+
+Layers:
+  - GenerationParams:    Immutable value object for sampling parameters.
+  - GenerationRequest:   User-facing request DTO with validation.
+  - _Result:             Thread-safe token accumulator (Observer pattern).
+  - InferenceEngine:     Facade over InferenceScheduler + async wrapper.
+"""
 
 import asyncio
 import gc
 import threading
+from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Union
 
 import torch
 import torch.nn as nn
 
-from astrai.inference.scheduler import _STOP, InferenceScheduler
+from astrai.inference.cache import _STOP
+from astrai.inference.scheduler import InferenceScheduler
 from astrai.tokenize import AutoTokenizer
+
+
+@dataclass(frozen=True)
+class GenerationParams:
+    """Immutable value object for sampling hyperparameters."""
+
+    top_k: int = 50
+    top_p: float = 1.0
+    temperature: float = 1.0
+    max_tokens: int = 1024
 
 
 class GenerationRequest:
     """Request parameters for text generation.
 
-    Encapsulates messages, sampling parameters, and streaming preference
-    for a single generation request.
+    Encapsulates messages, sampling parameters (via GenerationParams),
+    and streaming preference for a single generation request.
     """
 
     def __init__(
@@ -39,12 +58,30 @@ class GenerationRequest:
             stream: Whether to return output as a token stream.
         """
         self.messages = messages
-        self.top_k = top_k
-        self.top_p = top_p
-        self.temperature = temperature
-        self.max_len = max_len
+        self.params = GenerationParams(
+            top_k=top_k,
+            top_p=top_p,
+            temperature=temperature,
+            max_tokens=max_len,
+        )
         self.stream = stream
         self._validate()
+
+    @property
+    def top_k(self) -> int:
+        return self.params.top_k
+
+    @property
+    def top_p(self) -> float:
+        return self.params.top_p
+
+    @property
+    def temperature(self) -> float:
+        return self.params.temperature
+
+    @property
+    def max_len(self) -> int:
+        return self.params.max_tokens
 
     def _validate(self):
         """Validates sampling parameter ranges."""
@@ -296,10 +333,10 @@ class InferenceEngine:
         return self.generate(
             prompt=prompt,
             stream=request.stream,
-            max_tokens=request.max_len,
-            temperature=request.temperature,
-            top_p=request.top_p,
-            top_k=request.top_k,
+            max_tokens=request.params.max_tokens,
+            temperature=request.params.temperature,
+            top_p=request.params.top_p,
+            top_k=request.params.top_k,
         )
 
     def _generate_streaming(

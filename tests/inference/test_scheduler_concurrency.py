@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from astrai.inference.cache import PrefixCacheManager
 from astrai.inference.scheduler import (
     InferenceScheduler,
-    PrefixCacheManager,
 )
 
 

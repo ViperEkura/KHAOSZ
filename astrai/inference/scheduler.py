@@ -1,200 +1,30 @@
-"""Inference scheduler for single-GPU continuous batching."""
+"""Inference scheduler for single-GPU continuous batching.
+
+Splits scheduling concerns across modules:
+  - cache.py:   SlotAllocator (Object Pool), PrefixCacheManager
+  - sampling.py: Strategy-pattern logit transformations
+"""
 
 import logging
 import threading
 import time
 import uuid
-from collections import OrderedDict
+from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
 from torch import Tensor
 
+from astrai.inference.cache import _STOP, PrefixCacheManager, SlotAllocator
+from astrai.inference.sampling import apply_sampling_strategies
 from astrai.model.automodel import AutoModel
 from astrai.tokenize import AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
-_STOP = object()
 
-
-class _RadixNode:
-    """Internal node for the radix tree prefix cache.
-
-    Attributes:
-        children: Mapping from token ID to child node.
-        slot: KV cache slot index for the prefix ending at this node.
-        slot_ver: Version counter of the slot at insertion time.
-        ref_count: Number of tasks currently referencing this node.
-        last_access: Timestamp of the most recent access (for LRU ordering).
-    """
-
-    __slots__ = ("children", "slot", "slot_ver", "ref_count", "last_access")
-
-    def __init__(self):
-        self.children: Dict[int, "_RadixNode"] = {}
-        self.slot: int = -1
-        self.slot_ver: int = 0
-        self.ref_count: int = 0
-        self.last_access: float = 0.0
-
-
-class PrefixCacheManager:
-    """Radix-tree prefix cache with LRU eviction.
-
-    Maps token ID sequences to KV cache slots. Intermediate tree nodes
-    also store slot information, allowing direct slot reuse when the
-    cached slot is free and its version matches (no intervening writes).
-    """
-
-    def __init__(self, max_capacity: int = 1000):
-        """Initializes the prefix cache.
-
-        Args:
-            max_capacity: Maximum number of nodes in the LRU list.
-        """
-        self.root = _RadixNode()
-        self.max_capacity = max_capacity
-        self._lru: OrderedDict[int, _RadixNode] = OrderedDict()
-
-    def insert(self, token_ids: Tuple[int, ...], slot: int, slot_ver: int) -> None:
-        """Inserts a token sequence into the prefix cache.
-
-        Every node along the path records the slot and its version,
-        enabling direct slot reuse for partial prefix matches.
-
-        Args:
-            token_ids: The token ID sequence to cache.
-            slot: The KV cache slot containing this prefix's computed keys/values.
-            slot_ver: The slot version at insertion time, used for staleness detection.
-        """
-        node = self.root
-        for tid in token_ids:
-            nxt = node.children.get(tid)
-            if nxt is None:
-                nxt = _RadixNode()
-                node.children[tid] = nxt
-            node = nxt
-            node.slot = slot
-            node.slot_ver = slot_ver
-            node.last_access = time.time()
-            self._lru[id(node)] = node
-        node.ref_count += 1
-        self._evict_if_needed()
-
-    def find(self, token_ids: List[int]) -> Tuple[int, int, int]:
-        """Finds the longest matching prefix in the cache.
-
-        Walks the radix tree token by token, recording the deepest match.
-
-        Args:
-            token_ids: The token sequence to match against.
-
-        Returns:
-            Tuple of (prefix_len, slot, slot_ver):
-                prefix_len: Number of matching tokens (0 if no match).
-                slot: KV cache slot of the matched prefix (-1 if no match).
-                slot_ver: Version of that slot when the prefix was inserted.
-        """
-        node = self.root
-        best_len, best_slot, best_ver = 0, -1, 0
-        for i, tid in enumerate(token_ids):
-            nxt = node.children.get(tid)
-            if nxt is None:
-                break
-            node = nxt
-            best_len, best_slot, best_ver = i + 1, node.slot, node.slot_ver
-            node.last_access = time.time()
-            self._lru.move_to_end(id(node))
-        return best_len, best_slot, best_ver
-
-    def pin(self, token_ids: Tuple[int, ...]) -> None:
-        """Increments the reference count of a cached prefix.
-
-        Called when a task reuses a cached prefix to prevent eviction.
-
-        Args:
-            token_ids: The token sequence whose node's ref_count to increment.
-        """
-        node = self.root
-        for tid in token_ids:
-            nxt = node.children.get(tid)
-            if nxt is None:
-                return
-            node = nxt
-        node.ref_count += 1
-
-    def release(self, token_ids: Tuple[int, ...]) -> None:
-        """Decrements the reference count of a cached prefix.
-
-        The node's slot is preserved even when ref_count reaches zero,
-        allowing future tasks to reuse the slot directly if it remains free.
-
-        Args:
-            token_ids: The token sequence whose node's ref_count to decrement.
-        """
-        node = self.root
-        for tid in token_ids:
-            nxt = node.children.get(tid)
-            if nxt is None:
-                return
-            node = nxt
-        if node.ref_count > 0:
-            node.ref_count -= 1
-
-    def copy_kv(
-        self,
-        token_ids: Tuple[int, ...],
-        target_slot: int,
-        kv_cache: Tuple[Tensor, Tensor],
-        n_layers: int,
-    ) -> None:
-        """Copies cached KV data from the source slot to a target slot.
-
-        Args:
-            token_ids: The prefix token sequence identifying the source cache node.
-            target_slot: The destination KV cache slot to copy into.
-            kv_cache: Tuple of (k_cache, v_cache) tensors.
-            n_layers: Number of transformer layers to copy.
-        """
-        node = self.root
-        for tid in token_ids:
-            nxt = node.children.get(tid)
-            if nxt is None:
-                return
-            node = nxt
-        src_slot = node.slot
-        if src_slot < 0:
-            return
-        prefix_len = len(token_ids)
-        k_cache, v_cache = kv_cache
-        for li in range(n_layers):
-            k_cache[target_slot, :prefix_len, li].copy_(
-                k_cache[src_slot, :prefix_len, li]
-            )
-            v_cache[target_slot, :prefix_len, li].copy_(
-                v_cache[src_slot, :prefix_len, li]
-            )
-
-    def _evict_if_needed(self) -> None:
-        """Evicts least-recently-used nodes until under capacity.
-
-        Skips nodes with ref_count > 0 (still in use by active tasks).
-        Evicted nodes have their slot and children cleared.
-        """
-        while len(self._lru) > self.max_capacity:
-            key, node = next(iter(self._lru.items()))
-            if node.ref_count > 0:
-                self._lru.move_to_end(key)
-                continue
-            self._lru.pop(key)
-            node.slot = -1
-            node.slot_ver = 0
-            node.children.clear()
-
-
-class TaskStatus:
-    """Enum-like task states in the continuous batching lifecycle."""
+class TaskStatus(Enum):
+    """Task states in the continuous batching lifecycle."""
 
     PENDING = "pending"
     RUNNING = "running"
@@ -286,46 +116,6 @@ class Task:
         return False
 
 
-def apply_sampling_strategies(
-    logits: Tensor,
-    temperature: float,
-    top_k: int,
-    top_p: float,
-    filter_value: float = -float("inf"),
-) -> Tensor:
-    """Applies temperature scaling, top-k filtering, and top-p (nucleus) filtering.
-
-    Args:
-        logits: Raw logits tensor of shape (batch, vocab_size).
-        temperature: Temperature scaling factor (1.0 = no scaling).
-        top_k: Keep only top-k logits (0 disables).
-        top_p: Nucleus probability threshold (1.0 disables).
-        filter_value: Value to assign to filtered-out positions.
-
-    Returns:
-        Modified logits tensor with same shape as input.
-    """
-    logits = logits.clone()
-    if temperature != 1.0:
-        logits = logits / temperature
-    if top_k > 0:
-        top_k = min(top_k, logits.size(-1))
-        indices = logits < torch.topk(logits, top_k, dim=-1)[0][..., -1, None]
-        logits[indices] = filter_value
-    if top_p < 1.0:
-        sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
-        cum_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
-        sorted_indices_to_remove = cum_probs > top_p
-        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-        sorted_indices_to_remove[..., 0] = 0
-        indices_to_remove = torch.zeros_like(logits, dtype=torch.bool)
-        indices_to_remove.scatter_(
-            dim=1, index=sorted_indices, src=sorted_indices_to_remove
-        )
-        logits[indices_to_remove] = filter_value
-    return logits
-
-
 class InferenceScheduler:
     """Continuous batching scheduler for single-GPU inference.
 
@@ -397,8 +187,7 @@ class InferenceScheduler:
             dtype=torch.bool,
         )
 
-        self._free_slots = (1 << max_batch_size) - 1
-        self._slot_ver: List[int] = [0] * max_batch_size
+        self.slot_allocator = SlotAllocator(max_batch_size)
         self.waiting_queue: List[Task] = []
         self.active_tasks: List[Task] = []
 
@@ -410,18 +199,12 @@ class InferenceScheduler:
         self._total_tokens = 0
 
     def _alloc_slot(self) -> int:
-        """Allocates a free KV cache slot using a bitmask.
+        """Allocates a free KV cache slot using the Object Pool.
 
         Returns:
             Slot index on success, -1 if all slots are occupied.
         """
-        lsb = self._free_slots & -self._free_slots
-        if lsb == 0:
-            return -1
-        idx = lsb.bit_length() - 1
-        self._free_slots ^= lsb
-        self._slot_ver[idx] += 1
-        return idx
+        return self.slot_allocator.alloc()
 
     def _free_slot(self, idx: int) -> None:
         """Releases a KV cache slot back to the free pool.
@@ -429,7 +212,7 @@ class InferenceScheduler:
         Args:
             idx: Slot index to free.
         """
-        self._free_slots |= 1 << idx
+        self.slot_allocator.free(idx)
         self.seq_mask[idx, :] = False
 
     def _try_reuse_slot(self, prefix: Tuple[int, ...]) -> Tuple[int, bool]:
@@ -445,9 +228,9 @@ class InferenceScheduler:
             Tuple of (slot, True) on success, or (-1, False) if reuse is not possible.
         """
         _plen, cached_slot, cached_ver = self.prefix_cache.find(list(prefix))
-        if cached_slot >= 0 and (self._free_slots >> cached_slot) & 1:
-            if cached_ver == self._slot_ver[cached_slot]:
-                self._free_slots ^= 1 << cached_slot
+        if cached_slot >= 0 and self.slot_allocator.is_free(cached_slot):
+            if cached_ver == self.slot_allocator.version(cached_slot):
+                self.slot_allocator.occupy(cached_slot)
                 return cached_slot, True
         return -1, False
 
@@ -588,7 +371,9 @@ class InferenceScheduler:
             if task.prefix_len > 0 and not reused:
                 prefix = tuple(task.prompt_ids[: task.prefix_len])
                 _plen, cached_slot, cached_ver = self.prefix_cache.find(list(prefix))
-                if cached_slot >= 0 and cached_ver == self._slot_ver[cached_slot]:
+                if cached_slot >= 0 and cached_ver == self.slot_allocator.version(
+                    cached_slot
+                ):
                     self.prefix_cache.pin(prefix)
                     self.prefix_cache.copy_kv(
                         prefix, slot, self.kv_cache, self._n_layers
@@ -663,7 +448,7 @@ class InferenceScheduler:
             t.input_tokens = len(t.prompt_ids)
             t.output_tokens = 0
             self.prefix_cache.insert(
-                tuple(t.prompt_ids), t.slot, self._slot_ver[t.slot]
+                tuple(t.prompt_ids), t.slot, self.slot_allocator.version(t.slot)
             )
             if t.slot >= 0:
                 self.seq_mask[t.slot, : t.input_tokens] = True
