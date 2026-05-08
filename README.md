@@ -27,17 +27,12 @@
 
 ## 📖 Table of Contents
 
-<details open>
-<summary><b>English</b></summary>
-
 - [Features](#features)
 - [Quick Start](#quick-start)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
 - [Community](#community)
 - [License](#license)
-
-</details>
 
 ---
 
@@ -75,7 +70,14 @@ pip install -e ".[dev]"
 python scripts/tools/train.py \
   --train_type=seq \
   --data_root_path=/path/to/dataset \
-  --param_path=/path/to/param_path
+  --param_path=/path/to/model \
+  --n_epoch=3 \
+  --batch_size=4 \
+  --accumulation_steps=8 \
+  --max_lr=3e-4 \
+  --warmup_steps=2000 \
+  --ckpt_interval=5000 \
+  --ckpt_dir=./checkpoints
 ```
 
 #### Generate Text
@@ -83,6 +85,25 @@ python scripts/tools/train.py \
 ```bash
 python scripts/tools/generate.py --param_path=/path/to/param_path
 ```
+
+#### Training Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `--train_type` | Training type (`seq`, `sft`, `dpo`) | required |
+| `--data_root_path` | Dataset root directory | required |
+| `--param_path` | Model / checkpoint path | required |
+| `--n_epoch` | Training epochs | 1 |
+| `--batch_size` | Batch size | 1 |
+| `--accumulation_steps` | Gradient accumulation steps | 1 |
+| `--max_lr` | Peak learning rate (cosine decay) | 3e-4 |
+| `--warmup_steps` | LR warmup steps | 1000 |
+| `--ckpt_interval` | Checkpoint interval (iters) | 5000 |
+| `--ckpt_dir` | Checkpoint directory | checkpoint |
+| `--num_workers` | DataLoader workers | 4 |
+| `--nprocs` | Number of GPUs | 1 |
+
+Full reference at [Parameter Guide](./assets/docs/params.md#training-parameters).
 
 #### Docker
 

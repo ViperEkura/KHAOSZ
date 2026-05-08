@@ -4,70 +4,83 @@
 
 ### Basic Parameters
 
-| Parameter | Description | Default Value |
-|-----------|-------------|---------------|
-| `--train_type` | Training type (seq, sft, dpo, grpo) | required |
-| `--model_type` | Model type for AutoModel loading (e.g., transformer) | transformer |
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `--train_type` | Training type (`seq`, `sft`, `dpo`) | required |
 | `--data_root_path` | Dataset root directory | required |
 | `--param_path` | Model parameters or checkpoint path | required |
 | `--n_epoch` | Total training epochs | 1 |
-| `--batch_size` | Batch size | 4 |
-| `--accumulation_steps` | Gradient accumulation steps | 1 |
+| `--batch_size` | Batch size | 1 |
+| `--accumulation_steps` | Gradient accumulation steps between optimizer steps | 1 |
 
 ### Learning Rate Scheduling
 
-| Parameter | Description | Default Value |
-|-----------|-------------|---------------|
+| Parameter | Description | Default |
+|-----------|-------------|---------|
 | `--warmup_steps` | Warmup steps | 1000 |
-| `--max_lr` | Maximum learning rate (warmup + cosine decay) | 3e-4 |
-| `--max_grad_norm` | Maximum gradient norm | 1.0 |
+| `--max_lr` | Maximum learning rate (cosine decay after warmup) | 3e-4 |
+| `--max_grad_norm` | Maximum gradient norm for clipping | 1.0 |
 
-### Checkpoint
+### Optimizer (AdamW)
 
-| Parameter | Description | Default Value |
-|-----------|-------------|---------------|
-| `--ckpt_interval` | Checkpoint save interval (iterations) | 5000 |
-| `--ckpt_dir` | Checkpoint save directory | checkpoint |
-| `--resume_dir` | Resume training from specified path | - |
-
-### Optimizer Parameters
-
-| Parameter | Description | Default Value |
-|-----------|-------------|---------------|
+| Parameter | Description | Default |
+|-----------|-------------|---------|
 | `--adamw_beta1` | AdamW beta1 | 0.9 |
 | `--adamw_beta2` | AdamW beta2 | 0.95 |
 | `--adamw_weight_decay` | AdamW weight decay | 0.01 |
 
 ### Data Loading
 
-| Parameter | Description | Default Value |
-|-----------|-------------|---------------|
-| `--random_seed` | Random seed | 3407 |
-| `--num_workers` | DataLoader workers | 0 |
-| `--prefetch_factor` | Prefetch factor for dataloader | None |
-| `--pin_memory` | Enable pin_memory | False |
-| `--no_pin_memory` | Disable pin_memory | - |
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `--window_size` | Max input sequence length | model config `max_len` |
+| `--stride` | Stride for sliding window over sequences | None |
+| `--random_seed` | Random seed for reproducibility | 3407 |
+| `--num_workers` | DataLoader worker processes | 4 |
+| `--no_pin_memory` | Disable pin_memory (enabled by default) | (flag) |
+
+### Checkpoint & Resume
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `--ckpt_interval` | Iterations between checkpoints | 5000 |
+| `--ckpt_dir` | Checkpoint save directory | checkpoint |
+| `--start_epoch` | Resume from epoch (0 = from scratch) | 0 |
+| `--start_batch` | Resume from batch iteration | 0 |
 
 ### Distributed Training
 
-| Parameter | Description | Default Value |
-|-----------|-------------|---------------|
-| `--nprocs` | Number of GPUs | 1 |
-| `--device_type` | Device type (cuda/cpu) | cuda |
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `--nprocs` | Number of GPUs / processes | 1 |
+| `--device_type` | Device type | cuda |
 
-### Other Parameters
+### Strategy-specific
 
-| Parameter | Description | Default Value |
-|-----------|-------------|---------------|
-| `--window_size` | Maximum input sequence length | model config max_len |
-| `--stride` | Input sequence stride | - |
-| `--dpo_beta` | DPO beta value | 0.1 |
-| `--grpo_clip_eps` | GRPO clip epsilon | 0.2 |
-| `--grpo_kl_coef` | GRPO KL coefficient | 0.01 |
-| `--grpo_group_size` | GRPO group size | 4 |
-| `--label_smoothing` | Label smoothing parameter | 0.1 |
-| `--start_epoch` | Starting epoch | 0 |
-| `--start_batch` | Starting batch | 0 |
+| Parameter | Description | Default | Used by |
+|-----------|-------------|---------|---------|
+| `--dpo_beta` | DPO beta value | 0.1 | `dpo` |
+| `--label_smoothing` | Label smoothing for cross-entropy loss | 0.1 | `seq`, `sft` |
+
+### Usage Example
+
+```bash
+python scripts/tools/train.py \
+  --train_type seq \
+  --data_root_path /path/to/dataset \
+  --param_path /path/to/model \
+  --n_epoch 3 \
+  --batch_size 4 \
+  --accumulation_steps 8 \
+  --max_lr 3e-4 \
+  --warmup_steps 2000 \
+  --max_grad_norm 1.0 \
+  --ckpt_interval 5000 \
+  --ckpt_dir ./checkpoints \
+  --num_workers 4 \
+  --nprocs 1 \
+  --device_type cuda
+```
 
 ---
 
@@ -89,14 +102,14 @@
 ```python
 import torch
 from astrai.model import AutoModel
-from astrai.tokenize import Tokenizer
+from astrai.tokenize import AutoTokenizer
 from astrai.inference import InferenceEngine, GenerationRequest
 
 # Load model using AutoModel
 model = AutoModel.from_pretrained("your_model_dir")
 
 # Load tokenizer
-tokenizer = Tokenizer("your_model_dir")
+tokenizer = AutoTokenizer.from_pretrained("your_model_dir")
 
 # Create engine with separate model and tokenizer
 engine = InferenceEngine(

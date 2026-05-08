@@ -76,7 +76,14 @@ pip install -e ".[dev]"
 python scripts/tools/train.py \
   --train_type=seq \
   --data_root_path=/path/to/dataset \
-  --param_path=/path/to/param_path
+  --param_path=/path/to/model \
+  --n_epoch=3 \
+  --batch_size=4 \
+  --accumulation_steps=8 \
+  --max_lr=3e-4 \
+  --warmup_steps=2000 \
+  --ckpt_interval=5000 \
+  --ckpt_dir=./checkpoints
 ```
 
 #### 文本生成
@@ -84,6 +91,25 @@ python scripts/tools/train.py \
 ```bash
 python scripts/tools/generate.py --param_path=/path/to/param_path
 ```
+
+#### 训练参数
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--train_type` | 训练类型（`seq`, `sft`, `dpo`） | 必填 |
+| `--data_root_path` | 数据集根目录 | 必填 |
+| `--param_path` | 模型参数或断点路径 | 必填 |
+| `--n_epoch` | 训练轮数 | 1 |
+| `--batch_size` | 批次大小 | 1 |
+| `--accumulation_steps` | 梯度累积步数 | 1 |
+| `--max_lr` | 峰值学习率（余弦衰减） | 3e-4 |
+| `--warmup_steps` | 预热步数 | 1000 |
+| `--ckpt_interval` | 检查点间隔（迭代步） | 5000 |
+| `--ckpt_dir` | 检查点保存目录 | checkpoint |
+| `--num_workers` | 数据加载线程数 | 4 |
+| `--nprocs` | GPU 数量 | 1 |
+
+完整参数列表见[参数说明](./params.md#training-parameters)。
 
 #### Docker
 

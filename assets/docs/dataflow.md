@@ -176,7 +176,7 @@ flowchart LR
 - **`TaskStatus`**: Task state enumeration
 - **`apply_sampling_strategies`**: Applies temperature, top-k, top-p sampling to logits
 - **`PrefixCacheManager`**: Radix tree-based prefix cache with LRU eviction for efficient KV cache reuse
-- **`RadixNode`**: Tree node structure for prefix caching
+- **`_RadixNode`**: Tree node structure for prefix caching
 - Continuous batching: new requests can join at any time, completed requests are released immediately
 
 #### 6.3 Server (`server.py`)

@@ -85,8 +85,8 @@ classDiagram
         }
 
         class BaseSegmentFetcher {
-            +List~Tensor~ segments
-            +List~int~ cum_lengths
+            +List[Tensor] segments
+            +List[int] cum_lengths
             +int total_length
             +fetch_data(begin_idx, end_idx) Tensor
         }
@@ -191,7 +191,7 @@ classDiagram
             +int dim
             +int max_len
             +float base
-            +forward(x, start_pos) Tuple~Tensor, Tensor~
+            +forward(x, start_pos) Tuple[Tensor, Tensor]
         }
 
         class Embedding {
@@ -202,14 +202,14 @@ classDiagram
 
     namespace tokenize {
         class AutoTokenizer {
-            +List~str~ stop_ids
+            +List[str] stop_ids
             +int bos_id
             +int eos_id
             +int pad_id
             +vocab_size int
-            +encode(tokens, out_ids, add_special_tokens) List~int~
+            +encode(tokens, out_ids, add_special_tokens) List[int]
             +decode(tokens, skip_special_tokens) str
-            +apply_chat_template(messages, tokenize) Union~str, List[int]~
+            +apply_chat_template(messages, tokenize) Union[str, List[int]]
             +set_chat_template(template)
             +load(path)
             +from_pretrained(path) AutoTokenizer
@@ -228,7 +228,7 @@ classDiagram
             +Dict _entries
             +register(name, component_cls, category, priority)
             +get(name) Type
-            +list_names() List~str~
+            +list_names() List[str]
         }
 
         class BaseFactory {
@@ -242,10 +242,10 @@ classDiagram
     namespace trainer {
         class Trainer {
             +TrainConfig train_config
-            +List~TrainCallback~ callbacks
+            +List[TrainCallback] callbacks
             +train(checkpoint)
             +_build_context(checkpoint) TrainContext
-            +_get_default_callbacks() List~TrainCallback~
+            +_get_default_callbacks() List[TrainCallback]
         }
 
         class TrainContext {
@@ -308,7 +308,7 @@ classDiagram
         }
 
         class BaseScheduler {
-            +get_lr() List~float~
+            +get_lr() List[float]
             +step()
         }
 
@@ -390,10 +390,8 @@ classDiagram
             +InferenceScheduler scheduler
             +int max_batch_size
             +Optional int max_seq_len
-            +int max_prefix_len
+            +int max_prompt_len
             +int cache_capacity
-            +Tensor kv_cache
-            +Tensor seq_mask
             +generate(prompt, stream, max_tokens, temperature, top_p, top_k) Union[Generator, str, List[str]]
             +generate_with_request(request) Union[Generator, str, List[str]]
             +get_stats() Dict
@@ -403,10 +401,10 @@ classDiagram
         class InferenceScheduler {
             +nn.Module model
             +AutoTokenizer tokenizer
-            +ModelConfig config
             +Tuple kv_cache
             +Tensor seq_mask
             +PrefixCacheManager prefix_cache
+            +SlotAllocator slot_allocator
             +List waiting_queue
             +List active_tasks
             +add_task(prompt, max_tokens, temperature, top_p, top_k, stream_callback) str
@@ -417,21 +415,22 @@ classDiagram
         }
 
         class PrefixCacheManager {
-            +RadixNode root
+            +_RadixNode root
             +int max_capacity
-            +List lru
-            +insert(token_ids, slot)
-            +find_longest_prefix(token_ids) Tuple[int, int]
+            +OrderedDict _lru
+            +insert(token_ids, slot, slot_ver)
+            +find(token_ids) Tuple[int, int, int]
+            +pin(token_ids)
             +release(token_ids)
+            +copy_kv(token_ids, target_slot, kv_cache, n_layers)
         }
 
-        class RadixNode {
+        class _RadixNode {
             +Dict children
-            +int hash
             +int slot
+            +int slot_ver
             +int ref_count
             +float last_access
-            +List token_sequence
         }
 
         class Task {
@@ -446,15 +445,69 @@ classDiagram
             +int input_tokens
             +int output_tokens
             +int slot
+            +int prefix_len
+            +float arrival_time
+            +float finish_time
             +Callable stream_callback
             +is_finished(stop_ids) bool
         }
 
         class TaskStatus {
-            +str PENDING
-            +str RUNNING
-            +str FINISHED
-            +str ABORTED
+            <<enumeration>>
+            PENDING
+            RUNNING
+            FINISHED
+            ABORTED
+        }
+
+        class GenerationRequest {
+            +List[Dict] messages
+            +GenerationParams params
+            +bool stream
+        }
+
+        class GenerationParams {
+            <<value object>>
+            +int top_k
+            +float top_p
+            +float temperature
+            +int max_tokens
+        }
+
+        class SlotAllocator {
+            +int _max_slots
+            +int _free_mask
+            +List _versions
+            +alloc() int
+            +free(idx)
+            +occupy(idx)
+            +is_free(idx) bool
+            +version(idx) int
+        }
+
+        class BaseSamplingStrategy {
+            <<abstract>>
+            +apply(logits, filter_value) Tensor
+        }
+
+        class TemperatureStrategy {
+            +float temperature
+            +apply(logits, filter_value) Tensor
+        }
+
+        class TopKStrategy {
+            +int top_k
+            +apply(logits, filter_value) Tensor
+        }
+
+        class TopPStrategy {
+            +float top_p
+            +apply(logits, filter_value) Tensor
+        }
+
+        class SamplingPipeline {
+            +List strategies
+            +apply(logits, filter_value) Tensor
         }
 
         class Server {
@@ -462,21 +515,12 @@ classDiagram
             +predict(request)
         }
 
-        class GenerationRequest {
-            +int top_k
-            +float top_p
-            +float temperature
-            +int max_len
-            +List~Dict~ messages
-            +stream bool
-        }
-
         class _Result {
-            +List~str~ tokens
-            +List~str~ results
-            +List~bool~ done_flags
+            +List[str] tokens
+            +List[str] results
+            +List[bool] done_flags
             +append(token, idx)
-            +get_results() List~str~
+            +get_results() List[str]
         }
 
         class ChatMessage {
@@ -485,13 +529,13 @@ classDiagram
         }
 
         class ChatCompletionRequest {
-            +List~ChatMessage~ messages
+            +List[ChatMessage] messages
             +float temperature
             +float top_p
             +int top_k
             +int max_tokens
             +bool stream
-            +Optional~str~ system_prompt
+            +Optional[str] system_prompt
         }
 
         class CompletionResponse {
@@ -499,7 +543,7 @@ classDiagram
             +str object
             +int created
             +str model
-            +List~Dict~ choices
+            +List[Dict] choices
         }
     }
 
@@ -542,7 +586,6 @@ classDiagram
     TrainContext --> Checkpoint : manages
     TrainContext --> BaseStrategy : uses
     TrainContext --> BaseScheduler : uses
-    AutoModel --> ModelConfig : contains
     SchedulerFactory ..> BaseScheduler : creates
     BaseScheduler <|-- CosineScheduler
     BaseScheduler <|-- SGDRScheduler
@@ -553,11 +596,19 @@ classDiagram
     TrainCallback <|-- ProgressBarCallback
     TrainCallback <|-- MetricLoggerCallback
     InferenceEngine --> InferenceScheduler : uses
+    InferenceEngine --> GenerationRequest : uses
+    GenerationRequest --> GenerationParams : contains
     InferenceScheduler --> Task : manages
+    Task --> TaskStatus : uses
     InferenceScheduler --> TaskStatus : uses
+    InferenceScheduler --> SlotAllocator : uses
     InferenceScheduler --> Transformer : uses
     InferenceEngine --> Transformer : uses
-    InferenceEngine --> GenerationRequest : uses
+    InferenceEngine --> _Result : uses
+    BaseSamplingStrategy <|-- TemperatureStrategy
+    BaseSamplingStrategy <|-- TopKStrategy
+    BaseSamplingStrategy <|-- TopPStrategy
+    SamplingPipeline --> BaseSamplingStrategy : composes
     Server --> InferenceEngine : uses
     Server --> ChatMessage : uses
     Server --> ChatCompletionRequest : uses
@@ -585,7 +636,7 @@ classDiagram
     ParallelModel <|-- ColumnParallelLinear
     AutoTokenizer --> ChatTemplate : uses
     InferenceScheduler --> PrefixCacheManager : uses
-    InferenceScheduler --> RadixNode : uses
+    PrefixCacheManager --> _RadixNode : composes
     Checkpoint ..> Checkpoint : saves/loads
     TrainConfig --> DatasetFactory : selects
     TrainConfig --> SchedulerFactory : selects
@@ -606,7 +657,7 @@ classDiagram
 | **astrai.model** | AutoModel, Transformer, DecoderBlock, GQA, MLA, MLP, RMSNorm, Linear, RotaryEmbedding, Embedding | Neural network model |
 | **astrai.tokenize** | AutoTokenizer, ChatTemplate | Tokenizer and chat template |
 | **astrai.trainer** | Trainer, TrainContext, TrainContextBuilder, BaseStrategy, StrategyFactory, BaseScheduler, SchedulerFactory, TrainCallback, CallbackFactory | Training workflow management |
-| **astrai.inference** | InferenceEngine, InferenceScheduler, Task, TaskStatus, Server, GenerationRequest, PrefixCacheManager, ChatMessage, ChatCompletionRequest, CompletionResponse | Inference service with continuous batching |
+| **astrai.inference** | InferenceEngine, InferenceScheduler, Task, TaskStatus, GenerationParams, GenerationRequest, PrefixCacheManager, _RadixNode, SlotAllocator, BaseSamplingStrategy, TemperatureStrategy, TopKStrategy, TopPStrategy, SamplingPipeline, ChatMessage, ChatCompletionRequest, CompletionResponse | Inference service with continuous batching |
 | **astrai.parallel** | ParallelSetup, ColumnParallelLinear, RowParallelLinear | Distributed parallel |
 | **astrai.factory** | Registry, BaseFactory | Generic component registration |
 
@@ -620,6 +671,8 @@ classDiagram
 | **Observer** | `TrainCallback`, `CallbackFactory` | Callback mechanism for training process monitoring (checkpoint, early stopping, metrics) |
 | **Singleton** | `TrainContext` | Training process global state management |
 | **Registry** | `BaseFactory`, `Registry` | Generic component registration with category and priority support |
+| **Object Pool** | `SlotAllocator` | O(1) KV cache slot allocation/deallocation via bitmask |
+| **Strategy (Sampling)** | `BaseSamplingStrategy`, `TemperatureStrategy`, `TopKStrategy`, `TopPStrategy`, `SamplingPipeline` | Composable logit transformations with temperature, top-k, top-p |
 | **Producer-Consumer** | `InferenceScheduler`, `Task`, `waiting_queue`, `active_tasks` | Continuous batching with dynamic task queue management |
 | **Event-Driven** | `threading.Event`, `_task_event` | Non-blocking wait mechanism for task scheduling using Python's `threading` module |
 | **AutoModel Registry** | `AutoModel`, `Transformer` | Model type registration and dynamic loading via decorator pattern |
@@ -630,7 +683,7 @@ classDiagram
 1. **Configuration → Training**: `TrainConfig` contains `ModelConfig`, holds model, dataset, optimizer and other references
 2. **Training Flow**: `Trainer` → `TrainContextBuilder` → `TrainContext`, uses `BaseStrategy` to compute loss
 3. **Strategy Selection**: `StrategyFactory` creates corresponding strategy instance based on `train_type`
-4. **Inference Flow**: `Server` → `InferenceEngine` → `InferenceScheduler` → `Transformer`, supports continuous batching with streaming/non-streaming
+4. **Inference Flow**: `Server` → `InferenceEngine` → `InferenceScheduler` → `Transformer`, uses `PrefixCacheManager`, `SlotAllocator`, and `SamplingPipeline` for efficient continuous batching with streaming/non-streaming
 5. **Distributed Support**: `ParallelSetup` provides multi-process training capability for `Trainer`
 6. **Dataset Loading**: `DatasetFactory` creates datasets (SEQDataset, SFTDataset, DPODataset, GRPODataset), supports HDF5 loading via `BaseSegmentFetcher` and `MultiSegmentFetcher`
 7. **Checkpoint Management**: `Checkpoint` handles model state serialization/deserialization with safetensors
