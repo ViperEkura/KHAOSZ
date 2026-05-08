@@ -23,16 +23,30 @@ from astrai.tokenize import AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
-_engine: Optional[InferenceEngine] = None
-_model_param: Optional[Any] = None
 _project_root = Path(__file__).parent.parent.parent
 
-_server_config: Dict[str, Any] = {
-    "device": "cuda",
-    "dtype": torch.bfloat16,
-    "param_path": None,
-    "max_batch_size": 16,
-}
+
+class ServerState:
+    """Encapsulates all server runtime state.
+
+    Attributes:
+        engine: The inference engine instance.
+        model_param: The loaded model.
+        config: Server configuration dict.
+    """
+
+    def __init__(self):
+        self.engine: Optional[InferenceEngine] = None
+        self.model_param: Optional[Any] = None
+        self.config: Dict[str, Any] = {
+            "device": "cuda",
+            "dtype": torch.bfloat16,
+            "param_path": None,
+            "max_batch_size": 16,
+        }
+
+
+_state = ServerState()
 
 
 def configure_server(
@@ -41,28 +55,29 @@ def configure_server(
     param_path: Optional[Path] = None,
     max_batch_size: int = 16,
 ):
-    _server_config["device"] = device
-    _server_config["dtype"] = dtype
-    _server_config["param_path"] = param_path
-    _server_config["max_batch_size"] = max_batch_size
+    _state.config.update(
+        device=device,
+        dtype=dtype,
+        param_path=param_path,
+        max_batch_size=max_batch_size,
+    )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _model_param, _engine
     try:
         load_model(
-            param_path=_server_config["param_path"],
-            device=_server_config["device"],
-            dtype=_server_config["dtype"],
-            max_batch_size=_server_config["max_batch_size"],
+            param_path=_state.config["param_path"],
+            device=_state.config["device"],
+            dtype=_state.config["dtype"],
+            max_batch_size=_state.config["max_batch_size"],
         )
     except Exception as e:
         logger.error(f"Failed to load model: {e}")
         raise
     yield
-    if _engine:
-        _engine.shutdown()
+    if _state.engine:
+        _state.engine.shutdown()
         logger.info("Inference engine shutdown complete")
 
 
@@ -75,23 +90,28 @@ def load_model(
     dtype: torch.dtype = torch.bfloat16,
     max_batch_size: int = 16,
 ):
-    global _model_param, _engine
     if param_path is None:
         param_path = _project_root / "params"
     if not param_path.exists():
         raise FileNotFoundError(f"Parameter directory not found: {param_path}")
 
     tokenizer = AutoTokenizer.from_pretrained(param_path)
-    _model_param = AutoModel.from_pretrained(param_path)
-    _model_param.to(device=device, dtype=dtype)
+    _state.model_param = AutoModel.from_pretrained(param_path)
+    _state.model_param.to(device=device, dtype=dtype)
     logger.info(f"Model loaded on {device} with dtype {dtype}")
 
-    _engine = InferenceEngine(
-        model=_model_param,
+    _state.engine = InferenceEngine(
+        model=_state.model_param,
         tokenizer=tokenizer,
         max_batch_size=max_batch_size,
     )
     logger.info(f"Inference engine initialized with max_batch_size={max_batch_size}")
+
+
+def _get_engine() -> InferenceEngine:
+    if _state.engine is None:
+        raise HTTPException(status_code=503, detail="Engine not initialized")
+    return _state.engine
 
 
 class ChatMessage(BaseModel):
@@ -121,30 +141,27 @@ class CompletionResponse(BaseModel):
 async def health():
     return {
         "status": "ok",
-        "model_loaded": _model_param is not None,
-        "engine_ready": _engine is not None,
+        "model_loaded": _state.model_param is not None,
+        "engine_ready": _state.engine is not None,
     }
 
 
 @app.get("/stats")
 async def get_stats():
-    if _engine is None:
-        raise HTTPException(status_code=503, detail="Engine not initialized")
-    return _engine.get_stats()
+    return _get_engine().get_stats()
 
 
 @app.post("/v1/chat/completions", response_model=CompletionResponse)
 async def chat_completion(request: ChatCompletionRequest):
-    if _engine is None:
-        raise HTTPException(status_code=503, detail="Engine not initialized")
+    engine = _get_engine()
 
-    prompt = _engine.tokenizer.apply_chat_template(
+    prompt = engine.tokenizer.apply_chat_template(
         [{"role": m.role, "content": m.content} for m in request.messages],
         tokenize=False,
     )
 
     if request.stream:
-        agen = _engine.generate_async(
+        agen = engine.generate_async(
             prompt=prompt,
             max_tokens=request.max_tokens,
             temperature=request.temperature,
@@ -163,7 +180,7 @@ async def chat_completion(request: ChatCompletionRequest):
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
     else:
-        result = _engine.generate(
+        result = engine.generate(
             prompt=prompt,
             stream=False,
             max_tokens=request.max_tokens,
@@ -198,8 +215,7 @@ async def generate(
     max_len: int = 2048,
     stream: bool = False,
 ):
-    if _engine is None:
-        raise HTTPException(status_code=503, detail="Engine not initialized")
+    engine = _get_engine()
 
     messages = []
     if history:
@@ -209,10 +225,10 @@ async def generate(
                 messages.append({"role": "assistant", "content": h[1]})
     messages.append({"role": "user", "content": query})
 
-    prompt = _engine.tokenizer.apply_chat_template(messages, tokenize=False)
+    prompt = engine.tokenizer.apply_chat_template(messages, tokenize=False)
 
     if stream:
-        agen = _engine.generate_async(
+        agen = engine.generate_async(
             prompt=prompt,
             max_tokens=max_len,
             temperature=temperature,
@@ -226,7 +242,7 @@ async def generate(
 
         return StreamingResponse(text_stream(), media_type="text/plain")
     else:
-        result = _engine.generate(
+        result = engine.generate(
             prompt=prompt,
             stream=False,
             max_tokens=max_len,

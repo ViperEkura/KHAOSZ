@@ -1,5 +1,6 @@
 """Inference scheduler for single-GPU continuous batching."""
 
+import logging
 import threading
 import time
 import uuid
@@ -11,6 +12,8 @@ from torch import Tensor
 
 from astrai.model.automodel import AutoModel
 from astrai.tokenize import AutoTokenizer
+
+logger = logging.getLogger(__name__)
 
 _STOP = object()
 
@@ -506,8 +509,19 @@ class InferenceScheduler:
             task_id: The task to remove.
         """
         with self._lock:
+            removed_active = [t for t in self.active_tasks if t.task_id == task_id]
             self.waiting_queue = [t for t in self.waiting_queue if t.task_id != task_id]
             self.active_tasks = [t for t in self.active_tasks if t.task_id != task_id]
+
+        for task in removed_active:
+            if task.prefix_len > 0:
+                prefix = tuple(task.prompt_ids[: task.prefix_len])
+                self.prefix_cache.release(prefix)
+            if task.prefix_len < len(task.prompt_ids):
+                self.prefix_cache.release(tuple(task.prompt_ids))
+            if task.slot >= 0:
+                self._free_slot(task.slot)
+            task.slot = -1
 
     def _remove_finished_tasks(self) -> None:
         """Removes all finished tasks from the active batch.
@@ -553,7 +567,7 @@ class InferenceScheduler:
             for _ in range(n):
                 to_add.append(self.waiting_queue.pop(0))
 
-        for task in to_add:
+        for i, task in enumerate(to_add):
             slot = -1
             reused = False
             if task.prefix_len > 0:
@@ -564,6 +578,8 @@ class InferenceScheduler:
             if slot < 0:
                 slot = self._alloc_slot()
                 if slot < 0:
+                    with self._lock:
+                        self.waiting_queue[:0] = to_add[i:]
                     break
             task.slot = slot
             task.status = TaskStatus.RUNNING
@@ -712,32 +728,42 @@ class InferenceScheduler:
         Decode processes only the largest position group to ensure all
         batched tasks share the same KV cache write position.
         """
-        while self._running:
-            self._remove_finished_tasks()
-            self._refill_active_batch()
+        try:
+            while self._running:
+                self._remove_finished_tasks()
+                self._refill_active_batch()
 
-            with self._lock:
-                if not self.active_tasks and not self.waiting_queue:
+                with self._lock:
+                    if not self.active_tasks and not self.waiting_queue:
+                        self._task_event.clear()
+                        self._task_event.wait(timeout=0.01)
+                        continue
+                    tasks = self.active_tasks[:]
+
+                to_prefill = [t for t in tasks if t.output_tokens == 0]
+                if to_prefill:
+                    self._execute_prefill(to_prefill)
+
+                pos_groups: Dict[int, List[Task]] = {}
+                for t in self.active_tasks:
+                    pos_groups.setdefault(t.next_pos, []).append(t)
+
+                if pos_groups:
+                    best_pos = max(pos_groups, key=lambda p: len(pos_groups[p]))
+                    self._execute_decode(pos_groups[best_pos], best_pos)
+
+                if not self.waiting_queue and len(self.active_tasks) <= 1:
+                    self._task_event.wait(timeout=0.005)
                     self._task_event.clear()
-                    self._task_event.wait(timeout=0.01)
-                    continue
-                tasks = self.active_tasks[:]
-
-            to_prefill = [t for t in tasks if t.output_tokens == 0]
-            if to_prefill:
-                self._execute_prefill(to_prefill)
-
-            pos_groups: Dict[int, List[Task]] = {}
-            for t in self.active_tasks:
-                pos_groups.setdefault(t.next_pos, []).append(t)
-
-            if pos_groups:
-                best_pos = max(pos_groups, key=lambda p: len(pos_groups[p]))
-                self._execute_decode(pos_groups[best_pos], best_pos)
-
-            if not self.waiting_queue and len(self.active_tasks) <= 1:
-                self._task_event.wait(timeout=0.005)
-                self._task_event.clear()
+        except Exception as e:
+            logger.error(f"Scheduler loop crashed: {e}", exc_info=True)
+            for task in self.active_tasks:
+                if task.stream_callback:
+                    task.stream_callback(_STOP)
+            for task in self.waiting_queue:
+                if task.stream_callback:
+                    task.stream_callback(_STOP)
+            raise
 
     def start(self) -> None:
         """Starts the background generation loop thread."""

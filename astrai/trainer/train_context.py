@@ -34,66 +34,60 @@ class TrainContext:
 class TrainContextBuilder:
     def __init__(self, config: TrainConfig):
         self.config = config
-        self._context = TrainContext(
-            model=config.model,
+        self._checkpoint: Optional[Checkpoint] = None
+
+    def with_checkpoint(self, checkpoint: Optional[Checkpoint]) -> Self:
+        self._checkpoint = checkpoint
+        return self
+
+    def build(self) -> TrainContext:
+        context = TrainContext(
+            model=self.config.model,
             world_size=get_world_size(),
             rank=get_rank(),
         )
 
         device = get_current_device()
-        self._context.model = self._context.model.to(device=device)
+        context.model = context.model.to(device=device)
 
-        if self.config.nprocs > 1:
-            fn = self.config.parallel_wrapper
-            self._context.model = fn(self._context.model)
+        if self.config.nprocs > 1 and self.config.parallel_wrapper:
+            context.model = self.config.parallel_wrapper(context.model)
 
-        self._context.optimizer = self.config.optimizer_fn(self._context.model)
-        self._context.scheduler = self.config.scheduler_fn(self._context.optimizer)
-
-    def with_checkpoint(self, checkpoint: Optional[Checkpoint]) -> Self:
-        if checkpoint is None:
-            checkpoint = Checkpoint(
-                state_dict=self._context.model.state_dict(),
-            )
+        if self._checkpoint is not None:
+            context.epoch = max(self._checkpoint.epoch, self.config.start_epoch)
+            context.iteration = max(self._checkpoint.iteration, self.config.start_batch)
+            context.model.load_state_dict(self._checkpoint.state_dict)
+            context.checkpoint = self._checkpoint
         else:
-            # resume from the assigned checkpoint or assigned iteration
-            self._context.epoch = max(checkpoint.epoch, self.config.start_epoch)
-            self._context.iteration = max(checkpoint.iteration, self.config.start_batch)
-            self._context.model.load_state_dict(checkpoint.state_dict)
+            context.checkpoint = Checkpoint(
+                state_dict=context.model.state_dict(),
+            )
 
-        self._context.checkpoint = checkpoint
-        return self
+        context.optimizer = self.config.optimizer_fn(context.model)
+        context.scheduler = self.config.scheduler_fn(context.optimizer)
 
-    def with_dataloader(self) -> Self:
-        # fix: change batch level iteration to sample level offset
-        config = self.config
-        sampler_offset = self._context.iteration * config.batch_size
-        resumeable_sampler = ResumableDistributedSampler(
-            data_source=config.dataset,
-            start_epoch=self._context.epoch,
+        cfg = self.config
+        sampler_offset = context.iteration * cfg.batch_size
+        sampler = ResumableDistributedSampler(
+            data_source=cfg.dataset,
+            start_epoch=context.epoch,
             start_iter=sampler_offset,
-            seed=config.random_seed,
+            seed=cfg.random_seed,
+        )
+        context.dataloader = DataLoader(
+            cfg.dataset,
+            batch_size=cfg.batch_size,
+            sampler=sampler,
+            num_workers=cfg.num_workers,
+            pin_memory=cfg.pin_memory,
+            prefetch_factor=cfg.prefetch_factor,
         )
 
-        dataloader = DataLoader(
-            config.dataset,
-            batch_size=config.batch_size,
-            sampler=resumeable_sampler,
-            num_workers=config.num_workers,
-            pin_memory=config.pin_memory,
-            prefetch_factor=config.prefetch_factor,
-        )
-        self._context.dataloader = dataloader
-        return self
-
-    def with_strategy(self) -> Self:
-        self._context.strategy = StrategyFactory.create(
-            model=self._context.model,
+        context.strategy = StrategyFactory.create(
+            model=context.model,
             train_type=self.config.strategy,
-            device=get_current_device(),
+            device=device,
             **self.config.extra_kwargs,
         )
-        return self
 
-    def build(self) -> TrainContext:
-        return self._context
+        return context

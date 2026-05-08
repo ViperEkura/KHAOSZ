@@ -53,5 +53,5 @@ def mock_engine():
 @pytest.fixture
 def loaded_model(mock_model_param, monkeypatch):
     """Simulate that the model is loaded."""
-    monkeypatch.setattr("astrai.inference.server._model_param", mock_model_param)
+    monkeypatch.setattr("astrai.inference.server._state.model_param", mock_model_param)
     return mock_model_param

@@ -35,11 +35,7 @@ class Trainer:
 
     def _build_context(self, checkpoint: Optional[Checkpoint]) -> TrainContext:
         return (
-            TrainContextBuilder(self.train_config)
-            .with_checkpoint(checkpoint)
-            .with_dataloader()
-            .with_strategy()
-            .build()
+            TrainContextBuilder(self.train_config).with_checkpoint(checkpoint).build()
         )
 
     def _call_callbacks(self, method_name: str, context: TrainContext):

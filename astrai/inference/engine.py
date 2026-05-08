@@ -2,7 +2,6 @@
 
 import asyncio
 import gc
-import logging
 import threading
 from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Union
 
@@ -11,8 +10,6 @@ import torch.nn as nn
 
 from astrai.inference.scheduler import _STOP, InferenceScheduler
 from astrai.tokenize import AutoTokenizer
-
-logger = logging.getLogger(__name__)
 
 
 class GenerationRequest:

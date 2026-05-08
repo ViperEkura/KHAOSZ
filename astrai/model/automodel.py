@@ -4,12 +4,13 @@ AutoModel base class for model loading and saving.
 
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Self, Type, Union
+from typing import Self, Type, Union
 
 import safetensors.torch as st
 import torch.nn as nn
 
 from astrai.config import ModelConfig
+from astrai.factory import Registry
 
 
 @contextmanager
@@ -44,8 +45,7 @@ class AutoModel(nn.Module):
     Provides model loading/saving and generation capabilities.
     """
 
-    # Model registry - stored as class attribute
-    _registry: Dict[str, Type["AutoModel"]] = {}
+    _registry = Registry()
 
     def __init__(self, config: ModelConfig):
         super().__init__()
@@ -63,7 +63,7 @@ class AutoModel(nn.Module):
         """
 
         def decorator(sub_cls: Type["AutoModel"]) -> Type["AutoModel"]:
-            cls._registry[model_type.lower()] = sub_cls
+            cls._registry.register(model_type.lower(), sub_cls)
             return sub_cls
 
         return decorator
@@ -72,12 +72,12 @@ class AutoModel(nn.Module):
     def get_model_class(cls, model_type: str) -> Type["AutoModel"]:
         """Get model class by model_type string."""
         model_type = model_type.lower()
-        if model_type not in cls._registry:
-            available = list(cls._registry.keys())
+        if not cls._registry.contains(model_type):
+            available = cls._registry.list_names()
             raise ValueError(
                 f"Unknown model_type: {model_type}. Available: {available}"
             )
-        return cls._registry[model_type]
+        return cls._registry.get(model_type)
 
     @classmethod
     def from_pretrained(
@@ -96,14 +96,8 @@ class AutoModel(nn.Module):
         else:
             raise FileNotFoundError(f"Config file not found: {config_path}")
 
-        # If called from base class, use model_type to determine actual model class
-        if cls is AutoModel:
-            model_type = config.model_type or "transformer"
-            actual_cls = cls.get_model_class(model_type)
-        else:
-            raise ValueError(
-                f"Cannot call from_pretrained() on subclass {cls.__name__}"
-            )
+        model_type = config.model_type or "transformer"
+        actual_cls = cls.get_model_class(model_type)
 
         with _disable_random_init(enable=disable_random_init):
             model = actual_cls(config)
