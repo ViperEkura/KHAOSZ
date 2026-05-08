@@ -148,7 +148,7 @@ class InferenceEngine:
         tokenizer: AutoTokenizer,
         max_batch_size: int = 1,
         max_seq_len: Optional[int] = None,
-        max_prompt_len: int = 512,
+        max_prompt_len: int = 2048,
         cache_capacity: int = 1000,
     ):
         """Initializes the engine and starts the scheduler background thread.

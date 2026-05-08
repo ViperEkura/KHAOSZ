@@ -480,7 +480,7 @@ class InferenceScheduler:
         prompt_ids = self.tokenizer.encode(prompt)
 
         if len(prompt_ids) > self.max_prompt_len:
-            prompt_ids = prompt_ids[: self.max_prompt_len]
+            prompt_ids = prompt_ids[-self.max_prompt_len :]
 
         task = Task(
             task_id=task_id,
