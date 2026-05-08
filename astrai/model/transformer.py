@@ -1,10 +1,11 @@
-from typing import Any, Mapping, Optional, Tuple
+from typing import Any, Mapping, Optional
 
 import torch
 import torch.nn as nn
 from torch import Tensor
 
 from astrai.config.model_config import ModelConfig
+from astrai.inference.cache import CacheView
 from astrai.model.automodel import AutoModel
 from astrai.model.module import (
     DecoderBlock,
@@ -21,39 +22,25 @@ def process_attention_mask(
     start_pos: int = 0,
     is_causal: bool = False,
 ) -> Tensor:
-    """
-    Create attention mask for GQA
-    Args:
-        seq_mask (Tensor): A tensor indicating whether each position is valid or not.
-        input_tensor (Tensor): The input tensor.
-        start_pos (int): The starting position of the sequence.
-        is_causal (bool): Whether the attention is causal or not.
-    Returns:
-        Tensor: The attention mask tensor.
-    """
+    """Build 4D attention mask from 2D seq_mask, with optional causal masking."""
     device = input_tensor.device
     dtype = input_tensor.dtype
     seq_len = input_tensor.size(1)
 
     if seq_mask is None:
         if start_pos != 0:
-            # for single prompt chat
             seq_mask = torch.ones((1, seq_len), dtype=torch.bool, device=device)
         else:
             return None
 
     if seq_mask.dim() > 2:
-        # shape (bsz, seq_len) or (bsz,n_heads, seq_len, seq_len + start_pos)
-        # if ndim > 2, it's 4D tensor
         return seq_mask
 
     batch_size = seq_mask.size(0)
     seq_mask = seq_mask[:, : start_pos + seq_len].to(device=device, dtype=torch.bool)
-    # (bsz, start_pos + seq_len)
     expanded_mask = seq_mask.unsqueeze(1).expand(
         batch_size, seq_len, start_pos + seq_len
     )
-    # (bsz, seq_len, start_pos + seq_len)
 
     if is_causal:
         expanded_mask = torch.tril(expanded_mask, diagonal=start_pos)
@@ -62,16 +49,13 @@ def process_attention_mask(
     attention_mask = attention_mask.masked_fill_(
         ~expanded_mask, -torch.finfo(dtype).max / 2
     ).unsqueeze(1)
-    # (bsz, 1, seq_len, seq_len + start_pos)
 
     return attention_mask
 
 
 @AutoModel.register("transformer")
 class Transformer(AutoModel):
-    """
-    Transformer language model.
-    """
+    """Transformer language model with paged KV cache."""
 
     def __init__(self, config: ModelConfig):
         super().__init__(config)
@@ -114,18 +98,15 @@ class Transformer(AutoModel):
         lm_head_key = "lm_head.weight"
         embed_key = "embed_tokens.weight"
 
-        # Make a copy to avoid modifying the original state_dict
         state_dict = dict(state_dict)
 
         if self.config.tie_weight:
-            # same tensor
+            # same tensor for embed and lm_head
             if embed_key in state_dict:
                 state_dict[lm_head_key] = state_dict[embed_key]
         else:
-            # If lm_head.weight exists in checkpoint, use it directly
-            # If not, copy from embed_tokens.weight
             if lm_head_key not in state_dict and embed_key in state_dict:
-                # use clone to avoid sharing the same tensor
+                # clone to avoid sharing gradients
                 state_dict[lm_head_key] = torch.clone(state_dict[embed_key])
 
         return super().load_state_dict(state_dict, strict, assign)
@@ -146,9 +127,8 @@ class Transformer(AutoModel):
         self,
         input_ids: Tensor,
         input_mask: Optional[Tensor] = None,
-        persistent_key_values: Optional[Tuple[Tensor, Tensor]] = None,
+        paged_cache: Optional[CacheView] = None,
         start_pos: int = 0,
-        slot_indices: Optional[Tensor] = None,
     ) -> Tensor:
         assert input_ids.ndim == 2
 
@@ -157,13 +137,8 @@ class Transformer(AutoModel):
 
         attn_mask = process_attention_mask(input_mask, x, start_pos, is_causal=True)
 
-        if slot_indices is None:
-            slot_indices = slice(input_ids.size(0))
-
         for layer in self.layers:
-            x = layer(
-                x, rotary_emb, attn_mask, persistent_key_values, start_pos, slot_indices
-            )
+            x = layer(x, rotary_emb, attn_mask, paged_cache, start_pos)
 
         hidden_states = self.norm(x)
         logits = self.lm_head(hidden_states)

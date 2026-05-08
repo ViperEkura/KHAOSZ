@@ -5,17 +5,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from astrai.inference.cache import CacheView
+
 
 def repeat_kv(x: Tensor, n_rep: int) -> Tensor:
-    """
-    Repeat k times along the dimension for attention heads.
-    Args:
-        x (Tensor): The input tensor.
-        n_rep (int): The number of repetitions.
-    Returns:
-        Tensor: The repeated tensor.
-    """
-
+    """Repeat KV heads n_rep times for GQA."""
     bs, slen, n_heads, head_dim = x.shape
     if n_rep == 1:
         return x
@@ -32,49 +26,25 @@ def get_rotary_emb(
     base: float = 10000,
     device: Optional[torch.device] = None,
 ) -> Tuple[Tensor, Tensor]:
-    """
-    Get the rotary embedding for the given dimension and maximum length.
-    Args:
-        dim (int): The dimension of the input.
-        max_len (int): The maximum length of the input.
-        base (float, optional): The base for the frequency. Defaults to 10000.
-        device (optional): The device to create tensors on. Defaults to None.
-    Returns:
-        Tensor: The rotary embedding tensor.
-    """
-
+    """Precompute cos/sin for RoPE."""
     theta = base ** (-torch.arange(0, dim, 2, dtype=torch.float64, device=device) / dim)
     t = torch.arange(0, max_len, dtype=torch.float64, device=device)
     freqs = torch.outer(t, theta)
-
     return torch.cos(freqs).float(), torch.sin(freqs).float()
 
 
 def apply_rotary_emb(x: torch.Tensor, rotary_emb: Tuple[Tensor, Tensor]) -> Tensor:
-    """
-    Apply rotary embedding to the input tensor using cos/sin form.
-    Args:
-        x (Tensor): The input tensor (shape [..., seq_len, dim]).
-        rotary_emb (Tuple[Tensor, Tensor]): The rotary embedding (shape [seq_len, dim//2]).
-    Returns:
-        Tensor: The output tensor (rotated, same shape as input).
-    """
-
+    """Apply rotary embedding via cos/sin (shape-preserving)."""
     dtype = x.dtype
     cos, sin = rotary_emb
-
-    cos = cos.unsqueeze(0).unsqueeze(2)  # [1, seq_len, 1, dim//2]
-    sin = sin.unsqueeze(0).unsqueeze(2)  # [1, seq_len, 1, dim//2]
-
-    x_real = x[..., 0::2]  # [batch, seq_len, dim//2]
-    x_imag = x[..., 1::2]  # [batch, seq_len, dim//2]
-
+    cos = cos.unsqueeze(0).unsqueeze(2)
+    sin = sin.unsqueeze(0).unsqueeze(2)
+    x_real = x[..., 0::2]
+    x_imag = x[..., 1::2]
     x_real_rot = x_real * cos - x_imag * sin
     x_imag_rot = x_real * sin + x_imag * cos
-
-    x_out = torch.stack([x_real_rot, x_imag_rot], dim=-1)  # [batch, seq_len, dim//2, 2]
-    x_out = x_out.view(*x_out.shape[:-2], -1)  # [batch, seq_len, dim]
-
+    x_out = torch.stack([x_real_rot, x_imag_rot], dim=-1)
+    x_out = x_out.view(*x_out.shape[:-2], -1)
     return x_out.to(dtype)
 
 
@@ -95,13 +65,10 @@ class RotaryEmbedding(nn.Module):
 
     def forward(self, x: Tensor, start_pos: int = 0) -> Tuple[Tensor, Tensor]:
         seq_len = x.size(1)
-
         if self.max_len_cached < seq_len + start_pos:
             self._set_rotary_buffer(self.max_len_cached * 2, x.device)
-
         cos = self.cos_cached[start_pos : start_pos + seq_len]
         sin = self.sin_cached[start_pos : start_pos + seq_len]
-
         return (cos, sin)
 
 
@@ -185,14 +152,13 @@ class GQA(nn.Module):
         x: Tensor,
         rotary_emb: Tuple[Tensor, Tensor],
         mask: Tensor = None,
-        kv_cache: Optional[Tuple[Tensor, Tensor]] = None,
+        paged_cache: Optional[CacheView] = None,
         start_pos: int = 0,
-        slot_indices: Optional[Tensor] = None,
     ) -> Tensor:
         bsz, seq_len, _ = x.size()
         is_causal = mask is None
 
-        # x(bsz, seq_len, n_heads * head_dim) -> (bsz, seq_len, n_heads, head_dim)
+        # (bsz, seq_len, dim) -> (bsz, seq_len, n_heads, head_dim)
         q = self._split_heads(self.q_proj(x), self.n_heads)
         k = self._split_heads(self.k_proj(x), self.n_kv_heads)
         v = self._split_heads(self.v_proj(x), self.n_kv_heads)
@@ -201,18 +167,14 @@ class GQA(nn.Module):
         if self.use_qk_norm:
             q, k = self.q_norm(q), self.k_norm(k)
 
-        if kv_cache is not None:
-            k_cache, v_cache = kv_cache
-            k_cache[slot_indices, start_pos : start_pos + seq_len, self.layer_id] = k
-            v_cache[slot_indices, start_pos : start_pos + seq_len, self.layer_id] = v
-            k = k_cache[slot_indices, : start_pos + seq_len, self.layer_id]
-            v = v_cache[slot_indices, : start_pos + seq_len, self.layer_id]
+        if paged_cache is not None:
+            paged_cache.write(self.layer_id, start_pos, k, v)
+            k, v = paged_cache.gather(self.layer_id)
 
         k, v = repeat_kv(k, self.n_rep), repeat_kv(v, self.n_rep)
 
         # (bsz, seq_len, n_heads, head_dim) -> (bsz, n_heads, seq_len, head_dim)
         q, k, v = q.permute(0, 2, 1, 3), k.permute(0, 2, 1, 3), v.permute(0, 2, 1, 3)
-        # (bsz, n_heads, seq_len, head_dim) - > (bsz, seq_len, n_heads*head_dim)
         sdqa_out = (
             F.scaled_dot_product_attention(q, k, v, mask, is_causal=is_causal)
             .permute(0, 2, 1, 3)
@@ -224,7 +186,6 @@ class GQA(nn.Module):
             sdqa_out = sdqa_out * F.sigmoid(self.gate(x))
 
         out = self.o_proj(sdqa_out)
-
         return out
 
 
@@ -257,7 +218,7 @@ class MLA(nn.Module):
         self.kv_a_proj = Linear(dim, kv_lora_rank, bias=False)
         self.kv_norm = RMSNorm(kv_lora_rank, norm_eps)
 
-        # KV (k_nope, k_rope, v)
+        # fused KV: (k_nope, k_rope, v)
         self.kv_b_proj = Linear(
             kv_lora_rank,
             n_kv_heads * (self.head_dim + qk_rope_head_dim + self.head_dim),
@@ -273,9 +234,8 @@ class MLA(nn.Module):
         x: Tensor,
         rotary_emb: Tuple[Tensor, Tensor],
         mask: Tensor = None,
-        kv_cache: Optional[Tuple[Tensor, Tensor]] = None,
+        paged_cache: Optional[CacheView] = None,
         start_pos: int = 0,
-        slot_indices: Optional[Tensor] = None,
     ) -> Tensor:
         bsz, seq_len, _ = x.size()
         is_causal = mask is None
@@ -303,12 +263,9 @@ class MLA(nn.Module):
         q = torch.cat([q_nope, q_rope], dim=-1)
         k = torch.cat([k_nope, k_rope], dim=-1)
 
-        if kv_cache is not None:
-            k_cache, v_cache = kv_cache
-            k_cache[slot_indices, start_pos : start_pos + seq_len, self.layer_id] = k
-            v_cache[slot_indices, start_pos : start_pos + seq_len, self.layer_id] = v
-            k = k_cache[slot_indices, : start_pos + seq_len, self.layer_id]
-            v = v_cache[slot_indices, : start_pos + seq_len, self.layer_id]
+        if paged_cache is not None:
+            paged_cache.write(self.layer_id, start_pos, k, v)
+            k, v = paged_cache.gather(self.layer_id)
 
         q = q.permute(0, 2, 1, 3)
         k = k.permute(0, 2, 1, 3)
@@ -321,7 +278,6 @@ class MLA(nn.Module):
             attn_out = attn_out * F.sigmoid(self.gate(x))
 
         out = self.o_proj(attn_out)
-
         return out
 
 
@@ -356,24 +312,19 @@ class DecoderBlock(nn.Module):
         x: Tensor,
         rotary_emb: Tuple[Tensor, Tensor],
         attention_mask: Optional[Tensor] = None,
-        kv_cache: Optional[Tuple[Tensor, Tensor]] = None,
+        paged_cache: Optional[CacheView] = None,
         start_pos: int = 0,
-        slot_indices: Optional[Tensor] = None,
     ) -> Tensor:
-        # attention
         attn_output = self.attention(
             self.input_norm(x),
             rotary_emb,
             attention_mask,
-            kv_cache,
+            paged_cache,
             start_pos,
-            slot_indices,
         )
         x = attn_output + x
 
-        # feed forward
         x = self.mlp(self.post_attention_norm(x)) + x
-
         return x
 
 

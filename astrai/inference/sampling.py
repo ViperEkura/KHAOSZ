@@ -9,7 +9,7 @@ parameters, so a single pipeline works for any batch size.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union
+from typing import List, Union
 
 import torch
 from torch import Tensor

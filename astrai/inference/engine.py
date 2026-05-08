@@ -16,7 +16,7 @@ from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Union
 import torch
 import torch.nn as nn
 
-from astrai.inference.cache import _STOP
+from astrai.inference.cache import STOP
 from astrai.inference.scheduler import InferenceScheduler
 from astrai.tokenize import AutoTokenizer
 
@@ -118,15 +118,15 @@ class _Result:
         """Appends a token to the result buffer.
 
         In non-streaming mode, tokens are concatenated into results[idx].
-        The sentinel _STOP marks a task as complete.
+        The sentinel STOP marks a task as complete.
 
         Args:
-            token: The decoded token string, or _STOP sentinel.
+            token: The decoded token string, or STOP sentinel.
             idx: Index of the generation task this token belongs to.
         """
         with self._lock:
             self.tokens.append(token)
-            if token is not _STOP:
+            if token is not STOP:
                 self.results[idx] += token
             else:
                 if not self._done[idx]:
@@ -186,38 +186,28 @@ class InferenceEngine:
         max_batch_size: int = 1,
         max_seq_len: Optional[int] = None,
         max_prompt_len: int = 2048,
-        cache_capacity: int = 1000,
+        page_size: int = 128,
     ):
-        """Initializes the engine and starts the scheduler background thread.
+        """Initializes the inference engine.
 
         Args:
-            model: The language model (nn.Module, e.g. Transformer).
-            tokenizer: Tokenizer for encoding/decoding.
-            max_batch_size: Maximum concurrent tasks in the scheduler.
-            max_seq_len: Maximum sequence length (defaults to model config).
-            max_prompt_len: Maximum prompt tokens (longer prompts truncated).
-            cache_capacity: Maximum prefix cache nodes.
+            model: The model instance.
+            tokenizer: The tokenizer instance.
+            max_batch_size: Maximum number of concurrent tasks.
+            max_seq_len: Maximum sequence length.
+            max_prompt_len: Maximum prompt tokens.
+            compile: Whether to compile the model with torch.compile.
+            page_size: Number of tokens per KV cache page.
         """
-        try:
-            first_param = next(model.parameters())
-            device = first_param.device
-            dtype = first_param.dtype
-        except StopIteration:
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            dtype = torch.float32
-
         self.model = model
         self.tokenizer = tokenizer
-
         self.scheduler = InferenceScheduler(
             model=self.model,
             tokenizer=self.tokenizer,
             max_batch_size=max_batch_size,
             max_seq_len=max_seq_len,
             max_prompt_len=max_prompt_len,
-            cache_capacity=cache_capacity,
-            device=device,
-            dtype=dtype,
+            page_size=page_size,
         )
 
         self.scheduler.start()
@@ -383,7 +373,7 @@ class InferenceEngine:
                 while True:
                     tokens = result.pop_all()
                     for token in tokens:
-                        if token is _STOP:
+                        if token is STOP:
                             return
                         yield token
                     if not result.wait(timeout=0.05):
