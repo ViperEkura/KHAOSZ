@@ -7,12 +7,12 @@ This document describes the data flow of the AstrAI project (a training and infe
 AstrAI adopts a modular design with the following main components:
 - **Dataset Module** (`astrai/dataset/`): Dataset, sampler, serialization tools
 - **Model Module** (`astrai/model/`): AutoModel, Transformer model and its submodules
-- **Training Module** (`astrai/trainer/`): Trainer, training context, strategies, schedulers
+- **Training Module** (`astrai/trainer/`): Trainer, training context, strategies, schedulers, callbacks, metric utilities
 - **Inference Module** (`astrai/inference/`): Inference engine with continuous batching, streaming generation
 - **Config Module** (`astrai/config/`): Model, training, scheduler, and other configurations
 - **Factory Module** (`astrai/factory/`): Registry, BaseFactory for component registration
 - **Parallel Module** (`astrai/parallel/`): Distributed training support
-- **Serialization Module** (`astrai/serialization/`): HDF5 data loading, checkpoint management
+- **Serialization** (`astrai/serialization.py`): HDF5 data loading, checkpoint management
 
 The data flow can generally be divided into two main lines: **Training Data Flow** and **Inference Data Flow**.
 
@@ -49,9 +49,9 @@ flowchart LR
         C3 --> C4[GenerationRequest + apply_chat_template]
         C4 --> C5[InferenceEngine]
         C5 --> C6[InferenceScheduler]
-        C6 --> C7[apply_sampling_strategies]
+        C6 --> C7[sample]
         C7 --> C8[Transformer Forward]
-        C8 --> C9[KV Cache + Prefix Cache]
+        C8 --> C9[Paged KV Cache]
         C9 --> C10{End Condition?}
         C10 -->|No| C8
         C10 -->|Yes| C11[Output Text]
@@ -63,27 +63,28 @@ flowchart LR
 
 ## Detailed Module Descriptions
 
-### 1. Dataset Module
+### 1. Serialization (`astrai/serialization.py`)
 
-#### 1.1 Serialization (`serialization.py`)
 - **`save_h5`**: Saves multiple tensors by groups as HDF5 files (`.h5`), each key corresponds to a list of tensors
 - **`load_h5`**: Loads `.h5` files, returns `Dict[str, List[Tensor]]`, supports shared memory (`share_memory=True`)
 - **`Checkpoint` class**: Encapsulates model state dict, training epoch, iteration count; supports safetensors format for saving and loading
 
-#### 1.2 Dataset (`dataset.py`)
+### 2. Dataset Module
+
+#### 2.1 Dataset (`dataset.py`)
 - **`BaseDataset`**: Abstract base class, defines common logic for window sampling, stride, etc.
 - **`BaseSegmentFetcher`** and **`MultiSegmentFetcher`**: Efficiently fetch data from specified index ranges in multiple segments
 - **`DatasetFactory`**: Factory pattern, supports dynamic registration of dataset types (`seq`, `sft`, `dpo`, `grpo`)
 - After dataset loading, multiple data keys (such as `"sequence"`, `"mask"`) are managed through `MultiSegmentFetcher`
 
-#### 1.3 Sampler (`sampler.py`)
+#### 2.2 Sampler (`sampler.py`)
 - **`ResumableDistributedSampler`**: Resumable sampler supporting distributed training
 - Records current epoch and iteration position, enabling training resume from breakpoints
 - Supports shuffle and drop_last options
 
-### 2. Model Module
+### 3. Model Module
 
-#### 2.1 Transformer / AutoModel (`transformer.py`, `automodel.py`)
+#### 3.1 Transformer / AutoModel (`transformer.py`, `automodel.py`)
 - **`AutoModel`**: Base class for autoregressive language models with `from_pretrained()` and `save_pretrained()` methods
 - **`Transformer`**: Core autoregressive decoder architecture (registered via `@AutoModel.register('transformer')`)
 - Contains embedding layer, multi-layer `DecoderBlock`, RMSNorm, and linear output head
@@ -91,7 +92,7 @@ flowchart LR
 - Uses Rotary Position Embedding (RoPE) to inject position information
 - Supports loading from safetensors format with automatic model type detection from `config.json`
 
-#### 2.2 Submodules (`module.py`)
+#### 3.2 Submodules (`module.py`)
 - **`RotaryEmbedding`**: Generates RoPE cos/sin cache
 - **`DecoderBlock`**: Contains multi-head attention (supports GQA and MLA), feedforward network (FFN), residual connections
 - **`GQA`**: Grouped Query Attention implementation
@@ -100,19 +101,19 @@ flowchart LR
 - **`RMSNorm`**: Layer normalization variant
 - **`Linear`**, **`Embedding`**: Custom linear layer and embedding layer, supporting parallelism wrappers
 
-### 3. Training Module
+### 4. Training Module
 
-#### 3.1 Training Context (`train_context.py`)
+#### 4.1 Training Context (`train_context.py`)
 - **`TrainContext`**: Data class encapsulating all components needed for training (model, optimizer, data loader, strategy, etc.)
 - **`TrainContextBuilder`**: Builder pattern, progressively assembles training context, supports resume from checkpoint
 
-#### 3.2 Trainer (`trainer.py`)
+#### 4.2 Trainer (`trainer.py`)
 - **`Trainer`**: Main training loop, manages callbacks (progress bar, checkpoint, metric logging, gradient clipping, scheduler)
 - Supports distributed training (launches multi-process via `spawn_parallel_fn`)
 - Training steps include:
   1. `on_train_begin` → 2. `on_epoch_begin` → 3. `on_batch_begin` → 4. Forward/loss calculation → 5. `on_batch_end` → 6. Gradient accumulation → 7. `on_step_begin` → 8. Optimizer update → 9. `on_step_end` → 10. `on_epoch_end`
 
-#### 3.3 Strategy (`strategy.py`)
+#### 4.3 Strategy (`strategy.py`)
 - **`BaseStrategy`**: Defines training strategy interface
 - **`SEQStrategy`**: Standard next-token prediction training
 - **`SFTStrategy`**: Supervised Fine-tuning with loss masking
@@ -121,14 +122,14 @@ flowchart LR
 - Strategy receives batch data, executes model forward pass, loss calculation, returns loss tensor
 - Created dynamically by `StrategyFactory` according to configuration
 
-#### 3.4 Scheduler (`schedule.py`)
+#### 4.4 Scheduler (`schedule.py`)
 - **`BaseScheduler`**: Abstract base class defining learning rate scheduling interface
 - **`CosineScheduler`**: Cosine decay scheduler with warmup
 - **`SGDRScheduler`**: Stochastic Gradient Descent with Warm Restarts
 - **`SchedulerFactory`**: Factory pattern, supports registration of various schedulers
 - Scheduler is automatically created according to configuration and bound to optimizer
 
-#### 3.5 Callbacks (`train_callback.py`)
+#### 4.5 Callbacks (`train_callback.py`)
 - **`TrainCallback`**: Protocol interface for trainer callbacks
 - **`CheckpointCallback`**: Saves model checkpoints at configurable intervals
 - **`ProgressBarCallback`**: Displays training progress
@@ -136,17 +137,21 @@ flowchart LR
 - **`GradientClippingCallback`**: Clips gradient norms
 - **`SchedulerCallback`**: Steps learning rate scheduler
 
-### 4. Factory Module
+#### 4.6 Metric Utility (`metric_util.py`)
+- **`MetricTracker`**: Tracks and aggregates training metrics across epochs
+- **`get_learning_rate`**: Utility to extract current learning rates from optimizer param groups
 
-#### 4.1 Registry and BaseFactory (`factory.py`)
+### 5. Factory Module
+
+#### 5.1 Registry and BaseFactory (`factory.py`)
 - **`Registry`**: Flexible registry for component classes with category and priority support
 - **`BaseFactory`**: Generic factory class for component registration and creation
 - Supports decorator-based registration pattern for extensible components
 - Provides methods for registration, retrieval, and listing with filtering
 
-### 5. Parallel Module
+### 6. Parallel Module
 
-#### 5.1 Setup (`setup.py`)
+#### 6.1 Setup (`setup.py`)
 - **`spawn_parallel_fn`**: Spawns multiple processes for distributed training using PyTorch multiprocessing
 - **`setup_parallel`**: Context manager for initializing distributed process group (NCCL/CCL backend)
 - **`only_on_rank`**: Decorator to execute functions only on specific ranks
@@ -154,47 +159,51 @@ flowchart LR
 - **`get_world_size`**: Returns total number of processes in distributed group
 - **`get_current_device`**: Returns current device from environment
 
-#### 5.2 Parallel Layers (`module.py`)
+#### 6.2 Parallel Layers (`module.py`)
 - **`ParallelModel`**: Base class for parallel models with process group
 - **`ColumnParallelLinear`**: Column-parallel linear layer with input splitting and output gathering
 - **`RowParallelLinear`**: Row-parallel linear layer with output reduction
 
-### 6. Inference Module
+### 7. Inference Module
 
-#### 6.1 Inference Engine (`engine.py`)
-- **`InferenceEngine`**: Unified inference interface, supports streaming and non-streaming generation
-- **`InferenceScheduler`**: Continuous batching scheduler with dynamic batch composition
+#### 7.1 Inference Engine (`engine.py`)
+- **`InferenceEngine`**: Unified inference interface, supports streaming, async streaming, and non-streaming generation
+- **`InferenceScheduler`**: Continuous batching scheduler with paged KV cache
 - **`GenerationRequest`**: Encapsulates generation parameters (top_k, top_p, temperature, max_len, messages, etc.)
+- **`GenerationParams`**: Immutable value object for sampling hyperparameters
 - **`messages` format**: List of message dictionaries with `role` (system/user/assistant) and `content`
 - **`apply_chat_template`** (from `tokenizer.py`): Converts messages into prompt string using ChatML format
-- Provides streaming (`stream=True`) and non-streaming (`stream=False`) generation interfaces
+- Provides streaming (`stream=True`), async streaming (`generate_async`), and non-streaming (`stream=False`) generation interfaces
 - Supports continuous batching with `max_batch_size` and `max_seq_len` parameters
 - Uses separate model and tokenizer initialization for flexibility
 
-#### 6.2 Scheduler (`scheduler.py`)
+#### 7.2 Cache (`cache.py`)
+- **`PagedCache`**: Page-based KV cache with page-table-indirected read/write; uses bitmask for O(1) page allocation/deallocation
+- **`CacheView`**: Per-batch view bundling a `PagedCache` with its page table for attention layer access
+
+#### 7.3 Scheduler (`scheduler.py`)
 - **`Task`**: Individual generation task with state management (PENDING, RUNNING, FINISHED, ABORTED)
 - **`TaskStatus`**: Task state enumeration
-- **`apply_sampling_strategies`**: Applies temperature, top-k, top-p sampling to logits
-- **`PrefixCacheManager`**: Radix tree-based prefix cache with LRU eviction for efficient KV cache reuse
-- **`_RadixNode`**: Tree node structure for prefix caching
-- Continuous batching: new requests can join at any time, completed requests are released immediately
+- **`sample`** (from `sampling.py`): Applies temperature, top-k, top-p sampling to logits via composable `SamplingPipeline`
+- Uses `PagedCache` for paged KV cache management with page table indirection
+- Continuous batching: new requests can join at any time, completed requests release pages immediately
 
-#### 6.3 Server (`server.py`)
+#### 7.4 Server (`server.py`)
 - FastAPI-based HTTP inference server
 - OpenAI-compatible `/v1/chat/completions` endpoint
 - Health check and statistics endpoints
 - Supports both streaming and non-streaming responses
 
-### 7. Tokenizer Module
+### 8. Tokenizer Module
 
-#### 7.1 Tokenizer (`tokenizer.py`)
+#### 8.1 Tokenizer (`tokenizer.py`)
 - Implemented based on HuggingFace tokenizers library (Byte-Level BPE)
 - **`AutoTokenizer`**: Auto-loading tokenizer class
 - Supports special tokens: `<｜begin▁of▁sentence｜>`, `<｜end▁of▁sentence｜>`, `<｜▁pad▁｜>`, `<｜im▁start｜>`, `<｜im▁end｜>`
 - Provides `encode`/`decode` methods for mutual conversion between text and token IDs
 - Uses `AutoTokenizer` for loading pre-trained tokenizers
 
-#### 7.2 Chat Template (`chat_template.py`)
+#### 8.2 Chat Template (`chat_template.py`)
 - **`ChatTemplate`**: Jinja2-based chat template with rendering support
 - Handles multi-role message formatting (system, user, assistant)
 - Supports dynamic prompts and generation prompts
@@ -244,13 +253,14 @@ flowchart LR
    - For batch generation, use `pad_sequence` for padding
 
 3. **Autoregressive Generation Loop**
-   - Initialize KV cache (optional) and prefix cache
-   - Loop until generating `max_len` tokens or encountering stop token:
-     - Input current `input_ids` (or cached new token) to model, obtain `logits`
-     - Apply `apply_sampling_strategies` (temperature, top-k, top-p) to `logits`
+   - Scheduler allocates pages via `PagedCache.alloc_n()` for each task's prompt
+   - Prefill phase: runs full prompt through model with `PagedCache.bind()` to fill initial KV cache pages
+   - Decode phase: loops until generating `max_len` tokens or encountering stop token:
+     - Input last token ID to model, obtain `logits`
+     - Apply `sample()` (temperature, top-k, top-p) to `logits`
      - Sample next token ID from the processed distribution
-     - Append new token to `input_ids`, while updating KV cache
-     - For streaming generation, yield each token to caller immediately
+     - Write new KV entries into paged cache; allocate additional pages as needed
+     - For streaming generation, yield each token to caller immediately via `stream_callback`
 
 4. **Decoding and Output**
    - Decode generated token ID sequence to text through tokenizer
@@ -264,6 +274,6 @@ flowchart LR
 
 ## Summary
 
-The data flow design of AstrAI reflects the characteristics of modularity, extensibility, and resumability. The training data flow supports large-scale distributed training through chunk loading, resumable sampling, gradient accumulation, and other mechanisms; the inference data flow achieves efficient text generation using KV cache, prefix caching, and sampling strategies. Clear interfaces between modules facilitate customization and extension.
+The data flow design of AstrAI reflects the characteristics of modularity, extensibility, and resumability. The training data flow supports large-scale distributed training through chunk loading, resumable sampling, gradient accumulation, and other mechanisms; the inference data flow achieves efficient text generation using paged KV cache, continuous batching, and composable sampling strategies. Clear interfaces between modules facilitate customization and extension.
 
 > Document Update Time: 2026-04-09

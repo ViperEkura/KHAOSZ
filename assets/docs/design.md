@@ -109,7 +109,9 @@ classDiagram
             +create(train_type, window_size, stride) BaseDataset
             +load(train_type, load_path, window_size, stride) BaseDataset
         }
+    }
 
+    namespace serialization {
         class Checkpoint {
             +dict state_dict
             +int epoch
@@ -390,10 +392,9 @@ classDiagram
             +InferenceScheduler scheduler
             +int max_batch_size
             +Optional int max_seq_len
-            +int max_prompt_len
-            +int cache_capacity
             +generate(prompt, stream, max_tokens, temperature, top_p, top_k) Union[Generator, str, List[str]]
             +generate_with_request(request) Union[Generator, str, List[str]]
+            +generate_async(prompt, max_tokens, temperature, top_p, top_k) AsyncGenerator
             +get_stats() Dict
             +shutdown()
         }
@@ -401,10 +402,11 @@ classDiagram
         class InferenceScheduler {
             +nn.Module model
             +AutoTokenizer tokenizer
-            +Tuple kv_cache
-            +Tensor seq_mask
-            +PrefixCacheManager prefix_cache
-            +SlotAllocator slot_allocator
+            +PagedCache page_cache
+            +int max_batch_size
+            +int max_seq_len
+            +int max_prompt_len
+            +int page_size
             +List waiting_queue
             +List active_tasks
             +add_task(prompt, max_tokens, temperature, top_p, top_k, stream_callback) str
@@ -414,23 +416,26 @@ classDiagram
             +get_stats() Dict
         }
 
-        class PrefixCacheManager {
-            +_RadixNode root
-            +int max_capacity
-            +OrderedDict _lru
-            +insert(token_ids, slot, slot_ver)
-            +find(token_ids) Tuple[int, int, int]
-            +pin(token_ids)
-            +release(token_ids)
-            +copy_kv(token_ids, target_slot, kv_cache, n_layers)
+        class PagedCache {
+            +int page_size
+            +int _free_mask
+            +List[int] _refs
+            +Tensor k_cache
+            +Tensor v_cache
+            +alloc() int
+            +alloc_n(n) List[int]
+            +free(idx)
+            +bind(page_table, total_len) CacheView
+            +write(layer_id, page_table, start_pos, k, v)
+            +gather(layer_id, page_table) Tuple[Tensor, Tensor]
         }
 
-        class _RadixNode {
-            +Dict children
-            +int slot
-            +int slot_ver
-            +int ref_count
-            +float last_access
+        class CacheView {
+            +PagedCache _cache
+            +Tensor _page_table
+            +int _total_len
+            +write(layer_id, start_pos, k, v)
+            +gather(layer_id) Tuple[Tensor, Tensor]
         }
 
         class Task {
@@ -444,11 +449,12 @@ classDiagram
             +List output_ids
             +int input_tokens
             +int output_tokens
-            +int slot
-            +int prefix_len
+            +List[int] page_table
+            +int n_pages
             +float arrival_time
             +float finish_time
             +Callable stream_callback
+            +next_pos() int
             +is_finished(stop_ids) bool
         }
 
@@ -474,17 +480,6 @@ classDiagram
             +int max_tokens
         }
 
-        class SlotAllocator {
-            +int _max_slots
-            +int _free_mask
-            +List _versions
-            +alloc() int
-            +free(idx)
-            +occupy(idx)
-            +is_free(idx) bool
-            +version(idx) int
-        }
-
         class BaseSamplingStrategy {
             <<abstract>>
             +apply(logits, filter_value) Tensor
@@ -508,6 +503,7 @@ classDiagram
         class SamplingPipeline {
             +List strategies
             +apply(logits, filter_value) Tensor
+            +sample(logits, filter_value) Tensor
         }
 
         class Server {
@@ -521,6 +517,8 @@ classDiagram
             +List[bool] done_flags
             +append(token, idx)
             +get_results() List[str]
+            +pop_all() List[str]
+            +wait(timeout) bool
         }
 
         class ChatMessage {
@@ -535,15 +533,8 @@ classDiagram
             +int top_k
             +int max_tokens
             +bool stream
-            +Optional[str] system_prompt
-        }
-
-        class CompletionResponse {
-            +str id
-            +str object
-            +int created
-            +str model
-            +List[Dict] choices
+            +Optional[str] stop
+            +Optional[int] n
         }
     }
 
@@ -583,6 +574,7 @@ classDiagram
     Trainer --> TrainContextBuilder : builds
     Trainer --> TrainCallback : manages
     TrainContextBuilder --> TrainContext : creates
+    Checkpoint ..> Checkpoint : saves/loads
     TrainContext --> Checkpoint : manages
     TrainContext --> BaseStrategy : uses
     TrainContext --> BaseScheduler : uses
@@ -601,7 +593,7 @@ classDiagram
     InferenceScheduler --> Task : manages
     Task --> TaskStatus : uses
     InferenceScheduler --> TaskStatus : uses
-    InferenceScheduler --> SlotAllocator : uses
+    InferenceScheduler --> PagedCache : uses
     InferenceScheduler --> Transformer : uses
     InferenceEngine --> Transformer : uses
     InferenceEngine --> _Result : uses
@@ -612,7 +604,6 @@ classDiagram
     Server --> InferenceEngine : uses
     Server --> ChatMessage : uses
     Server --> ChatCompletionRequest : uses
-    Server --> CompletionResponse : uses
     ParallelSetup --> Trainer : enables
     BaseDataset <|-- SEQDataset
     BaseDataset <|-- SFTDataset
@@ -635,9 +626,6 @@ classDiagram
     ParallelModel <|-- RowParallelLinear
     ParallelModel <|-- ColumnParallelLinear
     AutoTokenizer --> ChatTemplate : uses
-    InferenceScheduler --> PrefixCacheManager : uses
-    PrefixCacheManager --> _RadixNode : composes
-    Checkpoint ..> Checkpoint : saves/loads
     TrainConfig --> DatasetFactory : selects
     TrainConfig --> SchedulerFactory : selects
     TrainConfig --> CallbackFactory : selects
@@ -653,11 +641,12 @@ classDiagram
 | Module | Components | Description |
 |--------|------------|-------------|
 | **astrai.config** | ModelConfig, TrainConfig | Configuration management |
-| **astrai.dataset** | BaseDataset, SEQDataset, SFTDataset, DPODataset, GRPODataset, BaseSegmentFetcher, MultiSegmentFetcher, ResumableDistributedSampler, DatasetFactory, Checkpoint | Dataset loading and management |
+| **astrai.dataset** | BaseDataset, SEQDataset, SFTDataset, DPODataset, GRPODataset, BaseSegmentFetcher, MultiSegmentFetcher, ResumableDistributedSampler, DatasetFactory | Dataset loading and management |
+| **astrai.serialization** | Checkpoint, save_h5, load_h5 | Model serialization and checkpoint management |
 | **astrai.model** | AutoModel, Transformer, DecoderBlock, GQA, MLA, MLP, RMSNorm, Linear, RotaryEmbedding, Embedding | Neural network model |
 | **astrai.tokenize** | AutoTokenizer, ChatTemplate | Tokenizer and chat template |
 | **astrai.trainer** | Trainer, TrainContext, TrainContextBuilder, BaseStrategy, StrategyFactory, BaseScheduler, SchedulerFactory, TrainCallback, CallbackFactory | Training workflow management |
-| **astrai.inference** | InferenceEngine, InferenceScheduler, Task, TaskStatus, GenerationParams, GenerationRequest, PrefixCacheManager, _RadixNode, SlotAllocator, BaseSamplingStrategy, TemperatureStrategy, TopKStrategy, TopPStrategy, SamplingPipeline, ChatMessage, ChatCompletionRequest, CompletionResponse | Inference service with continuous batching |
+| **astrai.inference** | InferenceEngine, InferenceScheduler, PagedCache, CacheView, Task, TaskStatus, GenerationParams, GenerationRequest, BaseSamplingStrategy, TemperatureStrategy, TopKStrategy, TopPStrategy, SamplingPipeline, ChatMessage, ChatCompletionRequest | Inference service with continuous batching and paged KV cache |
 | **astrai.parallel** | ParallelSetup, ColumnParallelLinear, RowParallelLinear | Distributed parallel |
 | **astrai.factory** | Registry, BaseFactory | Generic component registration |
 
@@ -671,7 +660,7 @@ classDiagram
 | **Observer** | `TrainCallback`, `CallbackFactory` | Callback mechanism for training process monitoring (checkpoint, early stopping, metrics) |
 | **Singleton** | `TrainContext` | Training process global state management |
 | **Registry** | `BaseFactory`, `Registry` | Generic component registration with category and priority support |
-| **Object Pool** | `SlotAllocator` | O(1) KV cache slot allocation/deallocation via bitmask |
+| **Object Pool** | `PagedCache` | Page-based KV cache with O(1) alloc/free via bitmask |
 | **Strategy (Sampling)** | `BaseSamplingStrategy`, `TemperatureStrategy`, `TopKStrategy`, `TopPStrategy`, `SamplingPipeline` | Composable logit transformations with temperature, top-k, top-p |
 | **Producer-Consumer** | `InferenceScheduler`, `Task`, `waiting_queue`, `active_tasks` | Continuous batching with dynamic task queue management |
 | **Event-Driven** | `threading.Event`, `_task_event` | Non-blocking wait mechanism for task scheduling using Python's `threading` module |
@@ -683,7 +672,7 @@ classDiagram
 1. **Configuration → Training**: `TrainConfig` contains `ModelConfig`, holds model, dataset, optimizer and other references
 2. **Training Flow**: `Trainer` → `TrainContextBuilder` → `TrainContext`, uses `BaseStrategy` to compute loss
 3. **Strategy Selection**: `StrategyFactory` creates corresponding strategy instance based on `train_type`
-4. **Inference Flow**: `Server` → `InferenceEngine` → `InferenceScheduler` → `Transformer`, uses `PrefixCacheManager`, `SlotAllocator`, and `SamplingPipeline` for efficient continuous batching with streaming/non-streaming
+4. **Inference Flow**: `Server` → `InferenceEngine` → `InferenceScheduler` → `Transformer`, uses `PagedCache` for paged KV cache management and `SamplingPipeline` for efficient continuous batching with streaming/non-streaming
 5. **Distributed Support**: `ParallelSetup` provides multi-process training capability for `Trainer`
 6. **Dataset Loading**: `DatasetFactory` creates datasets (SEQDataset, SFTDataset, DPODataset, GRPODataset), supports HDF5 loading via `BaseSegmentFetcher` and `MultiSegmentFetcher`
 7. **Checkpoint Management**: `Checkpoint` handles model state serialization/deserialization with safetensors
