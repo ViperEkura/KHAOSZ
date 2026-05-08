@@ -19,7 +19,7 @@ from astrai.inference.sampling import (
     TemperatureStrategy,
     TopKStrategy,
     TopPStrategy,
-    apply_sampling_strategies,
+    sample,
 )
 from astrai.inference.scheduler import (
     InferenceScheduler,
@@ -37,7 +37,7 @@ __all__ = [
     "Task",
     "TaskStatus",
     # Sampling (Strategy pattern)
-    "apply_sampling_strategies",
+    "sample",
     "BaseSamplingStrategy",
     "TemperatureStrategy",
     "TopKStrategy",

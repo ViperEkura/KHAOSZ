@@ -16,7 +16,7 @@ import torch
 from torch import Tensor
 
 from astrai.inference.cache import _STOP, PrefixCacheManager, SlotAllocator
-from astrai.inference.sampling import apply_sampling_strategies
+from astrai.inference.sampling import sample
 from astrai.model.automodel import AutoModel
 from astrai.tokenize import AutoTokenizer
 
@@ -483,14 +483,14 @@ class InferenceScheduler:
             )
             logits = outputs["logits"][:, -1, :]
 
-        next_tokens = []
-        for i, t in enumerate(tasks):
-            logit = apply_sampling_strategies(
-                logits[i : i + 1], t.temperature, t.top_k, t.top_p
-            )
-            prob = torch.softmax(logit, dim=-1)
-            ntok = torch.multinomial(prob, num_samples=1).item()
-            next_tokens.append(ntok)
+        next_tokens = sample(
+            logits,
+            temperature=torch.tensor(
+                [t.temperature for t in tasks], device=logits.device
+            ),
+            top_k=torch.tensor([t.top_k for t in tasks], device=logits.device),
+            top_p=torch.tensor([t.top_p for t in tasks], device=logits.device),
+        ).tolist()
 
         for t, ntok in zip(tasks, next_tokens):
             t.output_ids.append(ntok)
