@@ -15,21 +15,6 @@ def client():
 
 
 @pytest.fixture
-def mock_model_param():
-    """Create a mock ModelParameter."""
-    mock_param = MagicMock()
-    mock_param.model = MagicMock()
-    mock_param.tokenizer = MagicMock()
-    mock_param.config = MagicMock()
-    mock_param.config.max_len = 100
-    mock_param.tokenizer.encode = MagicMock(return_value=[1, 2, 3])
-    mock_param.tokenizer.decode = MagicMock(return_value="mock response")
-    mock_param.tokenizer.stop_ids = []
-    mock_param.tokenizer.pad_id = 0
-    return mock_param
-
-
-@pytest.fixture
 def mock_engine():
     """Create a mock InferenceEngine."""
 
@@ -47,11 +32,14 @@ def mock_engine():
         "active_tasks": 0,
         "waiting_queue": 0,
     }
+    mock.tokenizer.encode.return_value = [1, 2, 3]
+    mock.tokenizer.decode.return_value = "mock response"
+    mock.tokenizer.apply_chat_template.return_value = "mock prompt"
     return mock
 
 
 @pytest.fixture
-def loaded_model(mock_model_param, monkeypatch):
-    """Simulate that the model is loaded."""
-    monkeypatch.setattr("astrai.inference.server._state.model_param", mock_model_param)
-    return mock_model_param
+def loaded_model(mock_engine, monkeypatch):
+    """Simulate that the engine is loaded."""
+    monkeypatch.setattr("astrai.inference.server._state.engine", mock_engine)
+    return mock_engine

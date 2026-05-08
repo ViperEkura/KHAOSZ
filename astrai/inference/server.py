@@ -1,15 +1,14 @@
 """
-Inference Server with Continuous Batching Support
-
-FastAPI server for inference with continuous batching.
-Provides OpenAI-compatible chat completion endpoints.
+OpenAI-compatible chat completion server backed by continuous-batching inference.
 """
 
 import json
 import logging
+import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import torch
 import uvicorn
@@ -27,17 +26,8 @@ _project_root = Path(__file__).parent.parent.parent
 
 
 class ServerState:
-    """Encapsulates all server runtime state.
-
-    Attributes:
-        engine: The inference engine instance.
-        model_param: The loaded model.
-        config: Server configuration dict.
-    """
-
     def __init__(self):
         self.engine: Optional[InferenceEngine] = None
-        self.model_param: Optional[Any] = None
         self.config: Dict[str, Any] = {
             "device": "cuda",
             "dtype": torch.bfloat16,
@@ -47,6 +37,28 @@ class ServerState:
 
 
 _state = ServerState()
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatCompletionRequest(BaseModel):
+    """OpenAI Chat Completion API request body."""
+
+    model: str = "astrai"
+    messages: List[ChatMessage]
+    temperature: Optional[float] = Field(default=1.0, ge=0.0, le=2.0)
+    top_p: Optional[float] = Field(default=1.0, ge=0.0, le=1.0)
+    stream: Optional[bool] = False
+    stop: Optional[Union[str, List[str]]] = None
+    max_tokens: Optional[int] = Field(default=2048, ge=1)
+    n: Optional[int] = Field(default=1, ge=1)
+    presence_penalty: Optional[float] = Field(default=0.0, ge=-2.0, le=2.0)
+    frequency_penalty: Optional[float] = Field(default=0.0, ge=-2.0, le=2.0)
+    logit_bias: Optional[Dict[int, float]] = None
+    user: Optional[str] = None
 
 
 def configure_server(
@@ -96,12 +108,12 @@ def load_model(
         raise FileNotFoundError(f"Parameter directory not found: {param_path}")
 
     tokenizer = AutoTokenizer.from_pretrained(param_path)
-    _state.model_param = AutoModel.from_pretrained(param_path)
-    _state.model_param.to(device=device, dtype=dtype)
+    model = AutoModel.from_pretrained(param_path)
+    model.to(device=device, dtype=dtype)
     logger.info(f"Model loaded on {device} with dtype {dtype}")
 
     _state.engine = InferenceEngine(
-        model=_state.model_param,
+        model=model,
         tokenizer=tokenizer,
         max_batch_size=max_batch_size,
     )
@@ -114,35 +126,37 @@ def _get_engine() -> InferenceEngine:
     return _state.engine
 
 
-class ChatMessage(BaseModel):
-    role: str
-    content: str
-
-
-class ChatCompletionRequest(BaseModel):
-    messages: List[ChatMessage]
-    temperature: float = Field(0.8, ge=0.0, le=2.0)
-    top_p: float = Field(0.95, ge=0.0, le=1.0)
-    top_k: int = Field(50, ge=0)
-    max_tokens: int = Field(2048, ge=1)
-    stream: bool = False
-    system_prompt: Optional[str] = None
-
-
-class CompletionResponse(BaseModel):
-    id: str = "chatcmpl-default"
-    object: str = "chat.completion"
-    created: int = 0
-    model: str = "astrai"
-    choices: List[Dict[str, Any]]
+def _make_chunk(
+    delta: Dict[str, str],
+    finish_reason: Optional[str] = None,
+    *,
+    resp_id: str,
+    created: int,
+    model: str,
+    index: int = 0,
+) -> str:
+    """Build a single SSE ``data:`` chunk matching OpenAI streaming format."""
+    data = {
+        "id": resp_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [
+            {
+                "index": index,
+                "delta": delta,
+                "finish_reason": finish_reason,
+            }
+        ],
+    }
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 @app.get("/health")
 async def health():
     return {
         "status": "ok",
-        "model_loaded": _state.model_param is not None,
-        "engine_ready": _state.engine is not None,
+        "model_loaded": _state.engine is not None,
     }
 
 
@@ -151,14 +165,19 @@ async def get_stats():
     return _get_engine().get_stats()
 
 
-@app.post("/v1/chat/completions", response_model=CompletionResponse)
+@app.post("/v1/chat/completions")
 async def chat_completion(request: ChatCompletionRequest):
+    """OpenAI-compatible chat completion endpoint (streaming + non-streaming)."""
     engine = _get_engine()
+    resp_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    created = int(time.time())
+    model = request.model
 
     prompt = engine.tokenizer.apply_chat_template(
         [{"role": m.role, "content": m.content} for m in request.messages],
         tokenize=False,
     )
+    prompt_tokens = len(engine.tokenizer.encode(prompt))
 
     if request.stream:
         agen = engine.generate_async(
@@ -166,12 +185,43 @@ async def chat_completion(request: ChatCompletionRequest):
             max_tokens=request.max_tokens,
             temperature=request.temperature,
             top_p=request.top_p,
-            top_k=request.top_k,
+            top_k=50,
         )
 
         async def event_stream():
+            yield _make_chunk(
+                {"role": "assistant"},
+                finish_reason=None,
+                resp_id=resp_id,
+                created=created,
+                model=model,
+            )
+
+            completion_tokens = 0
             async for token in agen:
-                yield f"data: {json.dumps({'choices': [{'delta': {'content': token}}]})}\n\n"
+                yield _make_chunk(
+                    {"content": token},
+                    finish_reason=None,
+                    resp_id=resp_id,
+                    created=created,
+                    model=model,
+                )
+                completion_tokens += 1
+
+            yield _make_chunk(
+                {},
+                finish_reason="stop",
+                resp_id=resp_id,
+                created=created,
+                model=model,
+            )
+
+            usage = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            }
+            yield f"data: {json.dumps(usage, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(
@@ -179,30 +229,39 @@ async def chat_completion(request: ChatCompletionRequest):
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
-    else:
-        result = engine.generate(
-            prompt=prompt,
-            stream=False,
-            max_tokens=request.max_tokens,
-            temperature=request.temperature,
-            top_p=request.top_p,
-            top_k=request.top_k,
-        )
 
-        import time
+    completion_tokens = 0
+    chunks: List[str] = []
+    agen = engine.generate_async(
+        prompt=prompt,
+        max_tokens=request.max_tokens,
+        temperature=request.temperature,
+        top_p=request.top_p,
+        top_k=50,
+    )
+    async for token in agen:
+        chunks.append(token)
+        completion_tokens += 1
+    content = "".join(chunks)
 
-        resp = CompletionResponse(
-            id=f"chatcmpl-{int(time.time())}",
-            created=int(time.time()),
-            choices=[
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": result},
-                    "finish_reason": "stop",
-                }
-            ],
-        )
-        return resp
+    return {
+        "id": resp_id,
+        "object": "chat.completion",
+        "created": created,
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        },
+    }
 
 
 @app.post("/generate")
@@ -215,6 +274,7 @@ async def generate(
     max_len: int = 2048,
     stream: bool = False,
 ):
+    """Legacy non-OpenAI generation endpoint (kept for backward compat)."""
     engine = _get_engine()
 
     messages = []
@@ -242,15 +302,17 @@ async def generate(
 
         return StreamingResponse(text_stream(), media_type="text/plain")
     else:
-        result = engine.generate(
+        chunks = []
+        for token in engine.generate(
             prompt=prompt,
-            stream=False,
+            stream=True,
             max_tokens=max_len,
             temperature=temperature,
             top_p=top_p,
             top_k=top_k,
-        )
-        return {"response": result}
+        ):
+            chunks.append(token)
+        return {"response": "".join(chunks)}
 
 
 def run_server(
