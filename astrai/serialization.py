@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import h5py
 import safetensors.torch as st
@@ -54,10 +54,12 @@ class Checkpoint:
         state_dict: Dict[str, Any],
         epoch: int = 0,
         iteration: int = 0,
+        extra: Optional[Dict[str, Any]] = None,
     ):
         self.state_dict = state_dict
         self.epoch = epoch
         self.iteration = iteration
+        self.extra = extra or {}
 
     def save(
         self,
@@ -77,6 +79,8 @@ class Checkpoint:
                 json.dump(meta, f, indent=2)
 
             st.save_file(self.state_dict, save_path / "state_dict.safetensors")
+            if self.extra:
+                torch.save(self.extra, save_path / "extra.pt")
 
     @classmethod
     def load(
@@ -99,8 +103,14 @@ class Checkpoint:
 
         state_dict = st.load_file(save_path / "state_dict.safetensors")
 
+        extra = None
+        extra_path = save_path / "extra.pt"
+        if extra_path.exists():
+            extra = torch.load(extra_path, map_location="cpu", weights_only=False)
+
         return cls(
             state_dict=state_dict,
             epoch=meta["epoch"],
             iteration=meta["iteration"],
+            extra=extra,
         )

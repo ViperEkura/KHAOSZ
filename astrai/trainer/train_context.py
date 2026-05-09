@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional, Self
+from typing import Callable, Optional, Self
 
 import torch.nn as nn
 from torch.optim import Optimizer
@@ -32,9 +32,14 @@ class TrainContext:
 
 
 class TrainContextBuilder:
-    def __init__(self, config: TrainConfig):
+    def __init__(
+        self,
+        config: TrainConfig,
+        load_extra_fn: Optional[Callable[[dict, "TrainContext"], None]] = None,
+    ):
         self.config = config
         self._checkpoint: Optional[Checkpoint] = None
+        self._load_extra_fn = load_extra_fn
 
     def with_checkpoint(self, checkpoint: Optional[Checkpoint]) -> Self:
         self._checkpoint = checkpoint
@@ -65,6 +70,9 @@ class TrainContextBuilder:
 
         context.optimizer = self.config.optimizer_fn(context.model)
         context.scheduler = self.config.scheduler_fn(context.optimizer)
+
+        if self._checkpoint and self._checkpoint.extra and self._load_extra_fn:
+            self._load_extra_fn(self._checkpoint.extra, context)
 
         cfg = self.config
         sampler_offset = context.iteration * cfg.batch_size

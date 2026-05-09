@@ -121,11 +121,13 @@ class CheckpointCallback(TrainCallback):
         interval: int,
         weight_only: bool = False,
         state_dict_fn: Optional[Callable[[nn.Module], dict]] = None,
+        save_extra_fn: Optional[Callable[["TrainContext"], dict]] = None,
     ):
         self.save_dir = save_dir
         self.interval = interval
         self.weight_only = weight_only
         self.state_dict_fn = state_dict_fn
+        self.save_extra_fn = save_extra_fn
         self.last_ckpt_iter = 0
 
     @only_on_rank(0)
@@ -139,8 +141,12 @@ class CheckpointCallback(TrainCallback):
             else context.model.state_dict()
         )
 
+        extra = self.save_extra_fn(context) if self.save_extra_fn else None
         context.checkpoint = Checkpoint(
-            state_dict=state_dict, epoch=context.epoch, iteration=context.iteration
+            state_dict=state_dict,
+            epoch=context.epoch,
+            iteration=context.iteration,
+            extra=extra,
         )
 
         context.checkpoint.save(save_path)
