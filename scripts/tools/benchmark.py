@@ -6,8 +6,9 @@ from typing import Any, Dict
 import torch
 from torch import Tensor
 
+from astrai.config import ModelConfig
 from astrai.inference.cache import PagedCache
-from astrai.model.transformer import ModelConfig, Transformer
+from astrai.model.transformer import Transformer
 
 
 @dataclass

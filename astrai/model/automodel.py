@@ -84,6 +84,7 @@ class AutoModel(nn.Module):
         cls,
         path: Union[str, Path],
         disable_random_init: bool = True,
+        strict: bool = True,
     ) -> nn.Module:
 
         model_path = Path(path)
@@ -106,7 +107,7 @@ class AutoModel(nn.Module):
         weights_path = model_path / "model.safetensors"
         if weights_path.exists():
             state_dict = st.load_file(str(weights_path))
-            model.load_state_dict(state_dict, strict=False)
+            model.load_state_dict(state_dict, strict=strict)
 
         return model
 

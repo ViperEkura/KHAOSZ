@@ -3,7 +3,7 @@
 Layers:
   - engine.py:    Facade (InferenceEngine), Value Object (GenerationParams, GenerationRequest)
   - scheduler.py: Continuous-batching loop, Task state machine, TaskStatus enum
-  - cache.py:     Object Pool (SlotAllocator), PrefixCacheManager
+  - cache.py:     PagedCache (page-table-indirected KV cache with alloc/free)
   - sampling.py:  Strategy pattern (TemperatureStrategy, TopKStrategy, TopPStrategy)
   - server.py:    FastAPI HTTP server (OpenAI-compatible endpoints)
 """

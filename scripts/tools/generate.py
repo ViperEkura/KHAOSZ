@@ -9,7 +9,7 @@ from astrai.tokenize import AutoTokenizer
 
 
 def processor(
-    model_dir: str,
+    param_path: str,
     input_json_file: str,
     output_json_file: str,
     temperature: float,
@@ -20,8 +20,8 @@ def processor(
     max_tokens: int,
 ):
     # Load model and tokenizer
-    model = AutoModel.from_pretrained(model_dir)
-    tokenizer = AutoTokenizer.from_pretrained(model_dir)
+    model = AutoModel.from_pretrained(param_path)
+    tokenizer = AutoTokenizer.from_pretrained(param_path)
     model.to(device="cuda", dtype=torch.bfloat16)
 
     # Create inference engine
@@ -72,7 +72,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run generate with a Khaosz model.")
 
     parser.add_argument(
-        "--model_dir", type=str, required=True, help="Path to the model directory."
+        "--param_path", type=str, required=True, help="Path to the model directory."
     )
     parser.add_argument(
         "--input_json_file",

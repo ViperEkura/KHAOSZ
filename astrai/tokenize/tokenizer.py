@@ -64,6 +64,11 @@ class AutoTokenizer:
             save_path: Path to save the tokenizer
         """
 
+        if self._tokenizer is None:
+            raise RuntimeError(
+                "Tokenizer not initialized. Load or create a tokenizer first."
+            )
+
         save_path = Path(save_path)
         save_path.mkdir(parents=True, exist_ok=True)
 

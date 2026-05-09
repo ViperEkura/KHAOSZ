@@ -408,13 +408,14 @@ class InferenceEngine:
             Single string for one prompt, list of strings for batch.
         """
         result = _Result(count=len(prompts))
+        task_ids = []
 
         for i, p in enumerate(prompts):
 
             def make_cb(idx):
                 return lambda tok: result.append(tok, idx)
 
-            self.scheduler.add_task(
+            task_id = self.scheduler.add_task(
                 prompt=p,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -422,8 +423,14 @@ class InferenceEngine:
                 top_k=top_k,
                 stream_callback=make_cb(i),
             )
+            task_ids.append(task_id)
 
-        result.wait()
+        while result._completed < result._total:
+            result.wait(timeout=1.0)
+
+        for task_id in task_ids:
+            self.scheduler.remove_task(task_id)
+
         res = result.get_results()
         return res if is_batch else res[0]
 

@@ -48,8 +48,9 @@ def setup_parallel(
     if device_ids is None:
         device_ids = [i for i in range(world_size)]
 
-    rank = device_ids[rank % len(device_ids)]
-    device_id = torch.device(device_type, device_ids[rank])
+    effective_rank = rank % len(device_ids)
+    device_id = torch.device(device_type, device_ids[effective_rank])
+    rank = device_ids[effective_rank]
 
     os.environ["MASTER_ADDR"] = master_addr
     os.environ["MASTER_PORT"] = master_port

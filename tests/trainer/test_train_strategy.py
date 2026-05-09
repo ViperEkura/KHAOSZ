@@ -72,6 +72,7 @@ def test_schedule_factory_random_configs():
 
             # Test scheduler step functionality
             initial_lr = scheduler.get_last_lr()
+            optimizer.step()
             scheduler.step()
             new_lr = scheduler.get_last_lr()
 
@@ -112,6 +113,7 @@ def test_schedule_factory_edge_cases():
 
         # Test multiple steps
         for _ in range(10):
+            optimizer.step()
             scheduler.step()
 
 
@@ -136,6 +138,7 @@ def test_schedule_factory_state_persistence():
 
     # Take a few steps
     for _ in range(5):
+        optimizer.step()
         scheduler.step()
 
     # Save state

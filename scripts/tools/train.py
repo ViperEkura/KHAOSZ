@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--n_epoch", type=int, default=1, help="Number of epochs to train."
     )
-    parser.add_argument("--group_size", type=int, default=4, help="GRPO group size.")
+    parser.add_argument("--batch_size", type=int, default=1, help="Batch size per GPU.")
     parser.add_argument(
         "--accumulation_steps",
         type=int,
@@ -53,7 +53,7 @@ def parse_args() -> argparse.Namespace:
         "--warmup_steps",
         type=int,
         default=1000,
-        help="Number of iters between warnings.",
+        help="Number of warmup steps for LR scheduler.",
     )
     parser.add_argument(
         "--max_lr", type=float, default=3e-4, help="Max learning rate for training."
@@ -98,23 +98,19 @@ def parse_args() -> argparse.Namespace:
         "--window_size",
         type=int,
         default=None,
-        help="the max length of the input sequence.",
+        help="Max length of the input sequence.",
     )
     parser.add_argument(
-        "--stride", type=int, default=None, help="the step size of the input sequence."
+        "--stride", type=int, default=None, help="Step size of the input sequence."
     )
     parser.add_argument("--dpo_beta", type=float, default=0.1, help="DPO beta value.")
     parser.add_argument("--group_size", type=int, default=4, help="GRPO group size.")
     parser.add_argument(
-        "--on_policy",
-        action="store_true",
-        default=False,
-        help="Enable on-policy GRPO mode.",
+        "--grpo_clip_eps", type=float, default=0.2, help="GRPO clipping epsilon."
     )
     parser.add_argument(
         "--grpo_kl_coef", type=float, default=0.01, help="GRPO KL penalty coefficient."
     )
-    parser.add_argument("--group_size", type=int, default=4, help="GRPO group size.")
     parser.add_argument(
         "--label_smoothing",
         type=float,
@@ -134,7 +130,6 @@ def parse_args() -> argparse.Namespace:
         default="checkpoint",
         help="Directory to save checkpoints.",
     )
-    parser.add_argument("--group_size", type=int, default=4, help="GRPO group size.")
     parser.add_argument(
         "--grpo_sync_interval",
         type=int,

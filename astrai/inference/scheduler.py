@@ -56,6 +56,7 @@ class Task:
         self.arrival_time = time.time()
         self.finish_time: Optional[float] = None
         self.stream_callback = stream_callback
+        self._pages_freed: bool = False
 
     @property
     def next_pos(self) -> int:
@@ -167,9 +168,11 @@ class InferenceScheduler:
             self.active_tasks = [t for t in self.active_tasks if t.task_id != task_id]
 
         for task in removed_active:
-            self._free_pages(task.page_table)
-            task.page_table.clear()
-            task.n_pages = 0
+            if not task._pages_freed:
+                self._free_pages(task.page_table)
+                task.page_table.clear()
+                task.n_pages = 0
+                task._pages_freed = True
 
     def _free_pages(self, indices: List[int]) -> None:
         for idx in indices:
@@ -185,9 +188,11 @@ class InferenceScheduler:
                 self._total_tokens += task.output_tokens
 
         for task in finished:
-            self._free_pages(task.page_table)
-            task.page_table.clear()
-            task.n_pages = 0
+            if not task._pages_freed:
+                self._free_pages(task.page_table)
+                task.page_table.clear()
+                task.n_pages = 0
+                task._pages_freed = True
 
         self.active_tasks = [
             t for t in self.active_tasks if t.status != TaskStatus.FINISHED

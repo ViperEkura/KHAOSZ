@@ -68,8 +68,9 @@ class Trainer:
                 context.epoch = epoch
                 self._call_callbacks("on_epoch_begin", context)
 
+                accumulation_steps = max(self.train_config.accumulation_steps, 1)
                 for batch in context.dataloader:
-                    if context.iteration % self.train_config.accumulation_steps == 0:
+                    if context.iteration % accumulation_steps == 0:
                         # 2. step
                         self._call_callbacks("on_step_begin", context)
                         context.optimizer.step()
@@ -83,7 +84,7 @@ class Trainer:
                     context.iteration += 1
 
                     # to make the loss normalized by accumulation steps
-                    stand_loss = loss / self.train_config.accumulation_steps
+                    stand_loss = loss / accumulation_steps
                     stand_loss.backward()
 
                     self._call_callbacks("on_batch_end", context)
