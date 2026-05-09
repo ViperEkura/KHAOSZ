@@ -155,7 +155,7 @@ def parse_args() -> argparse.Namespace:
 
 def ddp_wrap(model: nn.Module):
     local_rank = get_rank()
-    model = model.to(device=f"cuda:{local_rank}", dtype=torch.bfloat16)
+    model = model.to(dtype=torch.bfloat16)
     ddp_model = DDP(
         model,
         device_ids=[local_rank],

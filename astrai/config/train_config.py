@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional
+from typing import Callable, Optional
 
 import torch.nn as nn
 from torch.optim import Optimizer
@@ -74,9 +74,6 @@ class TrainConfig:
     )
 
     # others
-    device_ids: Optional[List[int]] = field(
-        default=None, metadata={"help": "Device ids for distributed training."}
-    )
     device_type: str = field(
         default="cuda", metadata={"help": "Device type for distributed training."}
     )

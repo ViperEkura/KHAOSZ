@@ -53,7 +53,6 @@ class Trainer:
             master_addr=config.master_addr,
             master_port=config.master_port,
             device_type=config.device_type,
-            device_ids=config.device_ids,
             checkpoint=checkpoint,
         )
 

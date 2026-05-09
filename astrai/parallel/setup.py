@@ -1,7 +1,7 @@
 import os
 from contextlib import contextmanager
 from functools import wraps
-from typing import Callable, List, Optional
+from typing import Callable
 
 import torch
 import torch.distributed as dist
@@ -34,7 +34,6 @@ def setup_parallel(
     master_addr: str = "localhost",
     master_port: str = "29500",
     device_type: str = "cuda",
-    device_ids: Optional[List[int]] = None,
 ):
 
     if dist.is_available() and dist.is_initialized():
@@ -45,16 +44,10 @@ def setup_parallel(
         yield None
         return
 
-    if device_ids is None:
-        device_ids = [i for i in range(world_size)]
-
-    effective_rank = rank % len(device_ids)
-    device_id = torch.device(device_type, device_ids[effective_rank])
-    rank = device_ids[effective_rank]
+    device_id = torch.device(device_type, rank)
 
     os.environ["MASTER_ADDR"] = master_addr
     os.environ["MASTER_PORT"] = master_port
-
     os.environ["LOCAL_RANK"] = str(rank)
     os.environ["WORLD_SIZE"] = str(world_size)
     os.environ["LOCAL_DEVICE"] = str(device_id)
@@ -104,7 +97,6 @@ def wrapper_spawn_func(
     master_addr: str,
     master_port: str,
     device_type: str,
-    device_ids: List[int],
     func: Callable,
     kwargs: dict,
 ):
@@ -116,7 +108,6 @@ def wrapper_spawn_func(
             master_addr=master_addr,
             master_port=master_port,
             device_type=device_type,
-            device_ids=device_ids,
         ):
             func(**kwargs)
 
@@ -132,7 +123,6 @@ def spawn_parallel_fn(
     master_addr: str = "localhost",
     master_port: str = "29500",
     device_type: str = "cuda",
-    device_ids: Optional[List[int]] = None,
     **kwargs,
 ):
     # clear environment variables
@@ -148,8 +138,9 @@ def spawn_parallel_fn(
             del os.environ[key]
 
     if world_size == 1:
-        device_ids = device_ids or [0]
-        device_id = torch.device(device_type, device_ids[0])
+        device_id = torch.device(device_type, 0)
+        os.environ["LOCAL_RANK"] = "0"
+        os.environ["WORLD_SIZE"] = "1"
         os.environ["LOCAL_DEVICE"] = str(device_id)
 
         func(**kwargs)
@@ -161,7 +152,6 @@ def spawn_parallel_fn(
         master_addr,
         master_port,
         device_type,
-        device_ids,
         func,
         kwargs,
     )

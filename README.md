@@ -68,41 +68,18 @@ pip install -e ".[dev]"
 #### Train a Model
 
 ```bash
-python scripts/tools/train.py --train_type=seq --data_root_path=/path/to/dataset --param_path=/path/to/model
+CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/tools/train.py \
+    --train_type seq \
+    --data_root_path /path/to/dataset \
+    --param_path /path/to/model \
+    --batch_size 4 \
+    --accumulation_steps 8 \
+    --max_lr 3e-4 \
+    --warmup_steps 1000 \
+    --n_epoch 1
 ```
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `--train_type` | Training type (`seq`, `sft`, `dpo`, `grpo`) | required |
-| `--data_root_path` | Dataset root directory | required |
-| `--param_path` | Model / checkpoint path | required |
-| `--n_epoch` | Training epochs | 1 |
-| `--batch_size` | Batch size | 1 |
-| `--accumulation_steps` | Gradient accumulation steps | 1 |
-| `--warmup_steps` | LR warmup steps | 1000 |
-| `--max_lr` | Peak learning rate (cosine decay) | 3e-4 |
-| `--max_grad_norm` | Max gradient norm for clipping | 1.0 |
-| `--adamw_beta1` | AdamW beta1 | 0.9 |
-| `--adamw_beta2` | AdamW beta2 | 0.95 |
-| `--adamw_weight_decay` | AdamW weight decay | 0.01 |
-| `--random_seed` | Random seed | 3407 |
-| `--num_workers` | DataLoader workers | 4 |
-| `--window_size` | Max input sequence length | auto |
-| `--stride` | Sequence stride | auto |
-| `--label_smoothing` | Label smoothing for cross entropy | 0.1 |
-| `--dpo_beta` | DPO beta | 0.1 |
-| `--grpo_clip_eps` | GRPO clip epsilon | 0.2 |
-| `--grpo_kl_coef` | GRPO KL penalty coefficient | 0.01 |
-| `--group_size` | GRPO group size | 4 |
-| `--grpo_sync_interval` | GRPO ref model sync interval (steps) | 200 |
-| `--ckpt_interval` | Checkpoint interval (iters) | 5000 |
-| `--ckpt_dir` | Checkpoint directory | checkpoint |
-| `--start_epoch` | Start epoch (for resume) | 0 |
-| `--start_batch` | Start batch (for resume) | 0 |
-| `--nprocs` | Number of GPUs | 1 |
-| `--device_type` | Device type | cuda |
-
-Full reference at [Parameter Guide](./assets/docs/params.md#training-parameters).
+Full reference at [Parameter Guide](assets/docs/params.md).
 
 #### Generate Text
 
