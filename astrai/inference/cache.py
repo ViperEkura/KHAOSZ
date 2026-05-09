@@ -4,12 +4,21 @@ Provides:
   - PagedCache: paged KV cache combining page pool and tensor storage.
 """
 
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 import torch
 from torch import Tensor
 
 STOP = object()
+
+
+def page_hash(token_ids: List[int], page_idx: int, page_size: int) -> int:
+    start = page_idx * page_size
+    end = min(start + page_size, len(token_ids))
+    h = 0
+    for i in range(start, end):
+        h = (h * 31 + token_ids[i]) & 0xFFFFFFFFFFFFFFFF
+    return h
 
 
 class PagedCache:
@@ -18,6 +27,7 @@ class PagedCache:
     Combines:
       - Page pool (ref-counted alloc/free via bitmask)
       - KV tensor storage (k_cache, v_cache)
+      - Prefix-cache hash lookup (page_content_hash -> physical_page_idx)
 
     Call :meth:`bind` to obtain a batch view for the attention layers.
     """
@@ -45,6 +55,32 @@ class PagedCache:
             device=device,
             dtype=dtype,
         )
+        self._page_to_hash: Dict[int, int] = {}
+        self._hash_to_page: Dict[int, int] = {}
+
+    def record_page(
+        self, page_idx: int, token_ids: List[int], logical_page_idx: int
+    ) -> None:
+        h = page_hash(token_ids, logical_page_idx, self.page_size)
+        old_h = self._page_to_hash.pop(page_idx, None)
+        if old_h is not None:
+            self._hash_to_page.pop(old_h, None)
+        self._page_to_hash[page_idx] = h
+        self._hash_to_page[h] = page_idx
+
+    def lookup_prefix(self, token_ids: List[int]) -> List[int]:
+        full_pages = len(token_ids) // self.page_size
+        hits: List[int] = []
+        for i in range(full_pages):
+            h = page_hash(token_ids, i, self.page_size)
+            p = self._hash_to_page.get(h)
+            if p is None:
+                break
+            hits.append(p)
+        return hits
+
+    def inc_ref(self, idx: int) -> None:
+        self._refs[idx] += 1
 
     def alloc(self) -> int:
         lsb = self._free_mask & -self._free_mask
@@ -68,6 +104,9 @@ class PagedCache:
         self._refs[idx] -= 1
         if self._refs[idx] == 0:
             self._free_mask |= 1 << idx
+            h = self._page_to_hash.pop(idx, None)
+            if h is not None:
+                self._hash_to_page.pop(h, None)
 
     def bind(self, page_table: Tensor, total_len: int = 0) -> "CacheView":
         return CacheView(self, page_table, total_len)

@@ -5,6 +5,7 @@ import time
 from unittest.mock import MagicMock, patch
 
 import pytest
+import torch
 
 from astrai.inference.scheduler import InferenceScheduler
 
@@ -19,6 +20,9 @@ def mock_model_and_tokenizer():
     mock_model.config.dim = 128
     mock_model.config.n_layers = 2
     mock_model.config.max_len = 100
+    mock_model.parameters.return_value = iter(
+        [MagicMock(dtype=torch.float32, device=torch.device("cpu"))]
+    )
 
     mock_tokenizer = MagicMock()
     mock_tokenizer.encode.return_value = [1, 2, 3, 4, 5]

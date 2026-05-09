@@ -5,7 +5,7 @@ import threading
 import time
 import uuid
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
 from torch import Tensor
@@ -53,6 +53,7 @@ class Task:
         self.output_tokens: int = 0
         self.page_table: List[int] = []
         self.n_pages: int = 0
+        self._prefix_cached_tokens: int = 0
         self.arrival_time = time.time()
         self.finish_time: Optional[float] = None
         self.stream_callback = stream_callback
@@ -88,8 +89,8 @@ class InferenceScheduler:
         max_seq_len: Optional[int] = None,
         max_prompt_len: int = 512,
         page_size: int = 64,
-        device: str = "cuda",
-        dtype: torch.dtype = torch.bfloat16,
+        device: Optional[str] = None,
+        dtype: Optional[torch.dtype] = None,
     ):
         config = model.config
 
@@ -180,6 +181,11 @@ class InferenceScheduler:
         for idx in indices:
             self.page_cache.free(idx)
 
+    def _record_page_hashes(self, task: Task, start_logical_page: int = 0) -> None:
+        full_pages = len(task.prompt_ids) // self.page_size
+        for i in range(start_logical_page, full_pages):
+            self.page_cache.record_page(task.page_table[i], task.prompt_ids, i)
+
     def _remove_finished_tasks(self) -> None:
         finished = []
         for task in self.active_tasks:
@@ -214,12 +220,25 @@ class InferenceScheduler:
         failed: List[Task] = []
         for task in to_add:
             prompt_len = len(task.prompt_ids)
-            n_pages = self._n_pages_for(prompt_len)
-            task.page_table = self.page_cache.alloc_n(n_pages)
-            if not task.page_table:
+
+            hit_pages = self.page_cache.lookup_prefix(task.prompt_ids)
+            cached_tokens = len(hit_pages) * self.page_size
+            for p in hit_pages:
+                self.page_cache.inc_ref(p)
+
+            remaining = prompt_len - cached_tokens
+            n_new = self._n_pages_for(remaining) if remaining > 0 else 0
+            new_pages = self.page_cache.alloc_n(n_new) if n_new > 0 else []
+
+            if remaining > 0 and not new_pages:
+                for p in hit_pages:
+                    self.page_cache.free(p)
                 failed.append(task)
                 continue
+
+            task.page_table = hit_pages + new_pages
             task.n_pages = len(task.page_table)
+            task._prefix_cached_tokens = cached_tokens
             task.status = TaskStatus.RUNNING
             self.active_tasks.append(task)
 
@@ -227,42 +246,20 @@ class InferenceScheduler:
             with self._lock:
                 self.waiting_queue[:0] = failed
 
-    def _execute_prefill(self) -> None:
-        to_prefill = [t for t in self.active_tasks if t.output_tokens == 0]
-        if not to_prefill:
-            return
-
-        for t in to_prefill:
-            prompt_len = len(t.prompt_ids)
-            t.input_tokens = prompt_len
-            t.output_tokens = 0
-
-        groups: Dict[int, List[Task]] = {}
-        for t in to_prefill:
-            groups.setdefault(len(t.prompt_ids), []).append(t)
-
-        for prompt_len, group in groups.items():
-            self._execute_prefill_batch(group, prompt_len)
-
-    def _execute_prefill_batch(self, tasks: List[Task], prompt_len: int) -> None:
+    def _execute_prefill(
+        self, tasks: List[Task], prompt_len: int, start_pos: int = 0
+    ) -> None:
         tasks = sorted(tasks, key=lambda t: t.task_id)
         batch_sz = len(tasks)
 
-        input_ids = torch.zeros(
-            batch_sz,
-            prompt_len,
-            dtype=torch.long,
-            device=self.device,
-        )
-        input_mask = torch.ones(
-            batch_sz,
-            prompt_len,
-            dtype=torch.bool,
-            device=self.device,
-        )
+        seq_len = prompt_len - start_pos
+        input_ids = torch.zeros(batch_sz, seq_len, dtype=torch.long, device=self.device)
+        input_mask = torch.ones(batch_sz, seq_len, dtype=torch.bool, device=self.device)
 
         for i, t in enumerate(tasks):
-            input_ids[i] = torch.tensor(t.prompt_ids, device=self.device)
+            input_ids[i] = torch.tensor(
+                t.prompt_ids[start_pos:prompt_len], device=self.device
+            )
 
         page_tables = self._make_page_table_tensor(tasks)
 
@@ -270,9 +267,13 @@ class InferenceScheduler:
             self.model(
                 input_ids,
                 input_mask=input_mask,
-                start_pos=0,
+                start_pos=start_pos,
                 paged_cache=self.page_cache.bind(page_tables, total_len=prompt_len),
             )
+
+        start_logical_page = start_pos // self.page_size
+        for t in tasks:
+            self._record_page_hashes(t, start_logical_page=start_logical_page)
 
     def _execute_decode(self, tasks: List[Task], start_pos: int) -> None:
         if not tasks:
@@ -349,7 +350,19 @@ class InferenceScheduler:
                     self._task_event.wait(timeout=1.0)
                     continue
 
-                self._execute_prefill()
+                to_prefill = [t for t in self.active_tasks if t.output_tokens == 0]
+                if to_prefill:
+                    for t in to_prefill:
+                        t.input_tokens = len(t.prompt_ids)
+
+                    groups: Dict[Tuple[int, int], List[Task]] = {}
+                    for t in to_prefill:
+                        key = (len(t.prompt_ids), t._prefix_cached_tokens)
+                        groups.setdefault(key, []).append(t)
+
+                    for (prompt_len, start_pos), group in groups.items():
+                        if start_pos < prompt_len:
+                            self._execute_prefill(group, prompt_len, start_pos)
 
                 pos_groups: Dict[int, List[Task]] = {}
                 for t in self.active_tasks:
