@@ -265,7 +265,9 @@ class DPOStrategy(BaseStrategy):
 class GRPOStrategy(BaseStrategy):
     """Group Relative Policy Optimization strategy.
 
-    Implements GRPO with clipping and KL penalty.
+    On-policy GRPO following DeepSeek-R1: the policy model is updated while
+    a frozen ref_model stores the old-policy log-probs.  ratio = exp(logπ_θ - logπ_ref),
+    clipped PPO objective.  Call ``sync_ref_model()`` after each data-generation round.
     """
 
     def __init__(
@@ -276,6 +278,7 @@ class GRPOStrategy(BaseStrategy):
         kl_coef: float = 0.01,
         group_size: int = 4,
         reduction: str = "mean",
+        sync_interval: int = 200,
         **kwargs,
     ):
         super().__init__(model, device, **kwargs)
@@ -284,8 +287,19 @@ class GRPOStrategy(BaseStrategy):
         self.kl_coef = kl_coef
         self.group_size = group_size
         self.reduction = reduction
+        self.sync_interval = sync_interval
+        self._step = 0
+
+    def sync_ref_model(self):
+        """Copy current model weights to ref model."""
+        ref_state = self.model.state_dict()
+        self.ref_model.load_state_dict(ref_state)
 
     def compute_loss(self, batch: Dict[str, Tensor]) -> Tensor:
+        self._step += 1
+        if self._step % self.sync_interval == 0:
+            self.sync_ref_model()
+
         batch = move_to_device(batch, self.device)
         prompts = batch["prompts"]
         responses = batch["responses"]
@@ -297,7 +311,6 @@ class GRPOStrategy(BaseStrategy):
         masks_flat = masks.view(-1, response_len)
         prompt_expanded = prompts.unsqueeze(1).repeat(1, group_size, 1).flatten(0, 1)
 
-        # Shape: (batch_size * group_size, seq_len + response_len)
         full_sequences = torch.cat([prompt_expanded, responses_flat], dim=-1)
         full_masks = torch.cat([torch.ones_like(prompt_expanded), masks_flat], dim=-1)
 
@@ -312,14 +325,13 @@ class GRPOStrategy(BaseStrategy):
             )
             log_probs_ref = log_probs_ref.view(batch_size, group_size)
 
-        # Compute advantages from rewards with normalization
         eps = torch.finfo(log_probs_policy.dtype).eps
         mean = rewards.mean(dim=-1, keepdim=True)
         std = rewards.std(dim=-1, keepdim=True)
         advantages = (rewards - mean) / (std + eps)
 
-        # PPO-style clipped surrogate objective
-        ratio = torch.exp(0)  # Off-policy: policy_model = old_model
+        ratio = torch.exp(log_probs_policy - log_probs_ref)
+
         surr1 = ratio * advantages
         surr2 = torch.clamp(ratio, 1 - self.clip_eps, 1 + self.clip_eps) * advantages
 

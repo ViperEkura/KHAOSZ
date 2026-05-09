@@ -79,18 +79,34 @@ python scripts/tools/train.py --train_type=seq --data_root_path=/path/to/dataset
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
-| `--train_type` | 训练类型（`seq`, `sft`, `dpo`） | 必填 |
+| `--train_type` | 训练类型（`seq`, `sft`, `dpo`, `grpo`） | 必填 |
 | `--data_root_path` | 数据集根目录 | 必填 |
 | `--param_path` | 模型参数或断点路径 | 必填 |
 | `--n_epoch` | 训练轮数 | 1 |
 | `--batch_size` | 批次大小 | 1 |
 | `--accumulation_steps` | 梯度累积步数 | 1 |
-| `--max_lr` | 峰值学习率（余弦衰减） | 3e-4 |
 | `--warmup_steps` | 预热步数 | 1000 |
+| `--max_lr` | 峰值学习率（余弦衰减） | 3e-4 |
+| `--max_grad_norm` | 梯度裁剪最大值 | 1.0 |
+| `--adamw_beta1` | AdamW beta1 | 0.9 |
+| `--adamw_beta2` | AdamW beta2 | 0.95 |
+| `--adamw_weight_decay` | AdamW 权重衰减 | 0.01 |
+| `--random_seed` | 随机种子 | 3407 |
+| `--num_workers` | 数据加载线程数 | 4 |
+| `--window_size` | 最大输入序列长度 | auto |
+| `--stride` | 序列步长 | auto |
+| `--label_smoothing` | 交叉熵标签平滑 | 0.1 |
+| `--dpo_beta` | DPO beta | 0.1 |
+| `--grpo_clip_eps` | GRPO 裁剪 epsilon | 0.2 |
+| `--grpo_kl_coef` | GRPO KL 惩罚系数 | 0.01 |
+| `--group_size` | GRPO 组大小 | 4 |
+| `--grpo_sync_interval` | GRPO ref_model 同步间隔（步） | 200 |
 | `--ckpt_interval` | 检查点间隔（迭代步） | 5000 |
 | `--ckpt_dir` | 检查点保存目录 | checkpoint |
-| `--num_workers` | 数据加载线程数 | 4 |
+| `--start_epoch` | 起始轮次（用于断点续训） | 0 |
+| `--start_batch` | 起始批次（用于断点续训） | 0 |
 | `--nprocs` | GPU 数量 | 1 |
+| `--device_type` | 设备类型 | cuda |
 
 完整参数列表见[参数说明](./params.md#training-parameters)。
 

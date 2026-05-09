@@ -51,6 +51,7 @@ class ChatCompletionRequest(BaseModel):
     messages: List[ChatMessage]
     temperature: Optional[float] = Field(default=1.0, ge=0.0, le=2.0)
     top_p: Optional[float] = Field(default=1.0, ge=0.0, le=1.0)
+    top_k: Optional[int] = Field(default=50, ge=1)
     stream: Optional[bool] = False
     stop: Optional[Union[str, List[str]]] = None
     max_tokens: Optional[int] = Field(default=2048, ge=1)
@@ -204,7 +205,7 @@ async def chat_completion(request: ChatCompletionRequest):
             max_tokens=request.max_tokens,
             temperature=request.temperature,
             top_p=request.top_p,
-            top_k=50,
+            top_k=request.top_k,
         )
 
         async def event_stream():
@@ -256,7 +257,7 @@ async def chat_completion(request: ChatCompletionRequest):
         max_tokens=request.max_tokens,
         temperature=request.temperature,
         top_p=request.top_p,
-        top_k=50,
+        top_k=request.top_k,
     )
     async for token in agen:
         chunks.append(token)
