@@ -105,7 +105,9 @@ class InferenceScheduler:
         n_kv_heads = config.n_kv_heads
         head_dim = config.dim // config.n_heads
         n_layers = config.n_layers
-        n_pages = (max_batch_size * self.max_seq_len + page_size - 1) // page_size
+        n_pages = (
+            max_batch_size * (self.max_seq_len + page_size) + page_size - 1
+        ) // page_size
 
         self.page_cache = PagedCache(
             n_layers,
@@ -278,6 +280,9 @@ class InferenceScheduler:
 
         tasks = sorted(tasks, key=lambda t: t.task_id)
         batch_sz = len(tasks)
+
+        for t in tasks:
+            self._maybe_alloc_page(t, start_pos)
 
         input_ids = torch.zeros(batch_sz, dtype=torch.long, device=self.device)
         for i, t in enumerate(tasks):

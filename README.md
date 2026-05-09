@@ -46,7 +46,7 @@
 - 💡 **Easy to Use**: Simple API with comprehensive examples and demos.
 - 📦 **Lightweight**: Minimal dependencies, easy to deploy.
 - 🔬 **Research‑Friendly**: Modular design, easy to experiment with new ideas.
-- 🤗 **HuggingFace Integration**: Compatible with HuggingFace models and datasets.
+- 🤗 **HuggingFace-Style API**: AutoModel/AutoTokenizer APIs inspired by HuggingFace for easy model and tokenizer loading.
 - 🔌 **Dual API Compatibility**: Supports both OpenAI and Anthropic chat completion APIs out of the box.
 
 ### Quick Start
@@ -84,7 +84,10 @@ Full reference at [Parameter Guide](assets/docs/params.md).
 #### Generate Text
 
 ```bash
-python scripts/tools/generate.py --param_path=/path/to/param_path
+python scripts/tools/generate.py \
+    --param_path /path/to/model \
+    --input_json_file /path/to/input.json \
+    --output_json_file /path/to/output.json
 ```
 
 #### Docker
@@ -114,8 +117,6 @@ docker compose up -d
 # Docker Compose (CPU only)
 docker compose --profile cpu up -d
 ```
-
-> **Note**: `--gpus all` is required for CUDA support. Without it, `torch.cuda.is_available()` will return `False`.
 
 > **Note**: `--gpus all` is required for CUDA support. Without it, `torch.cuda.is_available()` will return `False`.
 

@@ -50,7 +50,6 @@ classDiagram
             +str master_port
             +Callable parallel_wrapper
             +Callable state_dict_fn
-            +List[int] device_ids
             +str device_type
             +dict extra_kwargs
             +validate()
@@ -99,8 +98,8 @@ classDiagram
         }
 
         class ResumableDistributedSampler {
-            +int start_epoch
-            +int start_iter
+            +int epoch
+            +int iter
         }
 
         class DatasetFactory {
@@ -124,7 +123,7 @@ classDiagram
     namespace model {
         class AutoModel {
             +ModelConfig config
-            +Dict _registry
+            +Registry _registry
             +register(model_type) decorator
             +get_model_class(model_type) Type
             +from_pretrained(path, disable_random_init) nn.Module
@@ -139,7 +138,7 @@ classDiagram
             +ModuleList layers
             +RMSNorm norm
             +Linear lm_head
-            +forward(input_ids, input_mask, persistent_key_values, start_pos) Dict
+            +forward(input_ids, input_mask, paged_cache, start_pos) Dict
             +load_state_dict(state_dict)
             +state_dict()
         }
@@ -149,7 +148,7 @@ classDiagram
             +RMSNorm input_norm
             +MLP mlp
             +RMSNorm post_attention_norm
-            +forward(x, rotary_emb, attention_mask, kv_cache, start_pos) Tensor
+            +forward(x, rotary_emb, attention_mask, paged_cache, start_pos) Tensor
         }
 
         class GQA {
@@ -158,18 +157,20 @@ classDiagram
             +int head_dim
             +Linear q_proj, k_proj, v_proj, o_proj
             +RMSNorm q_norm, k_norm
-            +forward(x, rotary_emb, mask, kv_cache, start_pos) Tensor
+            +forward(x, rotary_emb, mask, paged_cache, start_pos) Tensor
         }
 
         class MLA {
             +int n_heads
             +int n_kv_heads
             +int head_dim
-            +Linear q_a_proj, q_b_proj, q_c_proj
-            +Linear kv_a_proj, kv_b_proj, kv_c_proj
+            +int kv_lora_rank
+            +int qk_nope_head_dim
+            +int qk_rope_head_dim
+            +Linear q_proj, kv_a_proj, kv_b_proj
             +Linear o_proj
-            +RMSNorm q_norm, k_norm
-            +forward(x, rotary_emb, mask, kv_cache, start_pos) Tensor
+            +RMSNorm kv_norm
+            +forward(x, rotary_emb, mask, paged_cache, start_pos) Tensor
         }
 
         class MLP {
@@ -204,7 +205,7 @@ classDiagram
 
     namespace tokenize {
         class AutoTokenizer {
-            +List[str] stop_ids
+            +List[int] stop_ids
             +int bos_id
             +int eos_id
             +int pad_id
@@ -220,7 +221,7 @@ classDiagram
 
         class ChatTemplate {
             +String template_str
-            +render(messages, add_generation_prompt) str
+            +render(messages, system_prompt, **extra_variables) str
             +from_string(template) ChatTemplate
         }
     }
@@ -267,8 +268,6 @@ classDiagram
         class TrainContextBuilder {
             +TrainConfig config
             +with_checkpoint(checkpoint) TrainContextBuilder
-            +with_dataloader() TrainContextBuilder
-            +with_strategy() TrainContextBuilder
             +build() TrainContext
         }
 
@@ -454,7 +453,7 @@ classDiagram
             +float arrival_time
             +float finish_time
             +Callable stream_callback
-            +next_pos() int
+            +int next_pos
             +is_finished(stop_ids) bool
         }
 
@@ -506,15 +505,10 @@ classDiagram
             +sample(logits, filter_value) Tensor
         }
 
-        class Server {
-            +start()
-            +predict(request)
-        }
-
         class _Result {
             +List[str] tokens
             +List[str] results
-            +List[bool] done_flags
+            +List[bool] _done
             +append(token, idx)
             +get_results() List[str]
             +pop_all() List[str]
@@ -539,9 +533,9 @@ classDiagram
     }
 
     namespace parallel {
-        class ParallelSetup {
+        class ParallelFunctions {
             +spawn_parallel_fn(fn, nprocs)
-            +setup_parallel(rank, world_size, backend, master_addr, master_port, device_type, device_ids)
+            +setup_parallel(rank, world_size, backend, master_addr, master_port, device_type)
         }
 
         class ParallelModel {
@@ -601,24 +595,19 @@ classDiagram
     BaseSamplingStrategy <|-- TopKStrategy
     BaseSamplingStrategy <|-- TopPStrategy
     SamplingPipeline --> BaseSamplingStrategy : composes
-    Server --> InferenceEngine : uses
-    Server --> ChatMessage : uses
-    Server --> ChatCompletionRequest : uses
-    ParallelSetup --> Trainer : enables
     BaseDataset <|-- SEQDataset
     BaseDataset <|-- SFTDataset
     BaseDataset <|-- DPODataset
     BaseDataset <|-- GRPODataset
     DatasetFactory ..> BaseDataset : creates
-    BaseSegmentFetcher --> MultiSegmentFetcher : used by
-    MultiSegmentFetcher --> BaseDataset : used by
+    MultiSegmentFetcher --> BaseSegmentFetcher : uses
+    BaseDataset --> MultiSegmentFetcher : uses
     AutoModel <|-- Transformer
     AutoModel --> ModelConfig : contains
     Transformer --> DecoderBlock : uses
     Transformer --> RotaryEmbedding : uses
     Transformer --> Embedding : uses
     DecoderBlock --> GQA : uses
-    DecoderBlock --> MLA : uses
     DecoderBlock --> MLP : uses
     DecoderBlock --> RMSNorm : uses
     TrainContextBuilder --> ResumableDistributedSampler : creates
@@ -647,7 +636,7 @@ classDiagram
 | **astrai.tokenize** | AutoTokenizer, ChatTemplate | Tokenizer and chat template |
 | **astrai.trainer** | Trainer, TrainContext, TrainContextBuilder, BaseStrategy, StrategyFactory, BaseScheduler, SchedulerFactory, TrainCallback, CallbackFactory | Training workflow management |
 | **astrai.inference** | InferenceEngine, InferenceScheduler, PagedCache, CacheView, Task, TaskStatus, GenerationParams, GenerationRequest, BaseSamplingStrategy, TemperatureStrategy, TopKStrategy, TopPStrategy, SamplingPipeline, ChatMessage, ChatCompletionRequest | Inference service with continuous batching and paged KV cache |
-| **astrai.parallel** | ParallelSetup, ColumnParallelLinear, RowParallelLinear | Distributed parallel |
+| **astrai.parallel** | ParallelFunctions, ParallelModel, ColumnParallelLinear, RowParallelLinear | Distributed parallel |
 | **astrai.factory** | Registry, BaseFactory | Generic component registration |
 
 ### Design Patterns
@@ -658,7 +647,7 @@ classDiagram
 | **Builder** | `TrainContextBuilder` | Chain-building training context, step-by-step initialization of components |
 | **Factory** | `StrategyFactory`, `SchedulerFactory`, `DatasetFactory`, `CallbackFactory`, `BaseFactory` | Decorator registration mechanism, dynamically create training strategies, schedulers, datasets, and callbacks |
 | **Observer** | `TrainCallback`, `CallbackFactory` | Callback mechanism for training process monitoring (checkpoint, early stopping, metrics) |
-| **Singleton** | `TrainContext` | Training process global state management |
+| **Context** | `TrainContext` | Training process state container with model, optimizer, scheduler and checkpoint |
 | **Registry** | `BaseFactory`, `Registry` | Generic component registration with category and priority support |
 | **Object Pool** | `PagedCache` | Page-based KV cache with O(1) alloc/free via bitmask |
 | **Strategy (Sampling)** | `BaseSamplingStrategy`, `TemperatureStrategy`, `TopKStrategy`, `TopPStrategy`, `SamplingPipeline` | Composable logit transformations with temperature, top-k, top-p |
@@ -672,8 +661,8 @@ classDiagram
 1. **Configuration → Training**: `TrainConfig` contains `ModelConfig`, holds model, dataset, optimizer and other references
 2. **Training Flow**: `Trainer` → `TrainContextBuilder` → `TrainContext`, uses `BaseStrategy` to compute loss
 3. **Strategy Selection**: `StrategyFactory` creates corresponding strategy instance based on `train_type`
-4. **Inference Flow**: `Server` → `InferenceEngine` → `InferenceScheduler` → `Transformer`, uses `PagedCache` for paged KV cache management and `SamplingPipeline` for efficient continuous batching with streaming/non-streaming
-5. **Distributed Support**: `ParallelSetup` provides multi-process training capability for `Trainer`
+4. **Inference Flow**: `InferenceEngine` → `InferenceScheduler` → `Transformer`, uses `PagedCache` for paged KV cache management and `SamplingPipeline` for efficient continuous batching with streaming/non-streaming
+5. **Distributed Support**: `spawn_parallel_fn` and `setup_parallel` provide multi-process training capability for `Trainer`
 6. **Dataset Loading**: `DatasetFactory` creates datasets (SEQDataset, SFTDataset, DPODataset, GRPODataset), supports HDF5 loading via `BaseSegmentFetcher` and `MultiSegmentFetcher`
 7. **Checkpoint Management**: `Checkpoint` handles model state serialization/deserialization with safetensors
 8. **Scheduler Support**: `SchedulerFactory` creates learning rate schedulers (CosineScheduler, SGDRScheduler)
@@ -715,12 +704,6 @@ Where $r_i$ is the reward for the $i$-th response, $\mu$ and $\sigma$ are the me
 
 $$
 L_{\text{GRPO}} = -\mathbb{E} \left[ \min\left( \frac{\pi_\theta(a|s)}{\pi_{\text{ref}}(a|s)} \cdot A, \text{clip}\left(\frac{\pi_\theta(a|s)}{\pi_{\text{ref}}(a|s)}, 1-\epsilon, 1+\epsilon\right) \cdot A \right) \right] + \lambda \cdot D_{KL}
-$$
-
-In this implementation, an off-policy approach is used ($\pi_\theta = \pi_{\text{ref}}$), and the policy loss simplifies to:
-
-$$
-L_{\text{policy}} = -\mathbb{E}[A]
 $$
 
 The KL divergence term uses mean squared error approximation:

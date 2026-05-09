@@ -104,7 +104,7 @@ class SchedulerCallback(TrainCallback):
             if "initial_lr" not in group:
                 group["initial_lr"] = group["lr"]
 
-    def on_step_end(self, context: TrainContext):
+    def on_batch_end(self, context: TrainContext):
         if context.scheduler:
             context.scheduler.step()
 

@@ -52,7 +52,7 @@
 - 💡 **易用**: 简洁的 API 与丰富的示例、演示。
 - 📦 **轻量**: 依赖少，部署简单。
 - 🔬 **研究友好**: 模块化设计，便于实验新想法。
-- 🤗 **HuggingFace 集成**: 兼容 HuggingFace 模型与数据集。
+- 🤗 **HuggingFace 风格 API**: 类 HuggingFace 的 AutoModel/AutoTokenizer 接口，方便加载模型和分词器。
 - 🔌 **双 API 兼容**: 同时支持 OpenAI 和 Anthropic 聊天补全 API，开箱即用。
 
 ### 快速开始
@@ -90,7 +90,10 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/tools/train.py \
 #### 文本生成
 
 ```bash
-python scripts/tools/generate.py --param_path=/path/to/param_path
+python scripts/tools/generate.py \
+    --param_path /path/to/model \
+    --input_json_file /path/to/input.json \
+    --output_json_file /path/to/output.json
 ```
 
 #### Docker

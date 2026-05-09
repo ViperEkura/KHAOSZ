@@ -6,7 +6,7 @@
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `--train_type` | Training type (`seq`, `sft`, `dpo`) | required |
+| `--train_type` | Training type (`seq`, `sft`, `dpo`, `grpo`) | required |
 | `--data_root_path` | Dataset root directory | required |
 | `--param_path` | Model parameters or checkpoint path | required |
 | `--n_epoch` | Total training epochs | 1 |
@@ -61,6 +61,10 @@
 |-----------|-------------|---------|---------|
 | `--dpo_beta` | DPO beta value | 0.1 | `dpo` |
 | `--label_smoothing` | Label smoothing for cross-entropy loss | 0.1 | `seq`, `sft` |
+| `--group_size` | GRPO group size | 4 | `grpo` |
+| `--grpo_clip_eps` | GRPO clipping epsilon | 0.2 | `grpo` |
+| `--grpo_kl_coef` | GRPO KL penalty coefficient | 0.01 | `grpo` |
+| `--grpo_sync_interval` | GRPO ref_model sync interval (steps) | 200 | `grpo` |
 
 ### Usage Example
 

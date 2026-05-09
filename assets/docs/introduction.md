@@ -2,7 +2,7 @@
 
 ### 1. Model Architecture
 
-This model uses the Transformer architecture with GQA mechanism (q_head=24, kv_head=4), which saves KV cache memory compared to traditional MHA. The model is built by stacking 32 layers of Transformer blocks, with 1.0 billion parameters. Transformer is an autoregressive model that calculates the relationship between all previous tokens to obtain the probability distribution of the next token.
+This model uses the Transformer architecture with GQA mechanism (q_head=24, kv_head=4), which saves KV cache memory compared to traditional MHA. The model is built by stacking 24 layers of Transformer blocks, with 1.0 billion parameters. Transformer is an autoregressive model that calculates the relationship between all previous tokens to obtain the probability distribution of the next token.
 
 The model now uses the **AutoModel** base class for flexible loading and saving:
 
@@ -48,14 +48,15 @@ flowchart TB
         S --> T[+]
         H --> T
         T --> U[RMSNorm]
-        U --> V[Linear]
-        V --> W[SiLU]
-        V --> X[×]
-        W --> X
-        X --> Y[Linear]
-        Y --> Z[+]
-        T --> Z
-        Z --> AA[x']
+        U --> V["Linear (gate)"]
+        U --> W["Linear (up)"]
+        V --> X[SiLU]
+        X --> Y[×]
+        W --> Y
+        Y --> Z["Linear (down)"]
+        Z --> AA[+]
+        T --> AA
+        AA --> BB[x']
     end
 
     classDef main fill:#e6f3ff,stroke:#0066cc;
@@ -168,8 +169,6 @@ from astrai.inference import InferenceEngine, GenerationRequest
 engine = InferenceEngine(
     model=model,
     tokenizer=tokenizer,
-    max_batch_size=8,
-    max_seq_len=4096,
 )
 
 # Use GenerationRequest with messages format
@@ -222,12 +221,11 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `messages` | List[dict] | Required | Chat messages with role and content |
-| `temperature` | float | 0.8 | Sampling temperature (0.0-2.0) |
-| `top_p` | float | 0.95 | Nucleus sampling threshold |
+| `temperature` | float | 1.0 | Sampling temperature (0.0-2.0) |
+| `top_p` | float | 1.0 | Nucleus sampling threshold |
 | `top_k` | int | 50 | Top-k sampling parameter |
-| `max_tokens` | int | 2048 | Maximum tokens to generate |
+| `max_tokens` | int | 1024 | Maximum tokens to generate |
 | `stream` | bool | false | Enable streaming response |
-| `system_prompt` | str | None | System prompt override |
 
 **Response (non-streaming):**
 ```json
@@ -242,7 +240,12 @@ curl -X POST http://localhost:8000/v1/chat/completions \
       "message": {"role": "assistant", "content": "Hello! I'm doing well..."},
       "finish_reason": "stop"
     }
-  ]
+  ],
+  "usage": {
+    "prompt_tokens": 20,
+    "completion_tokens": 15,
+    "total_tokens": 35
+  }
 }
 ```
 
@@ -261,9 +264,6 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 ```
 
 The server uses Server-Sent Events (SSE) with content type `text/event-stream`.
-
-### Health Check
-
 
 ### Anthropic-Compatible Endpoint
 
@@ -325,10 +325,10 @@ Monitor server and model status:
 
 ```bash
 curl http://localhost:8000/health
-# {"status": "ok", "model_loaded": true, "engine_ready": true}
+# {"status": "ok", "model_loaded": true}
 
 curl http://localhost:8000/stats
-# {"requests_total": 10, "tokens_generated": 5000, ...}
+# {"total_tasks": 10, "total_tokens": 5000, "active_tasks": 1, "waiting_queue": 0}
 ```
 
 > Document Update Time: 2026-04-09
