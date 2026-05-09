@@ -1,5 +1,5 @@
 """
-OpenAI-compatible chat completion server backed by continuous-batching inference.
+OpenAI / Anthropic-compatible chat completion server backed by continuous-batching inference.
 """
 
 import json
@@ -59,6 +59,25 @@ class ChatCompletionRequest(BaseModel):
     frequency_penalty: Optional[float] = Field(default=0.0, ge=-2.0, le=2.0)
     logit_bias: Optional[Dict[int, float]] = None
     user: Optional[str] = None
+
+
+class AnthropicMessage(BaseModel):
+    role: str
+    content: Union[str, List[Dict[str, Any]]]
+
+
+class MessagesRequest(BaseModel):
+    """Anthropic Messages API request body."""
+
+    model: str = "astrai"
+    max_tokens: int = Field(default=1024, ge=1)
+    messages: List[AnthropicMessage]
+    system: Optional[str] = None
+    temperature: Optional[float] = Field(default=1.0, ge=0.0, le=2.0)
+    top_p: Optional[float] = Field(default=1.0, ge=0.0, le=1.0)
+    top_k: Optional[int] = Field(default=50, ge=1)
+    stream: Optional[bool] = False
+    stop_sequences: Optional[List[str]] = None
 
 
 def configure_server(
@@ -264,55 +283,183 @@ async def chat_completion(request: ChatCompletionRequest):
     }
 
 
-@app.post("/generate")
-async def generate(
-    query: str,
-    history: Optional[List[List[str]]] = None,
-    temperature: float = 0.8,
-    top_p: float = 0.95,
-    top_k: int = 50,
-    max_len: int = 2048,
-    stream: bool = False,
-):
-    """Legacy non-OpenAI generation endpoint (kept for backward compat)."""
+def _make_anthropic_sse(event: str, data: Dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _check_stop_sequence(text: str, stop_sequences: List[str]) -> Optional[str]:
+    for seq in stop_sequences:
+        if seq and seq in text:
+            return seq
+    return None
+
+
+def _extract_text_content(content: Union[str, List[Dict[str, Any]]]) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                return block.get("text", "")
+    return ""
+
+
+def _build_anthropic_messages(
+    messages: List[AnthropicMessage], system: Optional[str]
+) -> List[Dict[str, str]]:
+    result: List[Dict[str, str]] = []
+    if system:
+        result.append({"role": "system", "content": system})
+    for m in messages:
+        content = _extract_text_content(m.content)
+        if content:
+            result.append({"role": m.role, "content": content})
+    return result
+
+
+@app.post("/v1/messages")
+async def create_message(request: MessagesRequest):
+    """Anthropic-compatible Messages API endpoint (streaming + non-streaming)."""
     engine = _get_engine()
+    resp_id = f"msg_{uuid.uuid4().hex[:24]}"
+    model = request.model
 
-    messages = []
-    if history:
-        for h in history:
-            if len(h) >= 2:
-                messages.append({"role": "user", "content": h[0]})
-                messages.append({"role": "assistant", "content": h[1]})
-    messages.append({"role": "user", "content": query})
+    chat_messages = _build_anthropic_messages(request.messages, request.system)
+    prompt = engine.tokenizer.apply_chat_template(chat_messages, tokenize=False)
+    prompt_tokens = len(engine.tokenizer.encode(prompt))
 
-    prompt = engine.tokenizer.apply_chat_template(messages, tokenize=False)
+    stop_sequences = request.stop_sequences or []
 
-    if stream:
+    if request.stream:
         agen = engine.generate_async(
             prompt=prompt,
-            max_tokens=max_len,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
+            max_tokens=request.max_tokens,
+            temperature=request.temperature,
+            top_p=request.top_p,
+            top_k=request.top_k,
         )
 
-        async def text_stream():
-            async for token in agen:
-                yield token + "\n"
+        async def event_stream():
+            yield _make_anthropic_sse(
+                "message_start",
+                {
+                    "type": "message_start",
+                    "message": {
+                        "id": resp_id,
+                        "type": "message",
+                        "role": "assistant",
+                        "model": model,
+                        "content": [],
+                        "usage": {"input_tokens": prompt_tokens},
+                    },
+                },
+            )
 
-        return StreamingResponse(text_stream(), media_type="text/plain")
-    else:
-        chunks = []
-        for token in engine.generate(
-            prompt=prompt,
-            stream=True,
-            max_tokens=max_len,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-        ):
-            chunks.append(token)
-        return {"response": "".join(chunks)}
+            yield _make_anthropic_sse(
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                },
+            )
+
+            completion_tokens = 0
+            accumulated = ""
+            stopped_seq: Optional[str] = None
+            async for token in agen:
+                accumulated += token
+                completion_tokens += 1
+
+                matched = _check_stop_sequence(accumulated, stop_sequences)
+                if matched:
+                    text = accumulated[: accumulated.rfind(matched)]
+                    stopped_seq = matched
+                    if text:
+                        yield _make_anthropic_sse(
+                            "content_block_delta",
+                            {
+                                "type": "content_block_delta",
+                                "index": 0,
+                                "delta": {"type": "text_delta", "text": text},
+                            },
+                        )
+                    break
+
+                yield _make_anthropic_sse(
+                    "content_block_delta",
+                    {
+                        "type": "content_block_delta",
+                        "index": 0,
+                        "delta": {"type": "text_delta", "text": token},
+                    },
+                )
+
+            yield _make_anthropic_sse(
+                "content_block_stop",
+                {"type": "content_block_stop", "index": 0},
+            )
+
+            stop_reason = "stop_sequence" if stopped_seq else "end_turn"
+            yield _make_anthropic_sse(
+                "message_delta",
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": stop_reason, "stop_sequence": stopped_seq},
+                    "usage": {"output_tokens": completion_tokens},
+                },
+            )
+
+            yield _make_anthropic_sse(
+                "message_stop",
+                {"type": "message_stop"},
+            )
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        )
+
+    completion_tokens = 0
+    chunks: List[str] = []
+    agen = engine.generate_async(
+        prompt=prompt,
+        max_tokens=request.max_tokens,
+        temperature=request.temperature,
+        top_p=request.top_p,
+        top_k=request.top_k,
+    )
+    stopped_seq: Optional[str] = None
+    accumulated = ""
+    async for token in agen:
+        chunks.append(token)
+        completion_tokens += 1
+        accumulated += token
+        matched = _check_stop_sequence(accumulated, stop_sequences)
+        if matched:
+            stopped_seq = matched
+            break
+
+    content = "".join(chunks)
+    if stopped_seq:
+        idx = content.rfind(stopped_seq)
+        if idx != -1:
+            content = content[:idx]
+
+    return {
+        "id": resp_id,
+        "type": "message",
+        "role": "assistant",
+        "model": model,
+        "content": [{"type": "text", "text": content}],
+        "stop_reason": "stop_sequence" if stopped_seq else "end_turn",
+        "stop_sequence": stopped_seq,
+        "usage": {
+            "input_tokens": prompt_tokens,
+            "output_tokens": completion_tokens,
+        },
+    }
 
 
 def run_server(

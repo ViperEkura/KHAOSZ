@@ -53,6 +53,7 @@
 - 📦 **轻量**: 依赖少，部署简单。
 - 🔬 **研究友好**: 模块化设计，便于实验新想法。
 - 🤗 **HuggingFace 集成**: 兼容 HuggingFace 模型与数据集。
+- 🔌 **双 API 兼容**: 同时支持 OpenAI 和 Anthropic 聊天补全 API，开箱即用。
 
 ### 快速开始
 
@@ -73,26 +74,8 @@ pip install -e ".[dev]"
 #### 训练模型
 
 ```bash
-python scripts/tools/train.py \
-  --train_type=seq \
-  --data_root_path=/path/to/dataset \
-  --param_path=/path/to/model \
-  --n_epoch=3 \
-  --batch_size=4 \
-  --accumulation_steps=8 \
-  --max_lr=3e-4 \
-  --warmup_steps=2000 \
-  --ckpt_interval=5000 \
-  --ckpt_dir=./checkpoints
+python scripts/tools/train.py --train_type=seq --data_root_path=/path/to/dataset --param_path=/path/to/model
 ```
-
-#### 文本生成
-
-```bash
-python scripts/tools/generate.py --param_path=/path/to/param_path
-```
-
-#### 训练参数
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
@@ -110,6 +93,12 @@ python scripts/tools/generate.py --param_path=/path/to/param_path
 | `--nprocs` | GPU 数量 | 1 |
 
 完整参数列表见[参数说明](./params.md#training-parameters)。
+
+#### 文本生成
+
+```bash
+python scripts/tools/generate.py --param_path=/path/to/param_path
+```
 
 #### Docker
 
@@ -137,7 +126,7 @@ docker run --gpus all -v /path/to/data:/data -it astrai:latest
 
 #### 启动 HTTP 服务
 
-启动推理服务器，支持 OpenAI 兼容的 HTTP API：
+启动推理服务器，支持 OpenAI 和 Anthropic 兼容的 HTTP API：
 
 ```bash
 python -m scripts.tools.server --port 8000 --device cuda
@@ -146,7 +135,7 @@ python -m scripts.tools.server --port 8000 --device cuda
 发起请求：
 
 ```bash
-# Chat API（OpenAI 兼容）
+# OpenAI 兼容
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
@@ -154,13 +143,34 @@ curl -X POST http://localhost:8000/v1/chat/completions \
     "max_tokens": 512
   }'
 
-# 流式响应
+# OpenAI 兼容流式
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "messages": [{"role": "user", "content": "讲个故事"}],
     "stream": true,
     "max_tokens": 500
+  }'
+
+# Anthropic 兼容
+curl -X POST http://localhost:8000/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "astrai",
+    "system": "你是一个乐于助人的助手。",
+    "messages": [{"role": "user", "content": "你好"}],
+    "max_tokens": 512
+  }'
+
+# Anthropic 兼容流式并设置停止序列
+curl -X POST http://localhost:8000/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "astrai",
+    "messages": [{"role": "user", "content": "写个故事"}],
+    "max_tokens": 500,
+    "stream": true,
+    "stop_sequences": ["结束"]
   }'
 
 # 健康检查

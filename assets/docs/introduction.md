@@ -262,25 +262,60 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 
 The server uses Server-Sent Events (SSE) with content type `text/event-stream`.
 
-### Simple Generation Endpoint
+### Health Check
 
-For basic text generation without chat format:
 
-```bash
-curl -X POST "http://localhost:8000/generate?query=Hello&max_len=1000" \
-  -H "Content-Type: application/json"
-```
+### Anthropic-Compatible Endpoint
 
-Or with conversation history:
+The server also provides an Anthropic-compatible endpoint at `/v1/messages`:
 
 ```bash
-curl -X POST "http://localhost:8000/generate" \
+curl -X POST http://localhost:8000/v1/messages \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "What is AI?",
-    "history": [["Hello", "Hi there!"], ["How are you?", "I'm doing well"]],
-    "temperature": 0.8,
-    "max_len": 2048
+    "model": "astrai",
+    "system": "You are a helpful assistant.",
+    "messages": [{"role": "user", "content": "Hello, how are you?"}],
+    "max_tokens": 2048
+  }'
+```
+
+Response:
+```json
+{
+  "id": "msg_abc123...",
+  "type": "message",
+  "role": "assistant",
+  "model": "astrai",
+  "content": [{"type": "text", "text": "Hello! I am doing well..."}],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {"input_tokens": 20, "output_tokens": 15}
+}
+```
+
+Streaming:
+```bash
+curl -X POST http://localhost:8000/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "astrai",
+    "system": "You are a helpful assistant.",
+    "messages": [{"role": "user", "content": "Write a short poem"}],
+    "max_tokens": 500,
+    "stream": true
+  }'
+```
+
+Supports `stop_sequences` for early termination:
+```bash
+curl -X POST http://localhost:8000/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "astrai",
+    "messages": [{"role": "user", "content": "Write a story"}],
+    "max_tokens": 500,
+    "stop_sequences": ["The end", "THE END"]
   }'
 ```
 

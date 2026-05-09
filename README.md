@@ -47,6 +47,7 @@
 - 📦 **Lightweight**: Minimal dependencies, easy to deploy.
 - 🔬 **Research‑Friendly**: Modular design, easy to experiment with new ideas.
 - 🤗 **HuggingFace Integration**: Compatible with HuggingFace models and datasets.
+- 🔌 **Dual API Compatibility**: Supports both OpenAI and Anthropic chat completion APIs out of the box.
 
 ### Quick Start
 
@@ -67,26 +68,8 @@ pip install -e ".[dev]"
 #### Train a Model
 
 ```bash
-python scripts/tools/train.py \
-  --train_type=seq \
-  --data_root_path=/path/to/dataset \
-  --param_path=/path/to/model \
-  --n_epoch=3 \
-  --batch_size=4 \
-  --accumulation_steps=8 \
-  --max_lr=3e-4 \
-  --warmup_steps=2000 \
-  --ckpt_interval=5000 \
-  --ckpt_dir=./checkpoints
+python scripts/tools/train.py --train_type=seq --data_root_path=/path/to/dataset --param_path=/path/to/model
 ```
-
-#### Generate Text
-
-```bash
-python scripts/tools/generate.py --param_path=/path/to/param_path
-```
-
-#### Training Parameters
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -104,6 +87,12 @@ python scripts/tools/generate.py --param_path=/path/to/param_path
 | `--nprocs` | Number of GPUs | 1 |
 
 Full reference at [Parameter Guide](./assets/docs/params.md#training-parameters).
+
+#### Generate Text
+
+```bash
+python scripts/tools/generate.py --param_path=/path/to/param_path
+```
 
 #### Docker
 
@@ -131,7 +120,7 @@ docker run --gpus all -v /path/to/data:/data -it astrai:latest
 
 #### Start HTTP Server
 
-Start the inference server with OpenAI-compatible HTTP API:
+Start the inference server with OpenAI and Anthropic-compatible HTTP API:
 
 ```bash
 python -m scripts.tools.server --port 8000 --device cuda
@@ -140,7 +129,7 @@ python -m scripts.tools.server --port 8000 --device cuda
 Make requests:
 
 ```bash
-# Chat API (OpenAI compatible)
+# OpenAI-compatible
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
@@ -148,13 +137,34 @@ curl -X POST http://localhost:8000/v1/chat/completions \
     "max_tokens": 512
   }'
 
-# Streaming response
+# OpenAI-compatible streaming
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "messages": [{"role": "user", "content": "Tell a story"}],
     "stream": true,
     "max_tokens": 500
+  }'
+
+# Anthropic-compatible
+curl -X POST http://localhost:8000/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "astrai",
+    "system": "You are a helpful assistant.",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "max_tokens": 512
+  }'
+
+# Anthropic-compatible streaming with stop sequences
+curl -X POST http://localhost:8000/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "astrai",
+    "messages": [{"role": "user", "content": "Write a story"}],
+    "max_tokens": 500,
+    "stream": true,
+    "stop_sequences": ["The end"]
   }'
 
 # Health check

@@ -1,7 +1,5 @@
 """Unit tests for the inference HTTP server."""
 
-from unittest.mock import MagicMock
-
 import pytest
 
 
@@ -22,52 +20,6 @@ def test_health_with_model(client, loaded_model):
     data = response.json()
     assert data["status"] == "ok"
     assert data["model_loaded"] is True
-
-
-def test_generate_non_stream(client, loaded_model, monkeypatch):
-    """POST /generate with stream=false should return JSON response."""
-    response = client.post(
-        "/generate",
-        params={
-            "query": "Hello",
-            "temperature": 0.8,
-            "top_p": 0.95,
-            "top_k": 50,
-            "max_len": 100,
-            "stream": False,
-        },
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert "response" in data
-
-
-def test_generate_stream(client, loaded_model, monkeypatch):
-    """POST /generate with stream=true should return plain text stream."""
-
-    async def async_gen():
-        yield "chunk1"
-        yield "chunk2"
-
-    mock_engine = loaded_model
-    mock_engine.generate_async.return_value = async_gen()
-    monkeypatch.setattr("astrai.inference.server._state.engine", mock_engine)
-    response = client.post(
-        "/generate",
-        params={
-            "query": "Hello",
-            "temperature": 0.8,
-            "top_p": 0.95,
-            "top_k": 50,
-            "max_len": 100,
-            "stream": True,
-        },
-        headers={"Accept": "text/plain"},
-    )
-    assert response.status_code == 200
-    content = response.content.decode("utf-8")
-    assert "chunk1" in content
-    assert "chunk2" in content
 
 
 def test_chat_completions_non_stream(client, loaded_model, monkeypatch):
@@ -125,17 +77,87 @@ def test_chat_completions_stream(client, loaded_model, monkeypatch):
     assert any("[DONE]" in line for line in lines)
 
 
-def test_generate_with_history(client, loaded_model, monkeypatch):
-    """POST /generate with history parameter."""
+def test_messages_non_stream(client, loaded_model, monkeypatch):
+    """POST /v1/messages with stream=false returns Anthropic-style JSON."""
+
+    async def async_gen():
+        yield "Assistant reply"
+
+    mock_engine = loaded_model
+    mock_engine.generate_async.return_value = async_gen()
+    monkeypatch.setattr("astrai.inference.server._state.engine", mock_engine)
     response = client.post(
-        "/generate",
-        params={
-            "query": "Hi",
-            "history": [["user1", "assistant1"], ["user2", "assistant2"]],
+        "/v1/messages",
+        json={
+            "messages": [{"role": "user", "content": "Hello"}],
+            "temperature": 0.8,
+            "max_tokens": 100,
             "stream": False,
         },
     )
     assert response.status_code == 200
+    data = response.json()
+    assert data["type"] == "message"
+    assert data["role"] == "assistant"
+    assert len(data["content"]) == 1
+    assert data["content"][0]["type"] == "text"
+    assert "usage" in data
+    assert "input_tokens" in data["usage"]
+
+
+def test_messages_stream(client, loaded_model, monkeypatch):
+    """POST /v1/messages with stream=true returns Anthropic SSE stream."""
+
+    async def async_gen():
+        yield "cumulative1"
+        yield "cumulative2"
+
+    mock_engine = loaded_model
+    mock_engine.generate_async.return_value = async_gen()
+    monkeypatch.setattr("astrai.inference.server._state.engine", mock_engine)
+    response = client.post(
+        "/v1/messages",
+        json={
+            "messages": [{"role": "user", "content": "Hello"}],
+            "temperature": 0.8,
+            "max_tokens": 100,
+            "stream": True,
+        },
+        headers={"Accept": "text/event-stream"},
+    )
+    assert response.status_code == 200
+    content = response.content.decode("utf-8")
+    assert "message_start" in content
+    assert "content_block_start" in content
+    assert "content_block_delta" in content
+    assert "cumulative1" in content
+    assert "cumulative2" in content
+    assert "content_block_stop" in content
+    assert "message_delta" in content
+    assert "message_stop" in content
+
+
+def test_messages_with_system(client, loaded_model, monkeypatch):
+    """POST /v1/messages with system prompt."""
+
+    async def async_gen():
+        yield "Reply"
+
+    mock_engine = loaded_model
+    mock_engine.generate_async.return_value = async_gen()
+    monkeypatch.setattr("astrai.inference.server._state.engine", mock_engine)
+    response = client.post(
+        "/v1/messages",
+        json={
+            "messages": [{"role": "user", "content": "Hello"}],
+            "system": "You are a helpful assistant.",
+            "max_tokens": 100,
+            "stream": False,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["type"] == "message"
 
 
 if __name__ == "__main__":
