@@ -1,0 +1,42 @@
+services:
+  server:
+    build: .
+    image: astrai:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./params:/app/params:ro
+      - ./checkpoints:/app/checkpoints
+    command: python -m scripts.tools.server --port 8000 --device cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  server-cpu:
+    profiles: [cpu]
+    build: .
+    image: astrai:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./params:/app/params:ro
+      - ./checkpoints:/app/checkpoints
+    command: python -m scripts.tools.server --port 8000 --device cpu
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    restart: unless-stopped

@@ -114,7 +114,15 @@ docker run --gpus all -p 8000:8000 astrai:latest \
 
 # Run with volume mount for data
 docker run --gpus all -v /path/to/data:/data -it astrai:latest
+
+# Docker Compose (GPU, default)
+docker compose up -d
+
+# Docker Compose (CPU only)
+docker compose --profile cpu up -d
 ```
+
+> **Note**: `--gpus all` is required for CUDA support. Without it, `torch.cuda.is_available()` will return `False`.
 
 > **Note**: `--gpus all` is required for CUDA support. Without it, `torch.cuda.is_available()` will return `False`.
 

@@ -120,6 +120,12 @@ docker run --gpus all -p 8000:8000 astrai:latest \
 
 # 挂载数据卷
 docker run --gpus all -v /path/to/data:/data -it astrai:latest
+
+# Docker Compose（GPU，默认）
+docker compose up -d
+
+# Docker Compose（仅 CPU）
+docker compose --profile cpu up -d
 ```
 
 > **注意**: 必须使用 `--gpus all` 才能启用 CUDA 支持，否则 `torch.cuda.is_available()` 将返回 `False`。

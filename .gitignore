@@ -15,6 +15,7 @@
 !/.gitattributes
 !/.dockerignore
 !/Dockerfile
+!/docker-compose.yml
 !/assets/**
 !/CONTRIBUTING.md
 !/LICENSE
