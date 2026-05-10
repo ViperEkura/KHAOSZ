@@ -29,7 +29,7 @@ def process_attention_mask(
 
     if seq_mask is None:
         if start_pos != 0:
-            seq_mask = torch.ones((1, seq_len), dtype=torch.bool, device=device)
+            seq_mask = torch.ones((1, start_pos + seq_len), dtype=torch.bool, device=device)
         else:
             return None
 

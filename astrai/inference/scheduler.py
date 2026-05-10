@@ -254,7 +254,7 @@ class InferenceScheduler:
 
         seq_len = prompt_len - start_pos
         input_ids = torch.empty(batch_sz, seq_len, dtype=torch.long, device=self.device)
-        input_mask = torch.ones(batch_sz, seq_len, dtype=torch.bool, device=self.device)
+        input_mask = torch.ones(batch_sz, prompt_len, dtype=torch.bool, device=self.device)
 
         for i, t in enumerate(tasks):
             input_ids[i] = torch.tensor(
