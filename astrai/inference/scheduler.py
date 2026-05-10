@@ -253,7 +253,7 @@ class InferenceScheduler:
         batch_sz = len(tasks)
 
         seq_len = prompt_len - start_pos
-        input_ids = torch.zeros(batch_sz, seq_len, dtype=torch.long, device=self.device)
+        input_ids = torch.empty(batch_sz, seq_len, dtype=torch.long, device=self.device)
         input_mask = torch.ones(batch_sz, seq_len, dtype=torch.bool, device=self.device)
 
         for i, t in enumerate(tasks):
@@ -285,14 +285,20 @@ class InferenceScheduler:
         for t in tasks:
             self._maybe_alloc_page(t, start_pos)
 
-        input_ids = torch.zeros(batch_sz, dtype=torch.long, device=self.device)
-        for i, t in enumerate(tasks):
-            input_ids[i] = t.output_ids[-1] if t.output_ids else t.prompt_ids[-1]
+        input_ids = torch.tensor(
+            [t.output_ids[-1] if t.output_ids else t.prompt_ids[-1] for t in tasks],
+            dtype=torch.long,
+            device=self.device,
+        )
 
         active_mask = torch.ones((batch_sz, 1), dtype=torch.bool, device=self.device)
 
         page_tables = self._make_page_table_tensor(tasks)
         total_len = start_pos + 1
+
+        temperatures = torch.tensor([t.temperature for t in tasks], device=self.device)
+        top_ks = torch.tensor([t.top_k for t in tasks], device=self.device)
+        top_ps = torch.tensor([t.top_p for t in tasks], device=self.device)
 
         with torch.inference_mode():
             outputs = self.model(
@@ -305,11 +311,9 @@ class InferenceScheduler:
 
         next_tokens = sample(
             logits,
-            temperature=torch.tensor(
-                [t.temperature for t in tasks], device=logits.device
-            ),
-            top_k=torch.tensor([t.top_k for t in tasks], device=logits.device),
-            top_p=torch.tensor([t.top_p for t in tasks], device=logits.device),
+            temperature=temperatures,
+            top_k=top_ks,
+            top_p=top_ps,
         ).tolist()
 
         for t, ntok in zip(tasks, next_tokens):
