@@ -13,32 +13,21 @@ logger = logging.getLogger(__name__)
 
 
 class Executor:
-    """Model forward passes for prefill and decode; delegates page ops to PagedCache."""
+    """Model forward passes for prefill and decode phases."""
 
     def __init__(
         self,
         model: AutoModel,
         tokenizer: AutoTokenizer,
         page_cache: PagedCache,
-        page_size: int = 64,
         device: Optional[str] = None,
         dtype: Optional[torch.dtype] = None,
     ):
         self.model = model
         self.tokenizer = tokenizer
         self.page_cache = page_cache
-        self.page_size = page_size
         self.device = device or next(model.parameters()).device
         self.dtype = dtype or next(model.parameters()).dtype
-
-    def allocate_pages_for_activation(self, task: Task) -> bool:
-        return self.page_cache.task_alloc(task.task_id, task.prompt_ids)
-
-    def free_task_pages(self, task: Task) -> None:
-        self.page_cache.task_free(task.task_id)
-
-    def get_cached_tokens(self, task: Task) -> int:
-        return self.page_cache.task_cached(task.task_id)
 
     def execute_prefill(
         self, tasks: List[Task], prompt_len: int, start_pos: int = 0
@@ -71,7 +60,7 @@ class Executor:
                 paged_cache=self.page_cache.bind(page_tables, total_len=prompt_len),
             )
 
-        start_logical_page = start_pos // self.page_size
+        start_logical_page = start_pos // self.page_cache.page_size
         for t in tasks:
             self.page_cache.task_record_hashes(
                 t.task_id, t.prompt_ids, start_logical_page=start_logical_page

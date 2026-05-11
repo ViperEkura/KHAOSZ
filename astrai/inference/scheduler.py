@@ -33,19 +33,16 @@ class InferenceScheduler:
         self.device = device or next(model.parameters()).device
         self.dtype = dtype or next(model.parameters()).dtype
 
-        n_kv_heads = config.n_kv_heads
-        head_dim = config.dim // config.n_heads
-        n_layers = config.n_layers
         n_pages = (
             max_batch_size * (self.max_seq_len + page_size) + page_size - 1
         ) // page_size
 
-        page_cache = PagedCache(
-            n_layers,
+        self._page_cache = PagedCache(
+            config.n_layers,
             n_pages,
             page_size,
-            n_kv_heads,
-            head_dim,
+            config.n_kv_heads,
+            config.dim // config.n_heads,
             self.device,
             self.dtype,
         )
@@ -60,8 +57,7 @@ class InferenceScheduler:
         self._executor = Executor(
             model=model,
             tokenizer=tokenizer,
-            page_cache=page_cache,
-            page_size=page_size,
+            page_cache=self._page_cache,
             device=self.device,
             dtype=self.dtype,
         )
@@ -73,7 +69,7 @@ class InferenceScheduler:
 
     def remove_task(self, task_id: str) -> None:
         for task in self._task_mgr.remove_task(task_id):
-            self._executor.free_task_pages(task)
+            self._page_cache.task_free(task.task_id)
 
     def get_stats(self) -> Dict[str, Any]:
         return self._task_mgr.get_stats()
@@ -85,7 +81,7 @@ class InferenceScheduler:
                     self._task_mgr.tokenizer.stop_ids
                 )
                 for task in finished:
-                    self._executor.free_task_pages(task)
+                    self._page_cache.task_free(task.task_id)
 
                 available = self._task_mgr.max_batch_size - len(
                     self._task_mgr.active_tasks
@@ -94,7 +90,7 @@ class InferenceScheduler:
                     candidates = self._task_mgr.pull_candidates(available)
                     failed = []
                     for task in candidates:
-                        if self._executor.allocate_pages_for_activation(task):
+                        if self._page_cache.task_alloc(task.task_id, task.prompt_ids):
                             self._task_mgr.activate(task)
                         else:
                             failed.append(task)
@@ -114,7 +110,10 @@ class InferenceScheduler:
 
                     groups: Dict[Tuple[int, int], List[Task]] = {}
                     for t in to_prefill:
-                        key = (len(t.prompt_ids), self._executor.get_cached_tokens(t))
+                        key = (
+                            len(t.prompt_ids),
+                            self._page_cache.task_cached(t.task_id),
+                        )
                         groups.setdefault(key, []).append(t)
 
                     for (prompt_len, start_pos), group in groups.items():
