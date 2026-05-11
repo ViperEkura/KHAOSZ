@@ -4,9 +4,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
-from astrai.inference.cache import STOP, PagedCache
+from astrai.inference.cache import PagedCache
 from astrai.inference.executor import Executor
-from astrai.inference.task import Task, TaskManager
+from astrai.inference.task import STOP, Task, TaskManager
 from astrai.model.automodel import AutoModel
 from astrai.tokenize.tokenizer import AutoTokenizer
 
@@ -38,7 +38,7 @@ class InferenceScheduler:
             max_batch_size * (self.max_seq_len + page_size) + page_size - 1
         ) // page_size
 
-        self._page_cache = PagedCache(
+        page_cache = PagedCache(
             n_layers,
             n_pages,
             page_size,
@@ -50,17 +50,15 @@ class InferenceScheduler:
 
         self._task_mgr = TaskManager(
             tokenizer=tokenizer,
-            page_cache=self._page_cache,
             max_batch_size=max_batch_size,
             max_seq_len=self.max_seq_len,
             max_prompt_len=max_prompt_len,
-            page_size=page_size,
         )
 
         self._executor = Executor(
             model=model,
             tokenizer=tokenizer,
-            page_cache=self._page_cache,
+            page_cache=page_cache,
             page_size=page_size,
             device=self.device,
             dtype=self.dtype,
@@ -72,7 +70,8 @@ class InferenceScheduler:
         return self._task_mgr.add_task(prompt, **kwargs)
 
     def remove_task(self, task_id: str) -> None:
-        self._task_mgr.remove_task(task_id)
+        for task in self._task_mgr.remove_task(task_id):
+            self._executor.free_task_pages(task)
 
     def get_stats(self) -> Dict[str, Any]:
         return self._task_mgr.get_stats()
@@ -80,8 +79,25 @@ class InferenceScheduler:
     def _run_generation_loop(self) -> None:
         try:
             while self._running:
-                self._task_mgr.remove_finished_tasks(self._task_mgr.tokenizer.stop_ids)
-                self._task_mgr.refill_active_batch()
+                finished = self._task_mgr.remove_finished_tasks(
+                    self._task_mgr.tokenizer.stop_ids
+                )
+                for task in finished:
+                    self._executor.free_task_pages(task)
+
+                available = self._task_mgr.max_batch_size - len(
+                    self._task_mgr.active_tasks
+                )
+                if available > 0:
+                    candidates = self._task_mgr.pull_candidates(available)
+                    failed = []
+                    for task in candidates:
+                        if self._executor.allocate_pages_for_activation(task):
+                            self._task_mgr.activate(task)
+                        else:
+                            failed.append(task)
+                    if failed:
+                        self._task_mgr.return_to_waiting(failed)
 
                 if not self._task_mgr.has_work():
                     self._task_mgr.wait_for_tasks(timeout=1.0)

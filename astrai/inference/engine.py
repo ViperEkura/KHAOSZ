@@ -16,8 +16,8 @@ from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Tuple, 
 import torch
 import torch.nn as nn
 
-from astrai.inference.cache import STOP
 from astrai.inference.scheduler import InferenceScheduler
+from astrai.inference.task import STOP
 from astrai.tokenize import AutoTokenizer
 
 

@@ -9,8 +9,6 @@ from typing import Dict, List, Tuple
 import torch
 from torch import Tensor
 
-STOP = object()
-
 
 def page_hash(token_ids: List[int], page_idx: int, page_size: int) -> int:
     start = page_idx * page_size

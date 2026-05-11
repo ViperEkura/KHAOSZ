@@ -13,7 +13,7 @@ from astrai.inference.engine import (
     GenerationRequest,
     InferenceEngine,
 )
-from astrai.inference.sampling import (
+from astrai.inference.sample import (
     BaseSamplingStrategy,
     SamplingPipeline,
     TemperatureStrategy,
@@ -22,7 +22,7 @@ from astrai.inference.sampling import (
     sample,
 )
 from astrai.inference.scheduler import InferenceScheduler
-from astrai.inference.task import Task, TaskStatus
+from astrai.inference.task import STOP, Task, TaskStatus
 
 __all__ = [
     # Engine / Requests
@@ -31,6 +31,7 @@ __all__ = [
     "GenerationParams",
     # Scheduler
     "InferenceScheduler",
+    "STOP",
     "Task",
     "TaskStatus",
     # Sampling (Strategy pattern)

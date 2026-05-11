@@ -4,9 +4,9 @@ from typing import List, Optional
 import torch
 from torch import Tensor
 
-from astrai.inference.cache import STOP, PagedCache
-from astrai.inference.sampling import sample
-from astrai.inference.task import Task, TaskStatus
+from astrai.inference.cache import PagedCache
+from astrai.inference.sample import sample
+from astrai.inference.task import STOP, Task, TaskStatus
 from astrai.model.automodel import AutoModel
 from astrai.tokenize.tokenizer import AutoTokenizer
 
@@ -29,6 +29,36 @@ class Executor:
         self.page_size = page_size
         self.device = device or next(model.parameters()).device
         self.dtype = dtype or next(model.parameters()).dtype
+
+    def allocate_pages_for_activation(self, task: Task) -> bool:
+        prompt_len = len(task.prompt_ids)
+        hit_pages = self.page_cache.lookup_prefix(task.prompt_ids)
+        cached_tokens = len(hit_pages) * self.page_size
+        for p in hit_pages:
+            self.page_cache.inc_ref(p)
+
+        remaining = prompt_len - cached_tokens
+        n_new = self._n_pages_for(remaining) if remaining > 0 else 0
+        new_pages = self.page_cache.alloc_n(n_new) if n_new > 0 else []
+
+        if remaining > 0 and not new_pages:
+            for p in hit_pages:
+                self.page_cache.free(p)
+            return False
+
+        task.page_table = hit_pages + new_pages
+        task.n_pages = len(task.page_table)
+        task._prefix_cached_tokens = cached_tokens
+        return True
+
+    def free_task_pages(self, task: Task) -> None:
+        if task._pages_freed:
+            return
+        for idx in task.page_table:
+            self.page_cache.free(idx)
+        task.page_table.clear()
+        task.n_pages = 0
+        task._pages_freed = True
 
     def execute_prefill(
         self, tasks: List[Task], prompt_len: int, start_pos: int = 0
