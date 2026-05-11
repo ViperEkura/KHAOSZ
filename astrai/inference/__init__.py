@@ -21,11 +21,8 @@ from astrai.inference.sampling import (
     TopPStrategy,
     sample,
 )
-from astrai.inference.scheduler import (
-    InferenceScheduler,
-    Task,
-    TaskStatus,
-)
+from astrai.inference.scheduler import InferenceScheduler
+from astrai.inference.task import Task, TaskStatus
 
 __all__ = [
     # Engine / Requests
