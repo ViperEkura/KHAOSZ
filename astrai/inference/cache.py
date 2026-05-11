@@ -1,9 +1,3 @@
-"""Page-based KV cache with page-table-indirected read/write.
-
-Provides:
-  - PagedCache: paged KV cache combining page pool and tensor storage.
-"""
-
 from typing import Dict, List, Tuple
 
 import torch
@@ -20,17 +14,7 @@ def page_hash(token_ids: List[int], page_idx: int, page_size: int) -> int:
 
 
 class PagedCache:
-    """Paged KV cache with page-table-indirected read/write and persistent prefix caching.
-
-    Combines:
-      - Page pool (ref-counted alloc/free via bitmask)
-      - KV tensor storage (k_cache, v_cache)
-      - Prefix-cache hash lookup (page_content_hash -> physical_page_idx)
-      - LRU eviction for persistent cross-batch prefix caching
-
-    Pages with recorded hashes persist after refcount reaches 0 (pinned).
-    They are evicted via LRU only when alloc() finds no free pages.
-    """
+    """Paged KV cache: page pool, prefix-cache lookup, LRU eviction, task-page mapping."""
 
     def __init__(
         self,
@@ -59,6 +43,71 @@ class PagedCache:
         self._hash_to_page: Dict[int, int] = {}
         self._lru: List[int] = []
         self._pin: List[bool] = [False] * n_pages
+        self._task_pages: Dict[str, List[int]] = {}
+        self._task_cached: Dict[str, int] = {}
+
+    def pages_needed(self, n_tokens: int) -> int:
+        return (n_tokens + self.page_size - 1) // self.page_size
+
+    def task_alloc(self, task_id: str, prompt_ids: List[int]) -> bool:
+        hit_pages = self.lookup_prefix(prompt_ids)
+        cached_tokens = len(hit_pages) * self.page_size
+        for p in hit_pages:
+            self.inc_ref(p)
+
+        remaining = len(prompt_ids) - cached_tokens
+        n_new = self.pages_needed(remaining) if remaining > 0 else 0
+        new_pages = self.alloc_n(n_new) if n_new > 0 else []
+
+        if remaining > 0 and not new_pages:
+            for p in hit_pages:
+                self.free(p)
+            return False
+
+        page_table = hit_pages + new_pages
+        self._task_pages[task_id] = page_table
+        self._task_cached[task_id] = cached_tokens
+        return True
+
+    def task_free(self, task_id: str) -> None:
+        page_table = self._task_pages.pop(task_id, None)
+        self._task_cached.pop(task_id, None)
+        if page_table:
+            for idx in page_table:
+                self.free(idx)
+
+    def task_extend(self, task_id: str, pos: int) -> bool:
+        needed = self.pages_needed(pos + 1)
+        page_table = self._task_pages[task_id]
+        while len(page_table) < needed:
+            p = self.alloc()
+            if p < 0:
+                return False
+            page_table.append(p)
+        return True
+
+    def task_cached(self, task_id: str) -> int:
+        return self._task_cached.get(task_id, 0)
+
+    def task_page_table(self, task_id: str) -> List[int]:
+        return self._task_pages.get(task_id, [])
+
+    def task_n_pages(self, task_id: str) -> int:
+        return len(self._task_pages.get(task_id, []))
+
+    def task_record_hashes(
+        self, task_id: str, prompt_ids: List[int], start_logical_page: int = 0
+    ) -> None:
+        page_table = self._task_pages[task_id]
+        full_pages = len(prompt_ids) // self.page_size
+        for i in range(start_logical_page, full_pages):
+            self.record_page(page_table[i], prompt_ids, i)
+
+    def make_table_tensor(self, task_ids: List[str], device: torch.device) -> Tensor:
+        states = [self._task_pages.get(tid, []) for tid in task_ids]
+        max_pages = max((len(s) for s in states), default=0)
+        rows = [s + [-1] * (max_pages - len(s)) for s in states]
+        return torch.tensor(rows, dtype=torch.long, device=device)
 
     def _touch(self, idx: int) -> None:
         if self._refs[idx] == 0 and idx in self._lru:
@@ -167,23 +216,21 @@ class PagedCache:
             ]
             written += chunk
 
-    def gather(self, layer_id: int, page_table: Tensor) -> Tuple[Tensor, Tensor]:
-        # page_table: [batch, max_pages] with -1 padding for tasks with fewer pages.
-        # clamp(min=0) maps -1 to page 0 (irrelevant data) — truncated by CacheView total_len.
+    def gather(
+        self, layer_id: int, page_table: Tensor, total_len: int
+    ) -> Tuple[Tensor, Tensor]:
         safe = page_table.clamp(min=0)
         k = self.k_cache[layer_id, safe]
         v = self.v_cache[layer_id, safe]
         k = k.flatten(1, 2)
         v = v.flatten(1, 2)
+        k = k[:, :total_len]
+        v = v[:, :total_len]
         return k, v
 
 
 class CacheView:
-    """Per-batch view that bundles PagedCache + page_table + total_len.
-
-    Attention layers receive this as ``paged_cache`` and only see
-    ``write()`` / ``gather()``, never raw page tables or length params.
-    """
+    """Bundles PagedCache + page_table + total_len for attention layers."""
 
     __slots__ = ("_cache", "_page_table", "_total_len")
 
@@ -196,8 +243,4 @@ class CacheView:
         self._cache.write(layer_id, self._page_table, start_pos, k, v)
 
     def gather(self, layer_id: int) -> Tuple[Tensor, Tensor]:
-        k, v = self._cache.gather(layer_id, self._page_table)
-        if self._total_len:
-            k = k[:, : self._total_len]
-            v = v[:, : self._total_len]
-        return k, v
+        return self._cache.gather(layer_id, self._page_table, self._total_len)

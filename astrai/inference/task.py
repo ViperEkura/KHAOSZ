@@ -13,6 +13,8 @@ STOP = object()
 
 
 class TaskStatus(Enum):
+    """Task lifecycle states."""
+
     PENDING = "pending"
     RUNNING = "running"
     FINISHED = "finished"
@@ -20,6 +22,8 @@ class TaskStatus(Enum):
 
 
 class Task:
+    """Single generation request: prompt, sampling params, output state."""
+
     def __init__(
         self,
         task_id: str,
@@ -41,13 +45,9 @@ class Task:
         self.output_ids: List[int] = []
         self.input_tokens: int = 0
         self.output_tokens: int = 0
-        self.page_table: List[int] = []
-        self.n_pages: int = 0
-        self._prefix_cached_tokens: int = 0
         self.arrival_time = time.time()
         self.finish_time: Optional[float] = None
         self.stream_callback = stream_callback
-        self._pages_freed: bool = False
 
     @property
     def next_pos(self) -> int:
@@ -62,6 +62,8 @@ class Task:
 
 
 class TaskManager:
+    """Thread-safe task queues and lifecycle transitions (no page ops)."""
+
     def __init__(
         self,
         tokenizer: AutoTokenizer,

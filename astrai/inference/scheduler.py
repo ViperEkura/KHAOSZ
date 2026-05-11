@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 class InferenceScheduler:
+    """Four-phase continuous batching loop: cleanup -> refill -> prefill -> decode."""
+
     def __init__(
         self,
         model: AutoModel,
@@ -112,7 +114,7 @@ class InferenceScheduler:
 
                     groups: Dict[Tuple[int, int], List[Task]] = {}
                     for t in to_prefill:
-                        key = (len(t.prompt_ids), t._prefix_cached_tokens)
+                        key = (len(t.prompt_ids), self._executor.get_cached_tokens(t))
                         groups.setdefault(key, []).append(t)
 
                     for (prompt_len, start_pos), group in groups.items():

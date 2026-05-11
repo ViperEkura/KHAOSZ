@@ -2,7 +2,6 @@ import logging
 from typing import List, Optional
 
 import torch
-from torch import Tensor
 
 from astrai.inference.cache import PagedCache
 from astrai.inference.sample import sample
@@ -14,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 
 class Executor:
+    """Model forward passes for prefill and decode; delegates page ops to PagedCache."""
+
     def __init__(
         self,
         model: AutoModel,
@@ -31,34 +32,13 @@ class Executor:
         self.dtype = dtype or next(model.parameters()).dtype
 
     def allocate_pages_for_activation(self, task: Task) -> bool:
-        prompt_len = len(task.prompt_ids)
-        hit_pages = self.page_cache.lookup_prefix(task.prompt_ids)
-        cached_tokens = len(hit_pages) * self.page_size
-        for p in hit_pages:
-            self.page_cache.inc_ref(p)
-
-        remaining = prompt_len - cached_tokens
-        n_new = self._n_pages_for(remaining) if remaining > 0 else 0
-        new_pages = self.page_cache.alloc_n(n_new) if n_new > 0 else []
-
-        if remaining > 0 and not new_pages:
-            for p in hit_pages:
-                self.page_cache.free(p)
-            return False
-
-        task.page_table = hit_pages + new_pages
-        task.n_pages = len(task.page_table)
-        task._prefix_cached_tokens = cached_tokens
-        return True
+        return self.page_cache.task_alloc(task.task_id, task.prompt_ids)
 
     def free_task_pages(self, task: Task) -> None:
-        if task._pages_freed:
-            return
-        for idx in task.page_table:
-            self.page_cache.free(idx)
-        task.page_table.clear()
-        task.n_pages = 0
-        task._pages_freed = True
+        self.page_cache.task_free(task.task_id)
+
+    def get_cached_tokens(self, task: Task) -> int:
+        return self.page_cache.task_cached(task.task_id)
 
     def execute_prefill(
         self, tasks: List[Task], prompt_len: int, start_pos: int = 0
@@ -80,7 +60,8 @@ class Executor:
                 t.prompt_ids[start_pos:prompt_len], device=self.device
             )
 
-        page_tables = self._make_page_table_tensor(tasks)
+        task_ids = [t.task_id for t in tasks]
+        page_tables = self.page_cache.make_table_tensor(task_ids, self.device)
 
         with torch.inference_mode():
             self.model(
@@ -92,7 +73,9 @@ class Executor:
 
         start_logical_page = start_pos // self.page_size
         for t in tasks:
-            self._record_page_hashes(t, start_logical_page=start_logical_page)
+            self.page_cache.task_record_hashes(
+                t.task_id, t.prompt_ids, start_logical_page=start_logical_page
+            )
 
     def execute_decode(self, tasks: List[Task], start_pos: int) -> None:
         if not tasks:
@@ -102,7 +85,7 @@ class Executor:
 
         valid: List[Task] = []
         for t in tasks:
-            if self._maybe_alloc_page(t, start_pos):
+            if self.page_cache.task_extend(t.task_id, start_pos):
                 valid.append(t)
             else:
                 t.status = TaskStatus.ABORTED
@@ -123,7 +106,8 @@ class Executor:
 
         active_mask = torch.ones((batch_sz, 1), dtype=torch.bool, device=self.device)
 
-        page_tables = self._make_page_table_tensor(tasks)
+        task_ids = [t.task_id for t in tasks]
+        page_tables = self.page_cache.make_table_tensor(task_ids, self.device)
         total_len = start_pos + 1
 
         temperatures = torch.tensor([t.temperature for t in tasks], device=self.device)
@@ -150,7 +134,7 @@ class Executor:
             t.output_ids.append(ntok)
             t.output_tokens += 1
             pos = t.input_tokens + t.output_tokens
-            self._maybe_alloc_page(t, pos)
+            self.page_cache.task_extend(t.task_id, pos)
             if t.stream_callback:
                 t.stream_callback(self.tokenizer.decode([ntok]))
 
@@ -158,26 +142,3 @@ class Executor:
             if t.is_finished(self.tokenizer.stop_ids):
                 if t.stream_callback:
                     t.stream_callback(STOP)
-
-    def _n_pages_for(self, n_tokens: int) -> int:
-        return (n_tokens + self.page_size - 1) // self.page_size
-
-    def _make_page_table_tensor(self, tasks: List[Task]) -> Tensor:
-        max_pages = max(t.n_pages for t in tasks)
-        rows = [t.page_table + [-1] * (max_pages - t.n_pages) for t in tasks]
-        return torch.tensor(rows, dtype=torch.long, device=self.device)
-
-    def _record_page_hashes(self, task: Task, start_logical_page: int = 0) -> None:
-        full_pages = len(task.prompt_ids) // self.page_size
-        for i in range(start_logical_page, full_pages):
-            self.page_cache.record_page(task.page_table[i], task.prompt_ids, i)
-
-    def _maybe_alloc_page(self, task: Task, pos: int) -> bool:
-        needed = self._n_pages_for(pos + 1)
-        while task.n_pages < needed:
-            p = self.page_cache.alloc()
-            if p < 0:
-                return False
-            task.page_table.append(p)
-            task.n_pages += 1
-        return True
