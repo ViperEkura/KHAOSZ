@@ -1,140 +1,72 @@
 """Dataset implementations with factory pattern for training."""
 
-import bisect
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
 
 import torch
 from torch import Tensor
 from torch.utils.data import Dataset
 
+from astrai.dataset.storage import (
+    BaseStorage,
+    create_storage,
+    detect_format,
+)
 from astrai.factory import BaseFactory
-from astrai.serialization import load_h5
-
-
-class BaseSegmentFetcher:
-    """Fetches data segments across multiple tensor segments.
-
-    Maintains cumulative lengths for efficient range queries across
-    multiple discontinuous segments.
-    """
-
-    def __init__(self, segments: List[Tensor]):
-        self.segments = segments
-        self.cum_lengths = []
-
-        total = 0
-        for seg in segments:
-            total += torch.numel(seg)
-            self.cum_lengths.append(total)
-
-        self.total_length = total
-
-    def __len__(self) -> int:
-        return self.total_length
-
-    def fetch_data(self, begin_idx: int, end_idx: int) -> Tensor:
-        """Fetch data in the range [begin_idx, end_idx).
-
-        Args:
-            begin_idx: Starting index (inclusive)
-            end_idx: Ending index (exclusive)
-
-        Returns:
-            Concatenated tensor of data in the specified range
-        """
-        if not (
-            0 <= begin_idx < self.total_length and 0 <= end_idx <= self.total_length
-        ):
-            raise ValueError("begin_idx or end_idx out of bounds")
-        if begin_idx >= end_idx:
-            return torch.tensor([], dtype=torch.long)
-
-        # Find segment boundaries for the range
-        seg_start_idx = bisect.bisect_right(self.cum_lengths, begin_idx)
-        seg_end_idx = bisect.bisect_left(self.cum_lengths, end_idx)
-
-        result_segments = []
-
-        for i in range(seg_start_idx, seg_end_idx + 1):
-            prev_cum = self.cum_lengths[i - 1] if i > 0 else 0
-            start = max(begin_idx - prev_cum, 0)
-            end = min(end_idx - prev_cum, len(self.segments[i]))
-            data = self.segments[i][start:end]
-            result_segments.append(data)
-
-        return torch.cat(result_segments, dim=0)
-
-
-class MultiSegmentFetcher:
-    """Manages multiple segment fetchers for different data keys.
-
-    Each key corresponds to a different type of data (e.g., "sequence", "mask").
-    """
-
-    def __init__(self, multi_segments: Dict):
-        self.multi_keys = list(multi_segments.keys())
-        self.multi_fetchers = {
-            key: BaseSegmentFetcher(segments)
-            for key, segments in multi_segments.items()
-        }
-
-    def __len__(self) -> int:
-        """Returns the minimum length across all fetchers."""
-        len_list = [len(seg) for seg in self.multi_fetchers.values()]
-        return min(len_list)
-
-    def key_fetch(
-        self, begin_idx: int, end_idx: int, keys: Union[str, List[str]]
-    ) -> Dict:
-        """Fetch data for specific keys.
-
-        Args:
-            begin_idx: Starting index
-            end_idx: Ending index
-            keys: Single key or list of keys to fetch
-
-        Returns:
-            Dictionary of tensors if multiple keys, single tensor if one key
-        """
-        fetch_dict = {}
-        keys = [keys] if isinstance(keys, str) else keys
-
-        for key in keys:
-            fetcher = self.multi_fetchers[key]
-            fetch_tensor = fetcher.fetch_data(begin_idx, end_idx)
-            fetch_dict[key] = fetch_tensor
-
-        return fetch_dict if len(keys) > 1 else fetch_dict[keys[0]]
-
-    def fetch_data(self, begin_idx: int, end_idx: int) -> Dict:
-        """Fetch all keys."""
-        return self.key_fetch(begin_idx, end_idx, self.multi_keys)
 
 
 class BaseDataset(Dataset, ABC):
     """Abstract base class for all dataset types.
 
     Implements common functionality for window-based data fetching.
+    Uses a storage abstraction for format-agnostic data loading.
     """
 
     def __init__(self, window_size: int, stride: int):
         super().__init__()
-        self.segments = {}
         self.window_size = window_size
         self.stride = stride
-        self.total_samples = None
-        self.fetcher: Optional[MultiSegmentFetcher] = None
+        self.storage: Optional[BaseStorage] = None
 
-    def load(self, load_path: str):
-        """Load dataset from HDF5 file.
+    def load(self, load_path: str, storage_type: Optional[str] = None, tokenizer=None):
+        """Load dataset from the given path.
+
+        Auto-detects the storage format if not specified.
 
         Args:
-            load_path: Path to the HDF5 data file
+            load_path: Path to the data directory or file
+            storage_type: Force a specific storage type ("h5", "json"),
+                          or None for auto-detection
+            tokenizer: Callable str -> List[int], used to tokenize raw text
+                       in JSON files. Ignored for HDF5.
         """
-        self.segments = load_h5(load_path)
-        self.fetcher = MultiSegmentFetcher(self.segments)
-        self.total_samples = len(self.fetcher)
+        if storage_type is None:
+            storage_type = detect_format(load_path)
+        self.storage = create_storage(storage_type)
+        self.storage.load(load_path, tokenizer=tokenizer)
+
+    def load_json(self, load_path: str, tokenizer=None):
+        """Load dataset from JSON files explicitly.
+
+        Args:
+            load_path: Path to the JSON data file or directory
+            tokenizer: Optional tokenizer callable for raw text JSON.
+        """
+        self.load(load_path, storage_type="json", tokenizer=tokenizer)
+
+    @property
+    def count(self) -> int:
+        """Return the total number of raw elements (tokens) in the dataset."""
+        if self.storage is None:
+            return 0
+        return len(self.storage)
+
+    @property
+    def keys(self) -> List[str]:
+        """Return the available data keys."""
+        if self.storage is None:
+            return []
+        return self.storage.keys
 
     def get_index(self, index: int) -> tuple:
         """Calculate begin and end indices for a sample.
@@ -145,10 +77,12 @@ class BaseDataset(Dataset, ABC):
         Returns:
             Tuple of (begin_idx, end_idx)
         """
-        assert self.total_samples > self.window_size
+        assert self.storage is not None
+        total = len(self.storage)
+        assert total > self.window_size
 
-        begin_idx = min(index * self.stride, self.total_samples - 1 - self.window_size)
-        end_idx = min(begin_idx + self.window_size, self.total_samples - 1)
+        begin_idx = min(index * self.stride, total - 1 - self.window_size)
+        end_idx = min(begin_idx + self.window_size, total - 1)
 
         return begin_idx, end_idx
 
@@ -161,10 +95,11 @@ class BaseDataset(Dataset, ABC):
         raise NotImplementedError
 
     def __len__(self) -> int:
-        assert self.total_samples is not None
-        if self.total_samples <= self.window_size:
+        assert self.storage is not None
+        total = len(self.storage)
+        if total <= self.window_size:
             return 0
-        return (self.total_samples - 1 - self.window_size) // self.stride + 1
+        return (total - 1 - self.window_size) // self.stride + 1
 
 
 class DatasetFactory(BaseFactory["BaseDataset"]):
@@ -209,6 +144,8 @@ class DatasetFactory(BaseFactory["BaseDataset"]):
         load_path: str,
         window_size: int,
         stride: Optional[int] = None,
+        storage_type: Optional[str] = None,
+        tokenizer=None,
     ) -> "BaseDataset":
         """Create and load a dataset in one step.
 
@@ -217,6 +154,8 @@ class DatasetFactory(BaseFactory["BaseDataset"]):
             load_path: Path to the data file
             window_size: Window size for data sampling
             stride: Stride between consecutive samples (default: same as window_size)
+            storage_type: Storage type ("h5", "json") or None for auto-detection
+            tokenizer: Callable str -> List[int] for raw text JSON tokenization
 
         Returns:
             Loaded dataset instance
@@ -225,7 +164,7 @@ class DatasetFactory(BaseFactory["BaseDataset"]):
             stride = window_size
 
         dataset = cls.create(train_type, window_size, stride)
-        dataset.load(load_path)
+        dataset.load(load_path, storage_type=storage_type, tokenizer=tokenizer)
 
         return dataset
 
@@ -233,10 +172,6 @@ class DatasetFactory(BaseFactory["BaseDataset"]):
     def available_types(cls) -> list:
         """Return list of registered dataset type names."""
         return cls.list_registered()
-
-
-# ============== Dataset Classes ==============
-# All dataset classes are registered at class definition time using the decorator
 
 
 @DatasetFactory.register("seq")
@@ -247,7 +182,7 @@ class SEQDataset(BaseDataset):
         super().__init__(window_size, stride)
 
     def _fetch_data(self, begin_idx: int, end_idx: int) -> Tensor:
-        return self.fetcher.key_fetch(begin_idx, end_idx, "sequence")
+        return self.storage.fetch(begin_idx, end_idx, "sequence")
 
     def __getitem__(self, index):
         begin_idx, end_idx = self.get_index(index)
@@ -266,7 +201,7 @@ class SFTDataset(BaseDataset):
         super().__init__(window_size, stride)
 
     def _fetch_data(self, begin_idx: int, end_idx: int, key: str) -> Tensor:
-        return self.fetcher.key_fetch(begin_idx, end_idx, key)
+        return self.storage.fetch(begin_idx, end_idx, key)
 
     def __getitem__(self, index):
         begin_idx, end_idx = self.get_index(index)
@@ -290,7 +225,7 @@ class DPODataset(BaseDataset):
         super().__init__(window_size, stride)
 
     def _fetch_data(self, begin_idx: int, end_idx: int, key: str) -> Tensor:
-        return self.fetcher.key_fetch(begin_idx, end_idx, key)
+        return self.storage.fetch(begin_idx, end_idx, key)
 
     def __getitem__(self, index: int):
         begin_idx, end_idx = self.get_index(index)
@@ -320,7 +255,7 @@ class GRPODataset(BaseDataset):
         super().__init__(window_size, stride)
 
     def _fetch_data(self, begin_idx: int, end_idx: int, key: str) -> Tensor:
-        return self.fetcher.key_fetch(begin_idx, end_idx, key)
+        return self.storage.fetch(begin_idx, end_idx, key)
 
     def __getitem__(self, index: int) -> Dict[str, Tensor]:
         begin_idx, end_idx = self.get_index(index)

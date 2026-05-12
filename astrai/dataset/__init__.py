@@ -1,19 +1,37 @@
 from astrai.dataset.dataset import (
     BaseDataset,
-    BaseSegmentFetcher,
     DatasetFactory,
-    MultiSegmentFetcher,
 )
 from astrai.dataset.sampler import ResumableDistributedSampler
+from astrai.dataset.storage import (
+    BaseSegmentFetcher,
+    BaseStorage,
+    H5Storage,
+    JSONStorage,
+    MultiSegmentFetcher,
+    available_storage_types,
+    create_storage,
+    detect_format,
+    load_h5,
+    load_json,
+    save_h5,
+    save_json,
+)
 
 __all__ = [
-    # Base classes
     "BaseDataset",
-    # Factory
     "DatasetFactory",
-    # Fetchers
     "BaseSegmentFetcher",
     "MultiSegmentFetcher",
-    # Sampler
+    "BaseStorage",
+    "H5Storage",
+    "JSONStorage",
+    "create_storage",
+    "detect_format",
+    "available_storage_types",
+    "save_h5",
+    "load_h5",
+    "save_json",
+    "load_json",
     "ResumableDistributedSampler",
 ]
