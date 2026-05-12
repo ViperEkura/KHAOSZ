@@ -77,9 +77,13 @@ class BaseDataset(Dataset, ABC):
         Returns:
             Tuple of (begin_idx, end_idx)
         """
-        assert self.storage is not None
+        if self.storage is None:
+            raise RuntimeError("Dataset not loaded, call load() first")
         total = len(self.storage)
-        assert total > self.window_size
+        if total <= self.window_size:
+            raise ValueError(
+                f"Data too short: {total} tokens <= window_size {self.window_size}"
+            )
 
         begin_idx = min(index * self.stride, total - 1 - self.window_size)
         end_idx = min(begin_idx + self.window_size, total - 1)
@@ -95,7 +99,8 @@ class BaseDataset(Dataset, ABC):
         raise NotImplementedError
 
     def __len__(self) -> int:
-        assert self.storage is not None
+        if self.storage is None:
+            return 0
         total = len(self.storage)
         if total <= self.window_size:
             return 0

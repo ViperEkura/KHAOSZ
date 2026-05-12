@@ -188,6 +188,8 @@ class MultiSegmentFetcher:
 
     def __len__(self) -> int:
         """Returns the minimum length across all fetchers."""
+        if not self.multi_fetchers:
+            return 0
         len_list = [len(seg) for seg in self.multi_fetchers.values()]
         return min(len_list)
 
