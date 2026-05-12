@@ -1,7 +1,6 @@
 """Tests for scheduler concurrency."""
 
 import threading
-import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -63,13 +62,10 @@ def test_scheduler_concurrent_add_task(mock_model_and_tokenizer):
     for t in threads:
         t.start()
 
-    # Let some tasks be processed
-    time.sleep(0.1)
-
-    scheduler.stop()
-
     for t in threads:
         t.join()
+
+    scheduler.stop()
 
     assert len(results["errors"]) == 0, f"Errors: {results['errors']}"
     assert len(results["task_ids"]) == 50
@@ -89,19 +85,21 @@ def test_scheduler_concurrent_add_remove_task(mock_model_and_tokenizer):
             )
 
     results = {"added": [], "removed": [], "errors": []}
+    add_ready = threading.Event()
 
     def add_worker():
         try:
             for i in range(20):
                 task_id = scheduler.add_task(f"prompt {i}")
                 results["added"].append(task_id)
-                time.sleep(0.001)
+                if len(results["added"]) >= 10:
+                    add_ready.set()
         except Exception as e:
             results["errors"].append(f"Add: {str(e)}")
 
     def remove_worker():
         try:
-            time.sleep(0.05)  # Wait for some tasks to be added
+            add_ready.wait(timeout=5.0)
             for task_id in results["added"][:10]:
                 scheduler.remove_task(task_id)
                 results["removed"].append(task_id)
@@ -114,11 +112,9 @@ def test_scheduler_concurrent_add_remove_task(mock_model_and_tokenizer):
     add_thread.start()
     remove_thread.start()
 
-    time.sleep(0.2)
-    scheduler.stop()
-
     add_thread.join()
     remove_thread.join()
+    scheduler.stop()
 
     assert len(results["errors"]) == 0, f"Errors: {results['errors']}"
     assert len(results["added"]) == 20
@@ -138,21 +134,24 @@ def test_scheduler_concurrent_get_stats(mock_model_and_tokenizer):
             )
 
     results = {"stats": [], "errors": []}
+    started = threading.Event()
+    stats_done = threading.Event()
 
     def add_tasks():
         try:
             for i in range(20):
                 scheduler.add_task(f"prompt {i}")
-                time.sleep(0.001)
+                started.set()
         except Exception as e:
             results["errors"].append(f"Add: {str(e)}")
 
     def get_stats():
         try:
+            started.wait(timeout=5.0)
             for _ in range(50):
                 stats = scheduler.get_stats()
                 results["stats"].append(stats)
-                time.sleep(0.001)
+            stats_done.set()
         except Exception as e:
             results["errors"].append(f"Get stats: {str(e)}")
 
@@ -162,16 +161,15 @@ def test_scheduler_concurrent_get_stats(mock_model_and_tokenizer):
     add_thread.start()
     stats_thread.start()
 
-    time.sleep(0.3)
+    add_thread.join()
+    stats_done.wait(timeout=5.0)
     scheduler.stop()
 
-    add_thread.join()
     stats_thread.join()
 
     assert len(results["errors"]) == 0, f"Errors: {results['errors']}"
     assert len(results["stats"]) == 50
 
-    # Verify stats are consistent
     for stats in results["stats"]:
         assert "total_tasks" in stats
         assert stats["total_tasks"] >= 0
