@@ -11,6 +11,14 @@ from astrai.inference.server import app
 @pytest.fixture
 def client():
     """Provide a test client for the FastAPI app."""
+    app.state.server_config = {
+        "device": "cpu",
+        "dtype": "bfloat16",
+        "param_path": None,
+        "max_batch_size": 1,
+        "_test": True,
+    }
+    app.state.engine = None
     return TestClient(app)
 
 
@@ -39,7 +47,7 @@ def mock_engine():
 
 
 @pytest.fixture
-def loaded_model(mock_engine, monkeypatch):
+def loaded_model(client, mock_engine):
     """Simulate that the engine is loaded."""
-    monkeypatch.setattr("astrai.inference.server._state.engine", mock_engine)
+    app.state.engine = mock_engine
     return mock_engine

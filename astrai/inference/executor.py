@@ -5,7 +5,7 @@ import torch
 
 from astrai.inference.cache import PagedCache
 from astrai.inference.sample import sample
-from astrai.inference.task import STOP, Task, TaskStatus
+from astrai.inference.task import Task
 from astrai.model.automodel import AutoModel
 from astrai.tokenize.tokenizer import AutoTokenizer
 
@@ -60,31 +60,10 @@ class Executor:
                 paged_cache=self.page_cache.bind(page_tables, total_len=prompt_len),
             )
 
-        start_logical_page = start_pos // self.page_cache.page_size
-        for t in tasks:
-            self.page_cache.task_record_hashes(
-                t.task_id, t.prompt_ids, start_logical_page=start_logical_page
-            )
-
-    def execute_decode(self, tasks: List[Task], start_pos: int) -> None:
+    def execute_decode(self, tasks: List[Task], start_pos: int) -> List[int]:
         if not tasks:
-            return
+            return []
 
-        tasks = sorted(tasks, key=lambda t: t.task_id)
-
-        valid: List[Task] = []
-        for t in tasks:
-            if self.page_cache.task_extend(t.task_id, start_pos):
-                valid.append(t)
-            else:
-                t.status = TaskStatus.ABORTED
-                if t.stream_callback:
-                    t.stream_callback(STOP)
-
-        if not valid:
-            return
-
-        tasks = valid
         batch_sz = len(tasks)
 
         input_ids = torch.tensor(
@@ -112,22 +91,9 @@ class Executor:
             )
             logits = outputs["logits"][:, -1, :]
 
-        next_tokens = sample(
+        return sample(
             logits,
             temperature=temperatures,
             top_k=top_ks,
             top_p=top_ps,
         ).tolist()
-
-        for t, ntok in zip(tasks, next_tokens):
-            t.output_ids.append(ntok)
-            t.output_tokens += 1
-            pos = t.input_tokens + t.output_tokens
-            self.page_cache.task_extend(t.task_id, pos)
-            if t.stream_callback:
-                t.stream_callback(self.tokenizer.decode([ntok]))
-
-        for t in tasks:
-            if t.is_finished(self.tokenizer.stop_ids):
-                if t.stream_callback:
-                    t.stream_callback(STOP)

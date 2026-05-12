@@ -6,7 +6,7 @@ import torch
 
 from astrai.inference.cache import PagedCache
 from astrai.inference.executor import Executor
-from astrai.inference.task import STOP, Task, TaskManager
+from astrai.inference.task import STOP, Task, TaskManager, TaskStatus
 from astrai.model.automodel import AutoModel
 from astrai.tokenize.tokenizer import AutoTokenizer
 
@@ -75,17 +75,15 @@ class InferenceScheduler:
         return self._task_mgr.get_stats()
 
     def _run_generation_loop(self) -> None:
+        stop_ids = self._task_mgr.tokenizer.stop_ids
         try:
             while self._running:
-                finished = self._task_mgr.remove_finished_tasks(
-                    self._task_mgr.tokenizer.stop_ids
-                )
+                finished = self._task_mgr.remove_finished_tasks(stop_ids)
                 for task in finished:
                     self._page_cache.task_free(task.task_id)
 
-                available = self._task_mgr.max_batch_size - len(
-                    self._task_mgr.active_tasks
-                )
+                active = self._task_mgr.get_active_tasks()
+                available = self._task_mgr.max_batch_size - len(active)
                 if available > 0:
                     candidates = self._task_mgr.pull_candidates(available)
                     failed = []
@@ -102,7 +100,7 @@ class InferenceScheduler:
                     continue
 
                 to_prefill = [
-                    t for t in self._task_mgr.active_tasks if t.output_tokens == 0
+                    t for t in self._task_mgr.get_active_tasks() if t.output_tokens == 0
                 ]
                 if to_prefill:
                     for t in to_prefill:
@@ -118,23 +116,56 @@ class InferenceScheduler:
 
                     for (prompt_len, start_pos), group in groups.items():
                         self._executor.execute_prefill(group, prompt_len, start_pos)
+                        start_logical_page = start_pos // self._page_cache.page_size
+                        for t in group:
+                            self._page_cache.task_record_hashes(
+                                t.task_id,
+                                t.prompt_ids,
+                                start_logical_page=start_logical_page,
+                            )
 
                 pos_groups: Dict[int, List[Task]] = {}
-                for t in self._task_mgr.active_tasks:
+                for t in self._task_mgr.get_active_tasks():
                     pos_groups.setdefault(t.next_pos, []).append(t)
 
                 if pos_groups:
                     best_pos = max(pos_groups, key=lambda p: len(pos_groups[p]))
-                    self._executor.execute_decode(pos_groups[best_pos], best_pos)
+                    group = sorted(pos_groups[best_pos], key=lambda t: t.task_id)
+
+                    valid: List[Task] = []
+                    for t in group:
+                        if self._page_cache.task_extend(t.task_id, best_pos):
+                            valid.append(t)
+                        else:
+                            t.status = TaskStatus.ABORTED
+                            if t.stream_callback:
+                                t.stream_callback(STOP)
+
+                    if valid:
+                        next_tokens = self._executor.execute_decode(valid, best_pos)
+
+                        for t, ntok in zip(valid, next_tokens):
+                            t.output_ids.append(ntok)
+                            t.output_tokens += 1
+                            pos = t.input_tokens + t.output_tokens
+                            self._page_cache.task_extend(t.task_id, pos)
+                            if t.stream_callback:
+                                t.stream_callback(
+                                    self._task_mgr.tokenizer.decode([ntok])
+                                )
+
+                        for t in valid:
+                            if t.is_finished(stop_ids):
+                                if t.stream_callback:
+                                    t.stream_callback(STOP)
 
         except Exception as e:
             logger.error(f"Scheduler loop crashed: {e}", exc_info=True)
-            for task in self._task_mgr.active_tasks:
+            for task in self._task_mgr.get_active_tasks():
                 if task.stream_callback:
                     task.stream_callback(STOP)
-            for task in self._task_mgr.waiting_queue:
-                if task.stream_callback:
-                    task.stream_callback(STOP)
+                self._page_cache.task_free(task.task_id)
+            self._task_mgr.clear_queues()
             raise
 
     def start(self) -> None:
@@ -149,7 +180,8 @@ class InferenceScheduler:
         self._task_mgr.wake()
         if hasattr(self, "_loop_thread"):
             self._loop_thread.join(timeout=2.0)
-        self._task_mgr.waiting_queue.clear()
-        self._task_mgr.active_tasks.clear()
+        for task in self._task_mgr.get_active_tasks():
+            self._page_cache.task_free(task.task_id)
+        self._task_mgr.clear_queues()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

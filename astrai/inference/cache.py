@@ -104,8 +104,7 @@ class PrefixCache:
 class TaskTable:
     """Maps task_ids to page tables and cached token counts."""
 
-    def __init__(self, pool: PagePool, page_size: int):
-        self._pool = pool
+    def __init__(self, page_size: int):
         self._page_size = page_size
         self._pages: Dict[str, List[int]] = {}
         self._cached: Dict[str, int] = {}
@@ -125,15 +124,8 @@ class TaskTable:
         cached = self._cached.pop(task_id, 0)
         return pages, cached
 
-    def extend(self, task_id: str, pos: int) -> bool:
-        page_table = self._pages[task_id]
-        needed = (pos + 1 + self._page_size - 1) // self._page_size
-        while len(page_table) < needed:
-            p = self._pool.alloc()
-            if p < 0:
-                return False
-            page_table.append(p)
-        return True
+    def get_ref(self, task_id: str) -> List[int]:
+        return self._pages.setdefault(task_id, [])
 
     def table_tensor(self, task_ids: List[str], device: torch.device) -> Tensor:
         states = [self._pages.get(tid, []) for tid in task_ids]
@@ -158,7 +150,7 @@ class PagedCache:
         self.page_size = page_size
         self._prefix = PrefixCache(page_size)
         self._pool = PagePool(n_pages, on_evict=self._prefix.on_evict)
-        self._table = TaskTable(self._pool, page_size)
+        self._table = TaskTable(page_size)
 
         self.k_cache = torch.empty(
             (n_layers, n_pages, page_size, n_kv_heads, head_dim),
@@ -219,7 +211,14 @@ class PagedCache:
             self.free(idx)
 
     def task_extend(self, task_id: str, pos: int) -> bool:
-        return self._table.extend(task_id, pos)
+        page_table = self._table.get(task_id)
+        needed = (pos + 1 + self.page_size - 1) // self.page_size
+        while len(page_table) < needed:
+            p = self._pool.alloc()
+            if p < 0:
+                return False
+            page_table.append(p)
+        return True
 
     def task_cached(self, task_id: str) -> int:
         return self._table.get_cached(task_id)

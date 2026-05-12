@@ -139,23 +139,24 @@ class TaskManager:
         }
 
     def remove_finished_tasks(self, stop_ids: List[int]) -> List[Task]:
-        finished = []
-        for task in self.active_tasks:
-            if task.status == TaskStatus.ABORTED:
-                task.finish_time = time.time()
-                finished.append(task)
-            elif task.is_finished(stop_ids):
-                task.status = TaskStatus.FINISHED
-                task.finish_time = time.time()
-                finished.append(task)
-                self._total_tokens += task.output_tokens
+        with self._lock:
+            finished = []
+            for task in self.active_tasks:
+                if task.status == TaskStatus.ABORTED:
+                    task.finish_time = time.time()
+                    finished.append(task)
+                elif task.is_finished(stop_ids):
+                    task.status = TaskStatus.FINISHED
+                    task.finish_time = time.time()
+                    finished.append(task)
+                    self._total_tokens += task.output_tokens
 
-        self.active_tasks = [
-            t
-            for t in self.active_tasks
-            if t.status not in (TaskStatus.FINISHED, TaskStatus.ABORTED)
-        ]
-        return finished
+            self.active_tasks = [
+                t
+                for t in self.active_tasks
+                if t.status not in (TaskStatus.FINISHED, TaskStatus.ABORTED)
+            ]
+            return finished
 
     def pull_candidates(self, n: int) -> List[Task]:
         to_add: List[Task] = []
@@ -179,6 +180,15 @@ class TaskManager:
     def wait_for_tasks(self, timeout: float = 1.0) -> None:
         self._task_event.clear()
         self._task_event.wait(timeout=timeout)
+
+    def get_active_tasks(self) -> List[Task]:
+        with self._lock:
+            return list(self.active_tasks)
+
+    def clear_queues(self) -> None:
+        with self._lock:
+            self.waiting_queue.clear()
+            self.active_tasks.clear()
 
     def wake(self) -> None:
         self._task_event.set()

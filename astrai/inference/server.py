@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import torch
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -23,20 +23,6 @@ from astrai.tokenize import AutoTokenizer
 logger = logging.getLogger(__name__)
 
 _project_root = Path(__file__).parent.parent.parent
-
-
-class ServerState:
-    def __init__(self):
-        self.engine: Optional[InferenceEngine] = None
-        self.config: Dict[str, Any] = {
-            "device": "cuda",
-            "dtype": torch.bfloat16,
-            "param_path": None,
-            "max_batch_size": 16,
-        }
-
-
-_state = ServerState()
 
 
 class ChatMessage(BaseModel):
@@ -81,47 +67,12 @@ class MessagesRequest(BaseModel):
     stop_sequences: Optional[List[str]] = None
 
 
-def configure_server(
-    device: str = "cuda",
-    dtype: torch.dtype = torch.bfloat16,
-    param_path: Optional[Path] = None,
-    max_batch_size: int = 16,
-):
-    _state.config.update(
-        device=device,
-        dtype=dtype,
-        param_path=param_path,
-        max_batch_size=max_batch_size,
-    )
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    try:
-        load_model(
-            param_path=_state.config["param_path"],
-            device=_state.config["device"],
-            dtype=_state.config["dtype"],
-            max_batch_size=_state.config["max_batch_size"],
-        )
-    except Exception as e:
-        logger.error(f"Failed to load model: {e}")
-        raise
-    yield
-    if _state.engine:
-        _state.engine.shutdown()
-        logger.info("Inference engine shutdown complete")
-
-
-app = FastAPI(title="AstrAI Inference Server", version="0.2.0", lifespan=lifespan)
-
-
-def load_model(
+def _create_engine(
     param_path: Optional[Path] = None,
     device: str = "cuda",
     dtype: torch.dtype = torch.bfloat16,
     max_batch_size: int = 16,
-):
+) -> InferenceEngine:
     if param_path is None:
         param_path = _project_root / "params"
     if not param_path.exists():
@@ -132,18 +83,38 @@ def load_model(
     model.to(device=device, dtype=dtype)
     logger.info(f"Model loaded on {device} with dtype {dtype}")
 
-    _state.engine = InferenceEngine(
+    engine = InferenceEngine(
         model=model,
         tokenizer=tokenizer,
         max_batch_size=max_batch_size,
     )
     logger.info(f"Inference engine initialized with max_batch_size={max_batch_size}")
+    return engine
 
 
-def _get_engine() -> InferenceEngine:
-    if _state.engine is None:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    config = app.state.server_config
+    if not config.get("_test", False):
+        try:
+            app.state.engine = _create_engine(**config)
+        except Exception as e:
+            logger.error(f"Failed to load model: {e}")
+            raise
+    yield
+    if app.state.engine:
+        app.state.engine.shutdown()
+        logger.info("Inference engine shutdown complete")
+
+
+app = FastAPI(title="AstrAI Inference Server", version="0.2.0", lifespan=lifespan)
+
+
+def _get_engine(request: Request) -> InferenceEngine:
+    engine = request.app.state.engine
+    if engine is None:
         raise HTTPException(status_code=503, detail="Engine not initialized")
-    return _state.engine
+    return engine
 
 
 def _make_chunk(
@@ -155,7 +126,6 @@ def _make_chunk(
     model: str,
     index: int = 0,
 ) -> str:
-    """Build a single SSE ``data:`` chunk matching OpenAI streaming format."""
     data = {
         "id": resp_id,
         "object": "chat.completion.chunk",
@@ -172,23 +142,56 @@ def _make_chunk(
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _make_anthropic_sse(event: str, data: Dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _check_stop_sequence(text: str, stop_sequences: List[str]) -> Optional[str]:
+    for seq in stop_sequences:
+        if seq and seq in text:
+            return seq
+    return None
+
+
+def _extract_text_content(content: Union[str, List[Dict[str, Any]]]) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                return block.get("text", "")
+    return ""
+
+
+def _build_anthropic_messages(
+    messages: List[AnthropicMessage], system: Optional[str]
+) -> List[Dict[str, str]]:
+    result: List[Dict[str, str]] = []
+    if system:
+        result.append({"role": "system", "content": system})
+    for m in messages:
+        content = _extract_text_content(m.content)
+        if content:
+            result.append({"role": m.role, "content": content})
+    return result
+
+
 @app.get("/health")
-async def health():
+async def health(request: Request):
     return {
         "status": "ok",
-        "model_loaded": _state.engine is not None,
+        "model_loaded": request.app.state.engine is not None,
     }
 
 
 @app.get("/stats")
-async def get_stats():
-    return _get_engine().get_stats()
+async def get_stats(request: Request):
+    return _get_engine(request).get_stats()
 
 
 @app.post("/v1/chat/completions")
-async def chat_completion(request: ChatCompletionRequest):
-    """OpenAI-compatible chat completion endpoint (streaming + non-streaming)."""
-    engine = _get_engine()
+async def chat_completion(request: ChatCompletionRequest, req: Request):
+    engine = _get_engine(req)
     resp_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     created = int(time.time())
     model = request.model
@@ -284,44 +287,9 @@ async def chat_completion(request: ChatCompletionRequest):
     }
 
 
-def _make_anthropic_sse(event: str, data: Dict[str, Any]) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-
-def _check_stop_sequence(text: str, stop_sequences: List[str]) -> Optional[str]:
-    for seq in stop_sequences:
-        if seq and seq in text:
-            return seq
-    return None
-
-
-def _extract_text_content(content: Union[str, List[Dict[str, Any]]]) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                return block.get("text", "")
-    return ""
-
-
-def _build_anthropic_messages(
-    messages: List[AnthropicMessage], system: Optional[str]
-) -> List[Dict[str, str]]:
-    result: List[Dict[str, str]] = []
-    if system:
-        result.append({"role": "system", "content": system})
-    for m in messages:
-        content = _extract_text_content(m.content)
-        if content:
-            result.append({"role": m.role, "content": content})
-    return result
-
-
 @app.post("/v1/messages")
-async def create_message(request: MessagesRequest):
-    """Anthropic-compatible Messages API endpoint (streaming + non-streaming)."""
-    engine = _get_engine()
+async def create_message(request: MessagesRequest, req: Request):
+    engine = _get_engine(req)
     resp_id = f"msg_{uuid.uuid4().hex[:24]}"
     model = request.model
 
@@ -472,12 +440,12 @@ def run_server(
     param_path: Optional[Path] = None,
     max_batch_size: int = 16,
 ):
-    configure_server(
-        device=device,
-        dtype=dtype,
-        param_path=param_path,
-        max_batch_size=max_batch_size,
-    )
+    app.state.server_config = {
+        "device": device,
+        "dtype": dtype,
+        "param_path": param_path,
+        "max_batch_size": max_batch_size,
+    }
     uvicorn.run(
         "astrai.inference.server:app",
         host=host,

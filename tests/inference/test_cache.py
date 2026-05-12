@@ -162,23 +162,20 @@ def test_prefix_cache_has_page():
 
 
 def test_task_table_set_get():
-    pool = PagePool(n_pages=8)
-    table = TaskTable(pool, page_size=64)
+    table = TaskTable(page_size=64)
     table.set("task1", [0, 1, 2], 128)
     assert table.get("task1") == [0, 1, 2]
     assert table.get_cached("task1") == 128
 
 
 def test_task_table_get_missing():
-    pool = PagePool(n_pages=8)
-    table = TaskTable(pool, page_size=64)
+    table = TaskTable(page_size=64)
     assert table.get("nonexistent") == []
     assert table.get_cached("nonexistent") == 0
 
 
 def test_task_table_pop():
-    pool = PagePool(n_pages=8)
-    table = TaskTable(pool, page_size=64)
+    table = TaskTable(page_size=64)
     table.set("task1", [0, 1], 64)
     pages, cached = table.pop("task1")
     assert pages == [0, 1]
@@ -186,26 +183,39 @@ def test_task_table_pop():
     assert table.get("task1") == []
 
 
-def test_task_table_extend_allocates_pages():
-    pool = PagePool(n_pages=8)
-    table = TaskTable(pool, page_size=64)
-    table.set("task1", [], 0)
-    ok = table.extend("task1", 200)
+def test_paged_cache_task_extend_allocates():
+    cache = PagedCache(
+        n_layers=1,
+        n_pages=8,
+        page_size=64,
+        n_kv_heads=2,
+        head_dim=8,
+        device=torch.device("cpu"),
+        dtype=torch.float32,
+    )
+    cache._table.set("task1", [], 0)
+    ok = cache.task_extend("task1", 200)
     assert ok
-    assert len(table.get("task1")) == 4
+    assert len(cache._table.get("task1")) == 4
 
 
-def test_task_table_extend_fails_when_pool_full():
-    pool = PagePool(n_pages=2)
-    table = TaskTable(pool, page_size=64)
-    table.set("task1", [pool.alloc(), pool.alloc()], 0)
-    ok = table.extend("task1", 300)
+def test_paged_cache_task_extend_fails_when_pool_full():
+    cache = PagedCache(
+        n_layers=1,
+        n_pages=2,
+        page_size=64,
+        n_kv_heads=2,
+        head_dim=8,
+        device=torch.device("cpu"),
+        dtype=torch.float32,
+    )
+    cache._table.set("task1", [0, 1], 0)
+    ok = cache.task_extend("task1", 300)
     assert not ok
 
 
 def test_task_table_table_tensor():
-    pool = PagePool(n_pages=16)
-    table = TaskTable(pool, page_size=64)
+    table = TaskTable(page_size=64)
     table.set("a", [0, 1], 0)
     table.set("b", [2, 3, 4], 0)
     t = table.table_tensor(["a", "b"], torch.device("cpu"))
@@ -215,8 +225,7 @@ def test_task_table_table_tensor():
 
 
 def test_task_table_table_tensor_empty_input():
-    pool = PagePool(n_pages=4)
-    table = TaskTable(pool, page_size=64)
+    table = TaskTable(page_size=64)
     t = table.table_tensor([], torch.device("cpu"))
     assert t.numel() == 0
 

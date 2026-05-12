@@ -1,20 +1,20 @@
-"""Unit tests for _Result accumulator and InferenceEngine.generate()."""
+"""Unit tests for GenerateResult accumulator and InferenceEngine.generate()."""
 
 import threading
 from unittest.mock import MagicMock, patch
 
-from astrai.inference.engine import _Result
+from astrai.inference.engine import GenerateResult
 from astrai.inference.task import STOP
 
 
 def test_result_append_single():
-    r = _Result(count=1)
+    r = GenerateResult(count=1)
     r.append("hello", 0)
     assert r.results[0] == "hello"
 
 
 def test_result_append_multiple_tasks():
-    r = _Result(count=3)
+    r = GenerateResult(count=3)
     r.append("a", 0)
     r.append("b", 1)
     r.append("c", 2)
@@ -24,7 +24,7 @@ def test_result_append_multiple_tasks():
 
 
 def test_result_stop_marks_complete():
-    r = _Result(count=2)
+    r = GenerateResult(count=2)
     r.append("text", 0)
     r.append(STOP, 0)
     r.append("more", 1)
@@ -34,14 +34,14 @@ def test_result_stop_marks_complete():
 
 
 def test_result_stop_does_not_double_count():
-    r = _Result(count=1)
+    r = GenerateResult(count=1)
     r.append(STOP, 0)
     r.append(STOP, 0)
     assert r._completed == 1
 
 
 def test_result_pop_all_returns_and_clears():
-    r = _Result(count=2)
+    r = GenerateResult(count=2)
     r.append("a", 0)
     r.append("b", 1)
     out = r.pop_all()
@@ -52,7 +52,7 @@ def test_result_pop_all_returns_and_clears():
 
 
 def test_result_wait_blocks_until_data():
-    r = _Result(count=1)
+    r = GenerateResult(count=1)
 
     def delayed_append():
         import time
@@ -69,13 +69,13 @@ def test_result_wait_blocks_until_data():
 
 
 def test_result_wait_timeout():
-    r = _Result(count=1)
+    r = GenerateResult(count=1)
     ok = r.wait(timeout=0.01)
     assert not ok
 
 
 def test_result_wait_completion_non_streaming():
-    r = _Result(count=2)
+    r = GenerateResult(count=2)
 
     def finish_later():
         import time
@@ -93,7 +93,7 @@ def test_result_wait_completion_non_streaming():
 
 
 def test_result_get_results():
-    r = _Result(count=2)
+    r = GenerateResult(count=2)
     r.append("hello", 0)
     r.append("world", 1)
     results = r.get_results()
@@ -148,9 +148,9 @@ def test_engine_generate_streaming_yields_tokens():
         gen = eng.generate("hello", stream=True)
 
         cb = callbacks_saved[0]
-        cb("t1", 0)
-        cb("t2", 0)
-        cb(STOP, 0)
+        cb("t1")
+        cb("t2")
+        cb(STOP)
 
         tokens = list(gen)
         assert tokens == ["t1", "t2"]

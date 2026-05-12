@@ -2,10 +2,12 @@
 
 import pytest
 
+from astrai.inference.server import app
 
-def test_health_no_model(client, monkeypatch):
+
+def test_health_no_model(client):
     """GET /health should return 200 even when engine not loaded."""
-    monkeypatch.setattr("astrai.inference.server._state.engine", None)
+    app.state.engine = None
     response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
@@ -22,15 +24,14 @@ def test_health_with_model(client, loaded_model):
     assert data["model_loaded"] is True
 
 
-def test_chat_completions_non_stream(client, loaded_model, monkeypatch):
+def test_chat_completions_non_stream(client, loaded_model):
     """POST /v1/chat/completions with stream=false returns OpenAI-style JSON."""
 
     async def async_gen():
         yield "Assistant reply"
 
-    mock_engine = loaded_model
-    mock_engine.generate_async.return_value = async_gen()
-    monkeypatch.setattr("astrai.inference.server._state.engine", mock_engine)
+    app.state.engine = loaded_model
+    loaded_model.generate_async.return_value = async_gen()
     response = client.post(
         "/v1/chat/completions",
         json={
@@ -48,16 +49,15 @@ def test_chat_completions_non_stream(client, loaded_model, monkeypatch):
     assert "prompt_tokens" in data["usage"]
 
 
-def test_chat_completions_stream(client, loaded_model, monkeypatch):
+def test_chat_completions_stream(client, loaded_model):
     """POST /v1/chat/completions with stream=true returns SSE stream."""
 
     async def async_gen():
         yield "cumulative1"
         yield "cumulative2"
 
-    mock_engine = loaded_model
-    mock_engine.generate_async.return_value = async_gen()
-    monkeypatch.setattr("astrai.inference.server._state.engine", mock_engine)
+    app.state.engine = loaded_model
+    loaded_model.generate_async.return_value = async_gen()
     response = client.post(
         "/v1/chat/completions",
         json={
@@ -77,15 +77,14 @@ def test_chat_completions_stream(client, loaded_model, monkeypatch):
     assert any("[DONE]" in line for line in lines)
 
 
-def test_messages_non_stream(client, loaded_model, monkeypatch):
+def test_messages_non_stream(client, loaded_model):
     """POST /v1/messages with stream=false returns Anthropic-style JSON."""
 
     async def async_gen():
         yield "Assistant reply"
 
-    mock_engine = loaded_model
-    mock_engine.generate_async.return_value = async_gen()
-    monkeypatch.setattr("astrai.inference.server._state.engine", mock_engine)
+    app.state.engine = loaded_model
+    loaded_model.generate_async.return_value = async_gen()
     response = client.post(
         "/v1/messages",
         json={
@@ -105,16 +104,15 @@ def test_messages_non_stream(client, loaded_model, monkeypatch):
     assert "input_tokens" in data["usage"]
 
 
-def test_messages_stream(client, loaded_model, monkeypatch):
+def test_messages_stream(client, loaded_model):
     """POST /v1/messages with stream=true returns Anthropic SSE stream."""
 
     async def async_gen():
         yield "cumulative1"
         yield "cumulative2"
 
-    mock_engine = loaded_model
-    mock_engine.generate_async.return_value = async_gen()
-    monkeypatch.setattr("astrai.inference.server._state.engine", mock_engine)
+    app.state.engine = loaded_model
+    loaded_model.generate_async.return_value = async_gen()
     response = client.post(
         "/v1/messages",
         json={
@@ -137,15 +135,14 @@ def test_messages_stream(client, loaded_model, monkeypatch):
     assert "message_stop" in content
 
 
-def test_messages_with_system(client, loaded_model, monkeypatch):
+def test_messages_with_system(client, loaded_model):
     """POST /v1/messages with system prompt."""
 
     async def async_gen():
         yield "Reply"
 
-    mock_engine = loaded_model
-    mock_engine.generate_async.return_value = async_gen()
-    monkeypatch.setattr("astrai.inference.server._state.engine", mock_engine)
+    app.state.engine = loaded_model
+    loaded_model.generate_async.return_value = async_gen()
     response = client.post(
         "/v1/messages",
         json={
