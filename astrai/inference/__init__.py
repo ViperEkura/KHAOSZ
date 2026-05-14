@@ -3,7 +3,7 @@
 Layers:
   - core/:           Core inference loop (cache, executor, scheduler, task)
   - api/:            HTTP protocol handlers (OpenAI, Anthropic)
-  - engine.py:       Facade (InferenceEngine), Value Object (GenerationParams, GenerationRequest)
+  - engine.py:       Facade (InferenceEngine), Value Object (GenerationRequest)
   - sample.py:       Strategy pattern (TemperatureStrategy, TopKStrategy, TopPStrategy)
 """
 
@@ -22,12 +22,14 @@ from astrai.inference.api import (
 )
 from astrai.inference.core import (
     STOP,
-    CacheView,
+    Allocator,
     Executor,
     InferenceScheduler,
-    PagedCache,
+    KVCache,
+    KvcacheView,
     PagePool,
     PrefixCache,
+    Storage,
     Task,
     TaskManager,
     TaskStatus,
@@ -35,7 +37,6 @@ from astrai.inference.core import (
     page_hash,
 )
 from astrai.inference.engine import (
-    GenerationParams,
     GenerationRequest,
     InferenceEngine,
 )
@@ -52,7 +53,6 @@ __all__ = [
     # Engine / Requests
     "InferenceEngine",
     "GenerationRequest",
-    "GenerationParams",
     # Core scheduler
     "InferenceScheduler",
     "Executor",
@@ -61,10 +61,12 @@ __all__ = [
     "TaskManager",
     "TaskStatus",
     # Core cache
-    "CacheView",
-    "PagedCache",
+    "Allocator",
+    "KVCache",
+    "KvcacheView",
     "PagePool",
     "PrefixCache",
+    "Storage",
     "TaskTable",
     "page_hash",
     # Sampling (Strategy pattern)

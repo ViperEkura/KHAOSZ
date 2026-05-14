@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
-from astrai.inference.core.cache import PagedCache
+from astrai.inference.core.cache import KVCache
 from astrai.inference.core.executor import Executor
 from astrai.inference.core.task import STOP, Task, TaskManager, TaskStatus
 from astrai.model.automodel import AutoModel
@@ -37,7 +37,7 @@ class InferenceScheduler:
             max_batch_size * (self.max_seq_len + page_size) + page_size - 1
         ) // page_size
 
-        self._page_cache = PagedCache(
+        self._page_cache = KVCache(
             config.n_layers,
             n_pages,
             page_size,

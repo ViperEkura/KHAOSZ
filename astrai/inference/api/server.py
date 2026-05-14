@@ -160,8 +160,7 @@ def run_server(
         "max_batch_size": max_batch_size,
     }
     uvicorn.run(
-        "astrai.inference.server:app",
+        app,
         host=host,
         port=port,
-        reload=reload,
     )

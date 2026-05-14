@@ -28,7 +28,7 @@ class Task:
         self,
         task_id: str,
         prompt_ids: List[int],
-        max_tokens: int = 1024,
+        max_tokens: Optional[int] = None,
         temperature: float = 1.0,
         top_p: float = 1.0,
         top_k: int = 50,
@@ -54,7 +54,7 @@ class Task:
         return self.input_tokens + len(self.output_ids)
 
     def is_finished(self, stop_ids: List[int]) -> bool:
-        if self.output_tokens >= self.max_tokens:
+        if self.max_tokens is not None and self.output_tokens >= self.max_tokens:
             return True
         if self.output_ids and self.output_ids[-1] in stop_ids:
             return True
@@ -88,7 +88,7 @@ class TaskManager:
     def add_task(
         self,
         prompt: str,
-        max_tokens: int = 1024,
+        max_tokens: Optional[int] = None,
         temperature: float = 1.0,
         top_p: float = 1.0,
         top_k: int = 50,
@@ -104,7 +104,10 @@ class TaskManager:
                 stream_callback(STOP)
             return task_id
 
-        max_tokens = min(max_tokens, self.max_seq_len - len(prompt_ids))
+        if max_tokens is None:
+            max_tokens = self.max_seq_len - len(prompt_ids)
+        else:
+            max_tokens = min(max_tokens, self.max_seq_len - len(prompt_ids))
 
         task = Task(
             task_id=task_id,

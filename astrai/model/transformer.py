@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from astrai.config.model_config import ModelConfig
-from astrai.inference.core.cache import CacheView
+from astrai.inference.core.cache import KvcacheView
 from astrai.model.automodel import AutoModel
 from astrai.model.module import (
     DecoderBlock,
@@ -122,7 +122,7 @@ class Transformer(AutoModel):
         self,
         input_ids: Tensor,
         input_mask: Optional[Tensor] = None,
-        paged_cache: Optional[CacheView] = None,
+        paged_cache: Optional[KvcacheView] = None,
         position_ids: Optional[Tensor] = None,
     ) -> Tensor:
         assert input_ids.ndim == 2

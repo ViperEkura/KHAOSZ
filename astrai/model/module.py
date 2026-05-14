@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from astrai.inference.core.cache import CacheView
+from astrai.inference.core.cache import KvcacheView
 
 
 def repeat_kv(x: Tensor, n_rep: int) -> Tensor:
@@ -147,7 +147,7 @@ class GQA(nn.Module):
         x: Tensor,
         rotary_emb: Tensor,
         attn_mask: Tensor = None,
-        paged_cache: Optional[CacheView] = None,
+        paged_cache: Optional[KvcacheView] = None,
     ) -> Tensor:
         is_causal = attn_mask is None
 
@@ -227,7 +227,7 @@ class MLA(nn.Module):
         x: Tensor,
         rotary_emb: Tensor,
         attn_mask: Tensor = None,
-        paged_cache: Optional[CacheView] = None,
+        paged_cache: Optional[KvcacheView] = None,
     ) -> Tensor:
         bsz, seq_len, _ = x.size()
         is_causal = attn_mask is None
@@ -306,7 +306,7 @@ class DecoderBlock(nn.Module):
         x: Tensor,
         rotary_emb: Tensor,
         attention_mask: Optional[Tensor] = None,
-        paged_cache: Optional[CacheView] = None,
+        paged_cache: Optional[KvcacheView] = None,
     ) -> Tensor:
         attn_output = self.attention(
             self.input_norm(x),

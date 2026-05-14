@@ -3,7 +3,7 @@ from typing import List, Optional
 
 import torch
 
-from astrai.inference.core.cache import PagedCache
+from astrai.inference.core.cache import KVCache
 from astrai.inference.core.task import Task
 from astrai.inference.sample import sample
 from astrai.model.automodel import AutoModel
@@ -19,7 +19,7 @@ class Executor:
         self,
         model: AutoModel,
         tokenizer: AutoTokenizer,
-        page_cache: PagedCache,
+        page_cache: KVCache,
         device: Optional[str] = None,
         dtype: Optional[torch.dtype] = None,
     ):

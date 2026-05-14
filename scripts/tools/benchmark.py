@@ -1,4 +1,4 @@
-"""Benchmark Transformer with PagedCache (replaces old persistent_key_values)."""
+"""Benchmark Transformer with KVCache"""
 
 from dataclasses import dataclass
 from typing import Any, Dict
@@ -6,7 +6,7 @@ from typing import Any, Dict
 import torch
 
 from astrai.config import ModelConfig
-from astrai.inference import PagedCache
+from astrai.inference import KVCache
 from astrai.model.transformer import Transformer
 
 
@@ -33,7 +33,7 @@ class GenerationBenchmark:
         self.model.eval()
         head_dim = config.dim // config.n_heads
         n_pages = (config.max_len * 4 + page_size - 1) // page_size
-        self._page_cache = PagedCache(
+        self._page_cache = KVCache(
             config.n_layers,
             n_pages,
             page_size,
@@ -130,7 +130,12 @@ class GenerationBenchmark:
             )
 
             n_pages = (prompt_length + gen_length + page_size - 1) // page_size
-            pages = self._page_cache.alloc_n(n_pages * batch_size)
+            total = n_pages * batch_size
+            pages = []
+            for _ in range(total):
+                p = self._page_cache._pool.alloc()
+                assert p >= 0, "OOM"
+                pages.append(p)
             page_table = torch.tensor(
                 [pages[i * n_pages : (i + 1) * n_pages] for i in range(batch_size)],
                 dtype=torch.long,
@@ -176,7 +181,7 @@ class GenerationBenchmark:
             total_time += trial_time
 
             for idx in pages:
-                self._page_cache.free(idx)
+                self._page_cache._pool.free(idx)
 
             print(
                 f"  Trial {trial + 1}/{num_trials}: {gen_length} tokens in {trial_time:.3f}s "
@@ -225,7 +230,7 @@ if __name__ == "__main__":
     benchmark = GenerationBenchmark(config)
 
     print("=" * 80)
-    print("Running Transformer Generation Benchmark (PagedCache)")
+    print("Running Transformer Generation Benchmark (KVCache)")
     print("=" * 80)
 
     prefill_result = benchmark.run_prefill_benchmark(

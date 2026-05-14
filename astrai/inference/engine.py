@@ -3,7 +3,6 @@
 import asyncio
 import gc
 import threading
-from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Tuple, Union
 
 import torch
@@ -12,6 +11,17 @@ import torch.nn as nn
 from astrai.inference.core.scheduler import InferenceScheduler
 from astrai.inference.core.task import STOP
 from astrai.tokenize import AutoTokenizer
+
+
+def _validate_sampling_params(
+    top_k: int, top_p: float, temperature: float, max_tokens: Optional[int] = None
+):
+    if not (isinstance(top_k, int) and top_k >= 0):
+        raise ValueError("top_k must be a non-negative integer")
+    if not (0.0 <= top_p <= 1.0):
+        raise ValueError("top_p must be a float between 0.0 and 1.0")
+    if not (isinstance(temperature, (int, float)) and temperature >= 0):
+        raise ValueError("temperature must be a non-negative number")
 
 
 class GenerateResult:
@@ -58,24 +68,6 @@ class GenerateResult:
             return self.results.copy()
 
 
-@dataclass(frozen=True)
-class GenerationParams:
-    """Immutable value object for sampling hyperparameters."""
-
-    top_k: int = 50
-    top_p: float = 1.0
-    temperature: float = 1.0
-    max_tokens: int = 1024
-
-    def __post_init__(self):
-        if not (isinstance(self.top_k, int) and self.top_k >= 0):
-            raise ValueError("top_k must be a non-negative integer")
-        if not (0.0 <= self.top_p <= 1.0):
-            raise ValueError("top_p must be a float between 0.0 and 1.0")
-        if not (isinstance(self.temperature, (int, float)) and self.temperature >= 0):
-            raise ValueError("temperature must be a non-negative number")
-
-
 class GenerationRequest:
     """Request parameters for text generation."""
 
@@ -85,33 +77,17 @@ class GenerationRequest:
         top_k: int = 50,
         top_p: float = 1.0,
         temperature: float = 1.0,
-        max_len: int = 1024,
+        max_tokens: Optional[int] = None,
         stream: bool = False,
     ):
+        _validate_sampling_params(top_k, top_p, temperature, max_tokens)
+
         self.messages = messages
-        self.params = GenerationParams(
-            top_k=top_k,
-            top_p=top_p,
-            temperature=temperature,
-            max_tokens=max_len,
-        )
+        self.top_k = top_k
+        self.top_p = top_p
+        self.temperature = temperature
+        self.max_tokens = max_tokens
         self.stream = stream
-
-    @property
-    def top_k(self) -> int:
-        return self.params.top_k
-
-    @property
-    def top_p(self) -> float:
-        return self.params.top_p
-
-    @property
-    def temperature(self) -> float:
-        return self.params.temperature
-
-    @property
-    def max_len(self) -> int:
-        return self.params.max_tokens
 
 
 class InferenceEngine:
@@ -150,37 +126,36 @@ class InferenceEngine:
         self,
         prompt: Union[str, List[str]],
         stream: bool = False,
-        max_tokens: int = 1024,
+        max_tokens: Optional[int] = None,
         temperature: float = 1.0,
         top_p: float = 1.0,
         top_k: int = 50,
     ) -> Union[Generator, str, List[str]]:
-        params = GenerationParams(
-            top_k=top_k, top_p=top_p, temperature=temperature, max_tokens=max_tokens
-        )
-
+        _validate_sampling_params(top_k, top_p, temperature, max_tokens)
         is_batch = isinstance(prompt, list)
         prompts = prompt if is_batch else [prompt]
 
         if stream:
-            return self._generate_streaming(prompts, is_batch, params)
+            return self._generate_streaming(
+                prompts, is_batch, max_tokens, temperature, top_p, top_k
+            )
         else:
-            return self._generate_non_streaming(prompts, is_batch, params)
+            return self._generate_non_streaming(
+                prompts, is_batch, max_tokens, temperature, top_p, top_k
+            )
 
     def generate_async(
         self,
         prompt: str,
-        params: Optional[GenerationParams] = None,
-        max_tokens: int = 1024,
+        max_tokens: Optional[int] = None,
         temperature: float = 1.0,
         top_p: float = 1.0,
         top_k: int = 50,
     ) -> AsyncGenerator[str, None]:
-        if params is None:
-            params = GenerationParams(
-                top_k=top_k, top_p=top_p, temperature=temperature, max_tokens=max_tokens
-            )
-        sync_gen = self._generate_streaming([prompt], False, params)
+        _validate_sampling_params(top_k, top_p, temperature, max_tokens)
+        sync_gen = self._generate_streaming(
+            [prompt], False, max_tokens, temperature, top_p, top_k
+        )
 
         async def _agen():
             loop = asyncio.get_event_loop()
@@ -206,14 +181,19 @@ class InferenceEngine:
         return self.generate(
             prompt=prompt,
             stream=request.stream,
-            max_tokens=request.params.max_tokens,
-            temperature=request.params.temperature,
-            top_p=request.params.top_p,
-            top_k=request.params.top_k,
+            max_tokens=request.max_tokens,
+            temperature=request.temperature,
+            top_p=request.top_p,
+            top_k=request.top_k,
         )
 
     def _submit_tasks(
-        self, prompts: List[str], params: GenerationParams
+        self,
+        prompts: List[str],
+        max_tokens: Optional[int],
+        temperature: float,
+        top_p: float,
+        top_k: int,
     ) -> Tuple[GenerateResult, List[str]]:
         n = len(prompts)
         result = GenerateResult(count=n)
@@ -222,10 +202,10 @@ class InferenceEngine:
             cb = self._make_callback(result, i)
             task_id = self.scheduler.add_task(
                 prompt=p,
-                max_tokens=params.max_tokens,
-                temperature=params.temperature,
-                top_p=params.top_p,
-                top_k=params.top_k,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
                 stream_callback=cb,
             )
             task_ids.append(task_id)
@@ -239,9 +219,17 @@ class InferenceEngine:
         return cb
 
     def _generate_streaming(
-        self, prompts: List[str], is_batch: bool, params: GenerationParams
+        self,
+        prompts: List[str],
+        is_batch: bool,
+        max_tokens: Optional[int],
+        temperature: float,
+        top_p: float,
+        top_k: int,
     ) -> Generator:
-        result, task_ids = self._submit_tasks(prompts, params)
+        result, task_ids = self._submit_tasks(
+            prompts, max_tokens, temperature, top_p, top_k
+        )
         n = len(prompts)
         remaining = n
         finished = [False] * n
@@ -267,9 +255,17 @@ class InferenceEngine:
         return gen()
 
     def _generate_non_streaming(
-        self, prompts: List[str], is_batch: bool, params: GenerationParams
+        self,
+        prompts: List[str],
+        is_batch: bool,
+        max_tokens: Optional[int],
+        temperature: float,
+        top_p: float,
+        top_k: int,
     ) -> Union[str, List[str]]:
-        result, task_ids = self._submit_tasks(prompts, params)
+        result, task_ids = self._submit_tasks(
+            prompts, max_tokens, temperature, top_p, top_k
+        )
 
         result.wait_completion()
 

@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Union
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from astrai.inference.engine import GenerationParams, InferenceEngine
+from astrai.inference.engine import InferenceEngine
 
 
 def _sse_event(data: Dict[str, Any], event: Optional[str] = None) -> str:
@@ -143,13 +143,13 @@ class ProtocolHandler(ABC):
             prompt_tokens=self._count_prompt_tokens(),
         )
 
-        params = GenerationParams(
+        agen = self.engine.generate_async(
+            prompt=self.build_prompt(),
             max_tokens=self.request.max_tokens,
             temperature=self.request.temperature,
             top_p=self.request.top_p,
             top_k=self.request.top_k,
         )
-        agen = self.engine.generate_async(prompt=self.build_prompt(), params=params)
 
         if self.request.stream:
             return self._handle_stream(agen, ctx)
