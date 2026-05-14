@@ -171,7 +171,8 @@ class TaskManager:
 
     def activate(self, task: Task) -> None:
         task.status = TaskStatus.RUNNING
-        self.active_tasks.append(task)
+        with self._lock:
+            self.active_tasks.append(task)
 
     def return_to_waiting(self, tasks: List[Task]) -> None:
         with self._lock:

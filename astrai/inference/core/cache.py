@@ -235,7 +235,16 @@ class Storage:
             write_end = min(page_start + page_size, start_pos + seq_len)
             offset = write_start - page_start
             chunk = write_end - write_start
-            if (phys_pages < 0).any():
+            valid = phys_pages >= 0
+            if not valid.all():
+                if valid.any():
+                    valid_pages = phys_pages[valid]
+                    self.k_cache[layer_id, valid_pages, offset : offset + chunk] = k[
+                        valid, written : written + chunk
+                    ]
+                    self.v_cache[layer_id, valid_pages, offset : offset + chunk] = v[
+                        valid, written : written + chunk
+                    ]
                 written += chunk
                 continue
             self.k_cache[layer_id, phys_pages, offset : offset + chunk] = k[
@@ -254,6 +263,16 @@ class Storage:
         v = self.v_cache[layer_id, safe]
         k = k.flatten(1, 2)
         v = v.flatten(1, 2)
+        if (page_table < 0).any():
+            invalid = (
+                (page_table < 0)
+                .unsqueeze(-1)
+                .expand(-1, -1, self.page_size)
+                .flatten(1, 2)
+            )
+            invalid = invalid[:, :, None, None].expand_as(k)
+            k = k.masked_fill(invalid, 0.0)
+            v = v.masked_fill(invalid, 0.0)
         k = k[:, :total_len]
         v = v[:, :total_len]
         return k, v

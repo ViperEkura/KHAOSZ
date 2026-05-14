@@ -38,13 +38,11 @@ class Executor:
         tasks = sorted(tasks, key=lambda t: t.task_id)
         batch_sz = len(tasks)
 
-        seq_len = prompt_len - start_pos
-        input_ids = torch.empty(batch_sz, seq_len, dtype=torch.long, device=self.device)
-
-        for i, t in enumerate(tasks):
-            input_ids[i] = torch.tensor(
-                t.prompt_ids[start_pos:prompt_len], device=self.device
-            )
+        input_ids = torch.tensor(
+            [t.prompt_ids[start_pos:prompt_len] for t in tasks],
+            dtype=torch.long,
+            device=self.device,
+        )
 
         task_ids = [t.task_id for t in tasks]
         page_tables = self.page_cache.make_table_tensor(task_ids, self.device)

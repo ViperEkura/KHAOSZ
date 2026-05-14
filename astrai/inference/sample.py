@@ -64,16 +64,26 @@ class TopKStrategy(BaseSamplingStrategy):
     def apply(self, logits, filter_value=-float("inf")):
         tk = self.top_k
         if isinstance(tk, Tensor):
+            tk = tk.to(logits.device, non_blocking=True).long().clamp(min=0)
             max_k = int(tk.max().item())
             if max_k <= 0:
                 return logits
-            k = min(max_k, logits.size(-1))
-        elif tk > 0:
-            k = min(tk, logits.size(-1))
-        else:
+            max_k = min(max_k, logits.size(-1))
+            values, _ = torch.topk(logits, max_k, dim=-1)
+            per_row_k = tk.clamp(max=max_k)
+            thresholds = torch.full_like(logits[..., -1:], -float("inf"))
+            positive = per_row_k > 0
+            if positive.any():
+                row_idx = torch.arange(logits.size(0), device=logits.device)[positive]
+                thresholds[positive] = values[
+                    row_idx, per_row_k[positive] - 1
+                ].unsqueeze(-1)
+            logits[logits < thresholds] = filter_value
             return logits
-        thresholds = torch.topk(logits, k, dim=-1)[0][..., -1:]
-        logits[logits < thresholds] = filter_value
+        if tk > 0:
+            k = min(tk, logits.size(-1))
+            thresholds = torch.topk(logits, k, dim=-1)[0][..., -1:]
+            logits[logits < thresholds] = filter_value
         return logits
 
 

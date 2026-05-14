@@ -59,9 +59,15 @@ class GenerateResult:
     def wait(self, timeout: Optional[float] = None) -> bool:
         return self._event.wait(timeout=timeout)
 
-    def wait_completion(self) -> None:
+    def wait_completion(self, timeout: float = 300.0) -> None:
         with self._cond:
-            self._cond.wait_for(lambda: self._completed >= self._total)
+            if not self._cond.wait_for(
+                lambda: self._completed >= self._total, timeout=timeout
+            ):
+                raise TimeoutError(
+                    f"Generation timeout after {timeout}s "
+                    f"({self._completed}/{self._total} completed)"
+                )
 
     def get_results(self) -> List[str]:
         with self._cond:
@@ -267,7 +273,12 @@ class InferenceEngine:
             prompts, max_tokens, temperature, top_p, top_k
         )
 
-        result.wait_completion()
+        try:
+            result.wait_completion()
+        except TimeoutError:
+            for tid in task_ids:
+                self.scheduler.remove_task(tid)
+            raise
 
         for tid in task_ids:
             self.scheduler.remove_task(tid)

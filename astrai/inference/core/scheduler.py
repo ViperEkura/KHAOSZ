@@ -126,9 +126,7 @@ class InferenceScheduler:
 
                 pos_groups: Dict[int, List[Task]] = {}
                 for t in self._task_mgr.get_active_tasks():
-                    chunk = t.next_pos // self._page_cache.page_size
-                    key = chunk if chunk <= 1 else 1 << (chunk.bit_length() - 1)
-                    pos_groups.setdefault(key, []).append(t)
+                    pos_groups.setdefault(t.next_pos, []).append(t)
 
                 if pos_groups:
                     best_key = max(pos_groups, key=lambda k: len(pos_groups[k]))

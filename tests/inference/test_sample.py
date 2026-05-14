@@ -48,12 +48,12 @@ def test_top_k_skip_when_zero():
 
 
 def test_top_k_batch_tensor():
-    """When top_k is a batch tensor, max element governs k for all rows."""
+    """Each row respects its own top_k."""
     logits = torch.tensor([[0.1, 0.5, 0.3], [0.9, 0.2, 0.1]])
     s = TopKStrategy(top_k=torch.tensor([2, 1]))
     result = s.apply(logits.clone(), filter_value=-1e9)
     assert (result[0] > -1e9).sum() == 2
-    assert (result[1] > -1e9).sum() == 2
+    assert (result[1] > -1e9).sum() == 1
 
 
 def test_top_p_nucleus_filtering():
