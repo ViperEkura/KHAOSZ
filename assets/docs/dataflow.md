@@ -12,7 +12,7 @@ AstrAI adopts a modular design with the following main components:
 - **Config Module** (`astrai/config/`): ModelConfig, TrainConfig
 - **Factory Module** (`astrai/factory/`): Registry, BaseFactory for component registration
 - **Parallel Module** (`astrai/parallel/`): Distributed training support
-- **Serialization** (`astrai/serialization.py`): HDF5 data loading, checkpoint management
+- **Serialization** (`astrai/serialization.py`): Checkpoint management with safetensors
 
 ## Data Flow Diagram
 
@@ -59,7 +59,7 @@ flowchart LR
 
 ## Detailed Module Descriptions
 
-### 1. Serialization (`astrai/serialization.py`)
+### 1. Data Serialization (`astrai/dataset/storage.py` & `astrai/serialization.py`)
 
 - **`save_h5`**: Saves tensors by groups as HDF5 files (`.h5`), each key maps to a list of tensors
 - **`load_h5`**: Loads `.h5` files, returns `Dict[str, List[Tensor]]`, supports shared memory
@@ -234,4 +234,4 @@ Background thread runs continuously:
 - **Inference Loading**: `AutoModel.from_pretrained()` loads from the same safetensors format.
 - **Dataset Serialization**: HDF5 with shared memory support for large-scale pre-training data.
 
-> Document Update Time: 2026-05-09
+> Document Update Time: 2026-05-14

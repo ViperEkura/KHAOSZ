@@ -155,4 +155,4 @@ result = engine.generate(
 | `stream=True` | Streaming output, yields token by token |
 | `stream=False` | Non-streaming output, returns complete result |
 
-> Document Update Time: 2026-04-09
+> Document Update Time: 2026-05-14

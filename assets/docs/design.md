@@ -138,7 +138,7 @@ classDiagram
             +ModuleList layers
             +RMSNorm norm
             +Linear lm_head
-            +forward(input_ids, input_mask, paged_cache, start_pos) Dict
+            +forward(input_ids, input_mask, paged_cache, position_ids) Tensor
             +load_state_dict(state_dict)
             +state_dict()
         }
@@ -148,7 +148,7 @@ classDiagram
             +RMSNorm input_norm
             +MLP mlp
             +RMSNorm post_attention_norm
-            +forward(x, rotary_emb, attention_mask, paged_cache, start_pos) Tensor
+            +forward(x, rotary_emb, attention_mask, position_ids, paged_cache) Tensor
         }
 
         class GQA {
@@ -157,7 +157,7 @@ classDiagram
             +int head_dim
             +Linear q_proj, k_proj, v_proj, o_proj
             +RMSNorm q_norm, k_norm
-            +forward(x, rotary_emb, mask, paged_cache, start_pos) Tensor
+            +forward(x, rotary_emb, attn_mask, position_ids, paged_cache) Tensor
         }
 
         class MLA {
@@ -170,7 +170,7 @@ classDiagram
             +Linear q_proj, kv_a_proj, kv_b_proj
             +Linear o_proj
             +RMSNorm kv_norm
-            +forward(x, rotary_emb, mask, paged_cache, start_pos) Tensor
+            +forward(x, rotary_emb, attn_mask, position_ids, paged_cache) Tensor
         }
 
         class MLP {
@@ -194,7 +194,7 @@ classDiagram
             +int dim
             +int max_len
             +float base
-            +forward(x, start_pos) Tuple[Tensor, Tensor]
+            +forward(x, position_ids=None) Tuple[Tensor, Tensor]
         }
 
         class Embedding {
@@ -417,23 +417,20 @@ classDiagram
 
         class PagedCache {
             +int page_size
-            +int _free_mask
-            +List[int] _refs
             +Tensor k_cache
             +Tensor v_cache
-            +alloc() int
             +alloc_n(n) List[int]
             +free(idx)
             +bind(page_table, total_len) CacheView
-            +write(layer_id, page_table, start_pos, k, v)
-            +gather(layer_id, page_table) Tuple[Tensor, Tensor]
+            +write(layer_id, page_table, position_ids, k, v)
+            +gather(layer_id, page_table, total_len) Tuple[Tensor, Tensor]
         }
 
         class CacheView {
             +PagedCache _cache
             +Tensor _page_table
             +int _total_len
-            +write(layer_id, start_pos, k, v)
+            +write(layer_id, position_ids, k, v)
             +gather(layer_id) Tuple[Tensor, Tensor]
         }
 
@@ -505,7 +502,7 @@ classDiagram
             +sample(logits, filter_value) Tensor
         }
 
-        class _Result {
+        class GenerateResult {
             +List[str] tokens
             +List[str] results
             +List[bool] _done
@@ -513,6 +510,7 @@ classDiagram
             +get_results() List[str]
             +pop_all() List[str]
             +wait(timeout) bool
+            +wait_completion()
         }
 
         class ChatMessage {
@@ -590,7 +588,7 @@ classDiagram
     InferenceScheduler --> PagedCache : uses
     InferenceScheduler --> Transformer : uses
     InferenceEngine --> Transformer : uses
-    InferenceEngine --> _Result : uses
+    InferenceEngine --> GenerateResult : uses
     BaseSamplingStrategy <|-- TemperatureStrategy
     BaseSamplingStrategy <|-- TopKStrategy
     BaseSamplingStrategy <|-- TopPStrategy
@@ -630,8 +628,8 @@ classDiagram
 | Module | Components | Description |
 |--------|------------|-------------|
 | **astrai.config** | ModelConfig, TrainConfig | Configuration management |
-| **astrai.dataset** | BaseDataset, SEQDataset, SFTDataset, DPODataset, GRPODataset, BaseSegmentFetcher, MultiSegmentFetcher, ResumableDistributedSampler, DatasetFactory | Dataset loading and management |
-| **astrai.serialization** | Checkpoint, save_h5, load_h5 | Model serialization and checkpoint management |
+| **astrai.dataset** | BaseDataset, SEQDataset, SFTDataset, DPODataset, GRPODataset, BaseSegmentFetcher, MultiSegmentFetcher, ResumableDistributedSampler, DatasetFactory, save_h5, load_h5 | Dataset loading and management |
+| **astrai.serialization** | Checkpoint | Model serialization and checkpoint management |
 | **astrai.model** | AutoModel, Transformer, DecoderBlock, GQA, MLA, MLP, RMSNorm, Linear, RotaryEmbedding, Embedding | Neural network model |
 | **astrai.tokenize** | AutoTokenizer, ChatTemplate | Tokenizer and chat template |
 | **astrai.trainer** | Trainer, TrainContext, TrainContextBuilder, BaseStrategy, StrategyFactory, BaseScheduler, SchedulerFactory, TrainCallback, CallbackFactory | Training workflow management |
@@ -654,7 +652,7 @@ classDiagram
 | **Producer-Consumer** | `InferenceScheduler`, `Task`, `waiting_queue`, `active_tasks` | Continuous batching with dynamic task queue management |
 | **Event-Driven** | `threading.Event`, `_task_event` | Non-blocking wait mechanism for task scheduling using Python's `threading` module |
 | **AutoModel Registry** | `AutoModel`, `Transformer` | Model type registration and dynamic loading via decorator pattern |
-| **Generator Pattern** | `_Result`, `GenerationRequest` | Event-based result notification for streaming/non-streaming generation |
+| **Generator Pattern** | `GenerateResult`, `GenerationRequest` | Event-based result notification for streaming/non-streaming generation |
 
 ### Core Relationships
 
@@ -716,4 +714,4 @@ The final loss is the sum of both: $L = L_{\text{policy}} + L_{KL}$
 
 Through the above three-stage progressive training, the model completes its evolution from a general language foundation to a specialized, highly-aligned dialogue intelligence.
 
-> Document Update Time: 2026-04-09
+> Document Update Time: 2026-05-14
