@@ -98,7 +98,7 @@ python scripts/tools/train.py \
 | `temperature` | Sampling temperature (higher = more random) | 1.0 |
 | `top_p` | Nucleus sampling threshold | 1.0 |
 | `top_k` | Top-k sampling count | 50 |
-| `max_len` | Maximum generation length | 1024 |
+| `max_tokens` | Maximum generation length | None (unlimited) |
 | `stream` | Whether to stream output | False |
 
 ### Usage Example
@@ -130,7 +130,7 @@ request = GenerationRequest(
     temperature=0.8,
     top_p=0.95,
     top_k=50,
-    max_len=1024,
+    max_tokens=None,
 )
 
 # Generate (streaming)

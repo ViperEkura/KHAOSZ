@@ -36,10 +36,10 @@ If you encounter a bug or have a feature request, please open an issue on GitHub
 
 AstrAI uses [Ruff](https://docs.astral.sh/ruff/) for code formatting and linting. Please ensure your code is formatted before submitting.
 
-- Run Ruff to format and lint:
+- Run Ruff to format and lint (requires conda environment `nlp`):
   ```bash
-  ruff format .
-  ruff check --fix .
+  conda run -n nlp ruff format .
+  conda run -n nlp ruff check --fix .
   ```
 - The project uses **double quotes** for strings and **4‑space indentation** (as configured in `pyproject.toml`).
 
@@ -49,7 +49,7 @@ If you add or modify functionality, please include appropriate tests.
 
 - Run the test suite with:
   ```bash
-  pytest
+  conda run -n nlp python -u -m pytest
   ```
 - Ensure all tests pass before submitting your PR.
 

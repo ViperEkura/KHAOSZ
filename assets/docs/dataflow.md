@@ -156,9 +156,9 @@ Background thread runs continuously:
 4. Decode  → Pick largest same-position group, run single-token forward
 ```
 
-- **`Task`**: Tracks prompt_ids, output_ids, page_table, status (PENDING/RUNNING/FINISHED/ABORTED)
-- **`PagedCache`**: Bitmask-based page allocator with page-table-indirected read/write
-- **`CacheView`**: Batch view bundling cache + page table for attention layers
+- **`Task`**: Tracks prompt_ids, output_ids, status (PENDING/RUNNING/FINISHED/ABORTED)
+- **`KVCache`**: Facade over `Allocator` + `PrefixCache` + `PagePool` + `Storage` for paged KV cache
+- **`KvcacheView`**: Batch view bundling cache + page table for attention layers
 - **`sample()`**: Temperature → top-k → top-p → multinomial
 
 #### 5.3 Server (`server.py`)
@@ -216,13 +216,13 @@ Background thread runs continuously:
 
 3. **Continuous Batching Loop**
    - **Cleanup**: Finished tasks → `stream_callback(STOP)`, free KV pages
-   - **Refill**: Pop from waiting queue, `PagedCache.alloc_n()` for prompt pages
+   - **Refill**: Pop from waiting queue, `PagePool.task_alloc()` for prompt pages
    - **Prefill**: Group by prompt length, run full forward with `start_pos=0`
    - **Decode**: Pick position group with most tasks, single-token forward:
      - Model forward → `logits` → `sample()` → next token ID
      - Append to `output_ids`, update `output_tokens`
-     - `_maybe_alloc_page()` grows page table as needed
-     - `stream_callback(token)` for streaming clients
+      - `PagePool.task_alloc()` allocates pages as needed
+      - `stream_callback(token)` for streaming clients
 
 4. **Output**
    - `tokenizer.decode(output_ids)` → text
