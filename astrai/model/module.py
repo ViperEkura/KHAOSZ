@@ -165,7 +165,6 @@ class GQA(nn.Module):
         x: Tensor,
         rotary_emb: Tuple[Tensor, Tensor],
         attn_mask: Tensor = None,
-        position_ids: Optional[Tensor] = None,
         paged_cache: Optional[CacheView] = None,
     ) -> Tensor:
         is_causal = attn_mask is None
@@ -180,7 +179,7 @@ class GQA(nn.Module):
             q, k = self.q_norm(q), self.k_norm(k)
 
         if paged_cache is not None:
-            paged_cache.write(self.layer_id, position_ids, k, v)
+            paged_cache.write(self.layer_id, k, v)
             k, v = paged_cache.gather(self.layer_id)
 
         k, v = repeat_kv(k, self.n_rep), repeat_kv(v, self.n_rep)
@@ -246,7 +245,6 @@ class MLA(nn.Module):
         x: Tensor,
         rotary_emb: Tuple[Tensor, Tensor],
         attn_mask: Tensor = None,
-        position_ids: Optional[Tensor] = None,
         paged_cache: Optional[CacheView] = None,
     ) -> Tensor:
         bsz, seq_len, _ = x.size()
@@ -276,7 +274,7 @@ class MLA(nn.Module):
         k = torch.cat([k_nope, k_rope], dim=-1)
 
         if paged_cache is not None:
-            paged_cache.write(self.layer_id, position_ids, k, v)
+            paged_cache.write(self.layer_id, k, v)
             k, v = paged_cache.gather(self.layer_id)
 
         q = q.permute(0, 2, 1, 3)
@@ -326,7 +324,6 @@ class DecoderBlock(nn.Module):
         x: Tensor,
         rotary_emb: Tuple[Tensor, Tensor],
         attention_mask: Optional[Tensor] = None,
-        position_ids: Optional[Tensor] = None,
         paged_cache: Optional[CacheView] = None,
     ) -> Tensor:
         attn_output = self.attention(
@@ -334,11 +331,10 @@ class DecoderBlock(nn.Module):
             rotary_emb,
             attention_mask,
             paged_cache,
-            position_ids,
         )
         x = attn_output + x
-
         x = self.mlp(self.post_attention_norm(x)) + x
+
         return x
 
 

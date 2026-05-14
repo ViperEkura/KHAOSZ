@@ -132,7 +132,7 @@ class Transformer(AutoModel):
         attn_mask = process_attention_mask(x, position_ids, input_mask, is_causal=True)
 
         for layer in self.layers:
-            x = layer(x, rotary_emb, attn_mask, paged_cache, position_ids)
+            x = layer(x, rotary_emb, attn_mask, paged_cache)
 
         hidden_states = self.norm(x)
         logits = self.lm_head(hidden_states)

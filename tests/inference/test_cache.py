@@ -244,7 +244,7 @@ def test_paged_cache_write_gather_single_page():
     k = torch.randn(1, 2, 2, 8)
     v = torch.randn(1, 2, 2, 8)
 
-    cache.write(0, page_table, torch.zeros(1, 2, dtype=torch.long), k, v)
+    cache.write(0, page_table, 0, k, v)
     gk, gv = cache.gather(0, page_table, 2)
     assert torch.allclose(gk, k)
 
@@ -263,7 +263,7 @@ def test_paged_cache_write_cross_page():
     k = torch.randn(1, 8, 2, 8)
     v = torch.randn(1, 8, 2, 8)
 
-    cache.write(0, page_table, torch.zeros(1, 8, dtype=torch.long), k, v)
+    cache.write(0, page_table, 0, k, v)
     gk, gv = cache.gather(0, page_table, 8)
     assert torch.allclose(gk, k)
 
@@ -281,7 +281,7 @@ def test_paged_cache_gather_truncates_to_total_len():
     page_table = torch.tensor([[0, 1]], dtype=torch.long)
     k = torch.randn(1, 6, 2, 8)
     v = torch.randn(1, 6, 2, 8)
-    cache.write(0, page_table, torch.zeros(1, 6, dtype=torch.long), k, v)
+    cache.write(0, page_table, 0, k, v)
 
     gk, gv = cache.gather(0, page_table, 5)
     assert gk.shape == (1, 5, 2, 8)
