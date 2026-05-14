@@ -79,11 +79,9 @@ class Executor:
                 paged_cache=self.page_cache.bind(page_tables, total_len=prompt_len),
             )
 
-    def execute_decode(self, tasks: List[Task], start_pos: int) -> List[int]:
+    def execute_decode(self, tasks: List[Task]) -> List[int]:
         if not tasks:
             return []
-
-        batch_sz = len(tasks)
 
         input_ids = torch.tensor(
             [t.output_ids[-1] if t.output_ids else t.prompt_ids[-1] for t in tasks],
@@ -91,9 +89,13 @@ class Executor:
             device=self.device,
         )
 
+        position_ids = torch.tensor(
+            [t.next_pos for t in tasks], dtype=torch.long, device=self.device
+        )
+        total_len = position_ids.max().item() + 1
+
         task_ids = [t.task_id for t in tasks]
         page_tables = self.page_cache.make_table_tensor(task_ids, self.device)
-        total_len = start_pos + 1
 
         temperatures = torch.tensor([t.temperature for t in tasks], device=self.device)
         top_ks = torch.tensor([t.top_k for t in tasks], device=self.device)
@@ -103,9 +105,7 @@ class Executor:
             outputs = self.model(
                 input_ids.unsqueeze(1),
                 paged_cache=self.page_cache.bind(page_tables, total_len=total_len),
-                position_ids=torch.full(
-                    (batch_sz, 1), start_pos, dtype=torch.long, device=self.device
-                ),
+                position_ids=position_ids.unsqueeze(1),
             )
             logits = outputs["logits"][:, -1, :]
 

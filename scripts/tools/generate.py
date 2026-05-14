@@ -18,6 +18,7 @@ def processor(
     question_key: str,
     response_key: str,
     max_tokens: int,
+    batch_size: int,
 ):
     # Load model and tokenizer
     model = AutoModel.from_pretrained(param_path)
@@ -25,7 +26,7 @@ def processor(
     model.to(device="cuda", dtype=torch.bfloat16)
 
     # Create inference engine
-    engine = InferenceEngine(model=model, tokenizer=tokenizer)
+    engine = InferenceEngine(model=model, tokenizer=tokenizer, max_batch_size=batch_size)
 
     with open(input_json_file, "r", encoding="utf-8") as f:
         input_data = [json.loads(line) for line in f]
