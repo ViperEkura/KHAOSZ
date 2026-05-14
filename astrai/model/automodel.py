@@ -4,13 +4,13 @@ AutoModel base class for model loading and saving.
 
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Self, Type, Union
+from typing import Self, Union
 
 import safetensors.torch as st
 import torch.nn as nn
 
 from astrai.config import ModelConfig
-from astrai.factory import Registry
+from astrai.factory import BaseFactory
 
 
 @contextmanager
@@ -39,45 +39,15 @@ def _disable_random_init(enable: bool = True):
                 setattr(nn.init, name, orig_func)
 
 
-class AutoModel(nn.Module):
+class AutoModel(BaseFactory["AutoModel"], nn.Module):
     """
     Autoregressive language model base class.
-    Provides model loading/saving and generation capabilities.
+    Provides model loading/saving, registration, and generation.
     """
-
-    _registry = Registry()
 
     def __init__(self, config: ModelConfig):
         super().__init__()
         self.config = config
-
-    @classmethod
-    def register(cls, model_type: str):
-        """
-        Class method decorator to register model type.
-
-        Usage:
-            @AutoModel.register('transformer')
-            class Transformer(AutoModel):
-                ...
-        """
-
-        def decorator(sub_cls: Type["AutoModel"]) -> Type["AutoModel"]:
-            cls._registry.register(model_type.lower(), sub_cls)
-            return sub_cls
-
-        return decorator
-
-    @classmethod
-    def get_model_class(cls, model_type: str) -> Type["AutoModel"]:
-        """Get model class by model_type string."""
-        model_type = model_type.lower()
-        if not cls._registry.contains(model_type):
-            available = cls._registry.list_names()
-            raise ValueError(
-                f"Unknown model_type: {model_type}. Available: {available}"
-            )
-        return cls._registry.get(model_type)
 
     @classmethod
     def from_pretrained(
@@ -98,7 +68,7 @@ class AutoModel(nn.Module):
             raise FileNotFoundError(f"Config file not found: {config_path}")
 
         model_type = config.model_type or "transformer"
-        actual_cls = cls.get_model_class(model_type)
+        actual_cls = AutoModel.get_component_class(model_type)
 
         with _disable_random_init(enable=disable_random_init):
             model = actual_cls(config)

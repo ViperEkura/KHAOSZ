@@ -156,6 +156,26 @@ class BaseFactory(ABC, Generic[T]):
         pass
 
     @classmethod
+    def get_component_class(cls, name: str) -> Type[T]:
+        """Get the registered component class by name without instantiating it.
+
+        Args:
+            name: Registered name of the component
+
+        Returns:
+            The component class itself
+
+        Raises:
+            ValueError: If the component name is not registered
+        """
+        if not cls._registry.contains(name):
+            raise ValueError(
+                f"Unknown component: '{name}'. "
+                f"Supported types: {sorted(cls._registry.list_names())}"
+            )
+        return cls._registry.get(name)
+
+    @classmethod
     def list_registered(cls) -> list:
         """List all registered component names.
 

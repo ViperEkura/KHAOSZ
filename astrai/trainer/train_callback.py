@@ -69,12 +69,6 @@ class CallbackFactory(BaseFactory[TrainCallback]):
         callback = CallbackFactory.create("my_callback", **kwargs)
     """
 
-    @classmethod
-    def _validate_component(cls, callback_cls: type) -> None:
-        """Validate that the callback class inherits from TrainCallback."""
-        if not issubclass(callback_cls, TrainCallback):
-            raise TypeError(f"{callback_cls.__name__} must inherit from TrainCallback")
-
 
 @CallbackFactory.register("gradient_clipping")
 class GradientClippingCallback(TrainCallback):

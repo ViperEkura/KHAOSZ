@@ -14,24 +14,20 @@ from typing import Any, Dict, List, Optional, Union
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from astrai.inference.engine import InferenceEngine
+from astrai.inference.engine import GenerationParams, InferenceEngine
 
 
-class SSEBuilder:
-    """Fluent builder for SSE (Server-Sent Events) formatted chunks."""
+def _sse_event(data: Dict[str, Any], event: Optional[str] = None) -> str:
+    lines: List[str] = []
+    if event:
+        lines.append(f"event: {event}")
+    lines.append(f"data: {json.dumps(data, ensure_ascii=False)}")
+    lines.append("")
+    return "\n".join(lines)
 
-    @staticmethod
-    def event(data: Dict[str, Any], event: Optional[str] = None) -> str:
-        lines: List[str] = []
-        if event:
-            lines.append(f"event: {event}")
-        lines.append(f"data: {json.dumps(data, ensure_ascii=False)}")
-        lines.append("")
-        return "\n".join(lines)
 
-    @staticmethod
-    def done() -> str:
-        return "data: [DONE]\n\n"
+def _sse_done() -> str:
+    return "data: [DONE]\n\n"
 
 
 @dataclass
@@ -44,6 +40,8 @@ class StreamContext:
     prompt_tokens: int
     completion_tokens: int = 0
     accumulated: str = ""
+    stop_matched: Optional[str] = None
+    last_yield_trimmed: str = ""
 
 
 class StopChecker:
@@ -145,13 +143,13 @@ class ProtocolHandler(ABC):
             prompt_tokens=self._count_prompt_tokens(),
         )
 
-        agen = self.engine.generate_async(
-            prompt=self.build_prompt(),
+        params = GenerationParams(
             max_tokens=self.request.max_tokens,
             temperature=self.request.temperature,
             top_p=self.request.top_p,
             top_k=self.request.top_k,
         )
+        agen = self.engine.generate_async(prompt=self.build_prompt(), params=params)
 
         if self.request.stream:
             return self._handle_stream(agen, ctx)
@@ -180,7 +178,7 @@ class ProtocolHandler(ABC):
 
             for event in self.format_stream_end(ctx):
                 yield event
-            yield SSEBuilder.done()
+            yield _sse_done()
 
         return StreamingResponse(
             event_stream(),
@@ -230,7 +228,7 @@ class OpenAIHandler(ProtocolHandler):
 
     def format_stream_start(self, ctx: StreamContext) -> List[str]:
         return [
-            SSEBuilder.event(
+            _sse_event(
                 {
                     "id": ctx.resp_id,
                     "object": "chat.completion.chunk",
@@ -248,7 +246,7 @@ class OpenAIHandler(ProtocolHandler):
         ]
 
     def format_stream_token(self, ctx: StreamContext, token: str) -> str:
-        return SSEBuilder.event(
+        return _sse_event(
             {
                 "id": ctx.resp_id,
                 "object": "chat.completion.chunk",
@@ -262,7 +260,7 @@ class OpenAIHandler(ProtocolHandler):
 
     def format_stream_end(self, ctx: StreamContext) -> List[str]:
         return [
-            SSEBuilder.event(
+            _sse_event(
                 {
                     "id": ctx.resp_id,
                     "object": "chat.completion.chunk",
@@ -271,7 +269,7 @@ class OpenAIHandler(ProtocolHandler):
                     "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
                 }
             ),
-            SSEBuilder.event(
+            _sse_event(
                 {
                     "prompt_tokens": ctx.prompt_tokens,
                     "completion_tokens": ctx.completion_tokens,
@@ -334,16 +332,16 @@ class AnthropicHandler(ProtocolHandler):
         if not matched:
             return None
 
-        ctx._stop_matched = matched
+        ctx.stop_matched = matched
         trimmed = ctx.accumulated[: ctx.accumulated.rfind(matched)]
         unyielded = trimmed[len(self._yielded) :]
         if unyielded:
-            ctx._last_yield_trimmed = unyielded
+            ctx.last_yield_trimmed = unyielded
         return matched
 
     def format_stream_start(self, ctx: StreamContext) -> List[str]:
         return [
-            SSEBuilder.event(
+            _sse_event(
                 {
                     "type": "message_start",
                     "message": {
@@ -357,7 +355,7 @@ class AnthropicHandler(ProtocolHandler):
                 },
                 event="message_start",
             ),
-            SSEBuilder.event(
+            _sse_event(
                 {
                     "type": "content_block_start",
                     "index": 0,
@@ -369,7 +367,7 @@ class AnthropicHandler(ProtocolHandler):
 
     def format_stream_token(self, ctx: StreamContext, token: str) -> str:
         self._yielded += token
-        return SSEBuilder.event(
+        return _sse_event(
             {
                 "type": "content_block_delta",
                 "index": 0,
@@ -379,12 +377,12 @@ class AnthropicHandler(ProtocolHandler):
         )
 
     def format_stream_end(self, ctx: StreamContext) -> List[str]:
-        matched = getattr(ctx, "_stop_matched", None)
+        matched = ctx.stop_matched
         events: List[str] = []
-        last_yielded = getattr(ctx, "_last_yield_trimmed", "")
+        last_yielded = ctx.last_yield_trimmed
         if last_yielded:
             events.append(
-                SSEBuilder.event(
+                _sse_event(
                     {
                         "type": "content_block_delta",
                         "index": 0,
@@ -394,13 +392,13 @@ class AnthropicHandler(ProtocolHandler):
                 )
             )
         events.append(
-            SSEBuilder.event(
+            _sse_event(
                 {"type": "content_block_stop", "index": 0},
                 event="content_block_stop",
             )
         )
         events.append(
-            SSEBuilder.event(
+            _sse_event(
                 {
                     "type": "message_delta",
                     "delta": {
@@ -412,13 +410,13 @@ class AnthropicHandler(ProtocolHandler):
                 event="message_delta",
             )
         )
-        events.append(SSEBuilder.event({"type": "message_stop"}, event="message_stop"))
+        events.append(_sse_event({"type": "message_stop"}, event="message_stop"))
         return events
 
     def format_non_stream_response(
         self, ctx: StreamContext, content: str
     ) -> Dict[str, Any]:
-        matched = getattr(ctx, "_stop_matched", None)
+        matched = ctx.stop_matched
         if matched:
             content = content[: content.rfind(matched)]
         return {

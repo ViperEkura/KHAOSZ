@@ -60,25 +60,6 @@ class Executor:
                 paged_cache=self.page_cache.bind(page_tables, total_len=prompt_len),
             )
 
-        for i, t in enumerate(tasks):
-            input_ids[i] = torch.tensor(
-                t.prompt_ids[start_pos:prompt_len], device=self.device
-            )
-
-        task_ids = [t.task_id for t in tasks]
-        page_tables = self.page_cache.make_table_tensor(task_ids, self.device)
-
-        with torch.inference_mode():
-            self.model(
-                input_ids,
-                position_ids=torch.arange(
-                    start_pos, prompt_len, dtype=torch.long, device=self.device
-                )
-                .unsqueeze(0)
-                .expand(batch_sz, -1),
-                paged_cache=self.page_cache.bind(page_tables, total_len=prompt_len),
-            )
-
     def execute_decode(self, tasks: List[Task]) -> List[int]:
         if not tasks:
             return []

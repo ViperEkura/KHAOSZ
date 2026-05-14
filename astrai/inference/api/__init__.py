@@ -4,7 +4,6 @@ from astrai.inference.api.protocol import (
     AnthropicHandler,
     OpenAIHandler,
     ProtocolHandler,
-    SSEBuilder,
     StopChecker,
     StreamContext,
 )
@@ -21,7 +20,6 @@ __all__ = [
     "AnthropicHandler",
     "OpenAIHandler",
     "ProtocolHandler",
-    "SSEBuilder",
     "StopChecker",
     "StreamContext",
     "AnthropicMessage",

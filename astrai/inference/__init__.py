@@ -15,7 +15,6 @@ from astrai.inference.api import (
     MessagesRequest,
     OpenAIHandler,
     ProtocolHandler,
-    SSEBuilder,
     StopChecker,
     StreamContext,
     app,
@@ -77,7 +76,6 @@ __all__ = [
     "SamplingPipeline",
     # Protocol
     "ProtocolHandler",
-    "SSEBuilder",
     "StopChecker",
     "StreamContext",
     "AnthropicHandler",
