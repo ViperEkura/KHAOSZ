@@ -40,9 +40,6 @@ class Executor:
 
         seq_len = prompt_len - start_pos
         input_ids = torch.empty(batch_sz, seq_len, dtype=torch.long, device=self.device)
-        input_mask = torch.ones(
-            batch_sz, prompt_len, dtype=torch.bool, device=self.device
-        )
 
         for i, t in enumerate(tasks):
             input_ids[i] = torch.tensor(
@@ -55,8 +52,30 @@ class Executor:
         with torch.inference_mode():
             self.model(
                 input_ids,
-                input_mask=input_mask,
-                start_pos=start_pos,
+                position_ids=torch.arange(
+                    start_pos, prompt_len, dtype=torch.long, device=self.device
+                )
+                .unsqueeze(0)
+                .expand(batch_sz, -1),
+                paged_cache=self.page_cache.bind(page_tables, total_len=prompt_len),
+            )
+
+        for i, t in enumerate(tasks):
+            input_ids[i] = torch.tensor(
+                t.prompt_ids[start_pos:prompt_len], device=self.device
+            )
+
+        task_ids = [t.task_id for t in tasks]
+        page_tables = self.page_cache.make_table_tensor(task_ids, self.device)
+
+        with torch.inference_mode():
+            self.model(
+                input_ids,
+                position_ids=torch.arange(
+                    start_pos, prompt_len, dtype=torch.long, device=self.device
+                )
+                .unsqueeze(0)
+                .expand(batch_sz, -1),
                 paged_cache=self.page_cache.bind(page_tables, total_len=prompt_len),
             )
 
@@ -72,8 +91,6 @@ class Executor:
             device=self.device,
         )
 
-        active_mask = torch.ones((batch_sz, 1), dtype=torch.bool, device=self.device)
-
         task_ids = [t.task_id for t in tasks]
         page_tables = self.page_cache.make_table_tensor(task_ids, self.device)
         total_len = start_pos + 1
@@ -85,9 +102,10 @@ class Executor:
         with torch.inference_mode():
             outputs = self.model(
                 input_ids.unsqueeze(1),
-                input_mask=active_mask,
                 paged_cache=self.page_cache.bind(page_tables, total_len=total_len),
-                start_pos=start_pos,
+                position_ids=torch.full(
+                    (batch_sz, 1), start_pos, dtype=torch.long, device=self.device
+                ),
             )
             logits = outputs["logits"][:, -1, :]
 

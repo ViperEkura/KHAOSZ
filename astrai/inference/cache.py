@@ -241,13 +241,14 @@ class PagedCache:
         self,
         layer_id: int,
         page_table: Tensor,
-        start_pos: int,
+        position_ids: Tensor,
         k: Tensor,
         v: Tensor,
     ) -> None:
         seq_len = k.size(1)
         if seq_len == 0:
             return
+        start_pos = position_ids[0, 0].item()
         page_size = self.page_size
         written = 0
         first_page = start_pos // page_size
@@ -288,8 +289,8 @@ class CacheView:
         self._page_table = page_table
         self._total_len = total_len
 
-    def write(self, layer_id: int, start_pos: int, k: Tensor, v: Tensor) -> None:
-        self._cache.write(layer_id, self._page_table, start_pos, k, v)
+    def write(self, layer_id: int, position_ids: Tensor, k: Tensor, v: Tensor) -> None:
+        self._cache.write(layer_id, self._page_table, position_ids, k, v)
 
     def gather(self, layer_id: int) -> Tuple[Tensor, Tensor]:
         return self._cache.gather(layer_id, self._page_table, self._total_len)

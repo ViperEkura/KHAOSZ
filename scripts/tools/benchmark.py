@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Any, Dict
 
 import torch
-from torch import Tensor
 
 from astrai.config import ModelConfig
 from astrai.inference.cache import PagedCache
@@ -60,9 +59,6 @@ class GenerationBenchmark:
             dtype=torch.long,
         )
         return prompt_ids, gen_ids
-
-    def _make_mask(self, batch_size: int, seq_len: int) -> Tensor:
-        return torch.ones(batch_size, seq_len, dtype=torch.bool, device=self.device)
 
     @torch.inference_mode()
     def run_prefill_benchmark(
@@ -145,8 +141,11 @@ class GenerationBenchmark:
             _ = self.model(
                 prompt_ids,
                 paged_cache=cv,
-                start_pos=0,
-                input_mask=self._make_mask(batch_size, prompt_length),
+                position_ids=torch.arange(
+                    prompt_length, dtype=torch.long, device=self.device
+                )
+                .unsqueeze(0)
+                .expand(batch_size, -1),
             )
 
             torch.cuda.synchronize()
@@ -162,8 +161,12 @@ class GenerationBenchmark:
                 _ = self.model(
                     input_token,
                     paged_cache=cv,
-                    start_pos=current_pos,
-                    input_mask=self._make_mask(batch_size, 1),
+                    position_ids=torch.full(
+                        (batch_size, 1),
+                        current_pos,
+                        dtype=torch.long,
+                        device=self.device,
+                    ),
                 )
                 current_pos += 1
             end.record()

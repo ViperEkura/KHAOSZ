@@ -17,42 +17,35 @@ from astrai.model.module import (
 
 
 def process_attention_mask(
-    seq_mask: Tensor,
     input_tensor: Tensor,
-    start_pos: int = 0,
+    position_ids: Optional[Tensor],
+    input_mask: Optional[Tensor] = None,
     is_causal: bool = False,
-) -> Tensor:
-    """Build 4D attention mask from 2D seq_mask, with optional causal masking."""
+) -> Optional[Tensor]:
+    if position_ids is None:
+        return None
+    if input_mask is not None and input_mask.dim() > 2:
+        return input_mask
+
     device = input_tensor.device
     dtype = input_tensor.dtype
-    seq_len = input_tensor.size(1)
+    B, S = input_tensor.size()[:2]
+    T = position_ids.max().item() + 1
 
-    if seq_mask is None:
-        if start_pos != 0:
-            seq_mask = torch.ones(
-                (1, start_pos + seq_len), dtype=torch.bool, device=device
-            )
-        else:
+    if input_mask is None:
+        if position_ids.min().item() == 0 and is_causal:
             return None
+        pad = torch.ones(B, T, dtype=torch.bool, device=device)
+    else:
+        pad = input_mask[:, :T].to(device=device, dtype=torch.bool)
 
-    if seq_mask.dim() > 2:
-        return seq_mask
-
-    batch_size = seq_mask.size(0)
-    seq_mask = seq_mask[:, : start_pos + seq_len].to(device=device, dtype=torch.bool)
-    expanded_mask = seq_mask.unsqueeze(1).expand(
-        batch_size, seq_len, start_pos + seq_len
-    )
-
+    attend = pad.view(B, 1, T).expand(B, S, T)
     if is_causal:
-        expanded_mask = torch.tril(expanded_mask, diagonal=start_pos)
+        attend &= position_ids.unsqueeze(-1) >= torch.arange(T, device=device)
 
-    attention_mask = torch.zeros_like(expanded_mask, dtype=dtype, device=device)
-    attention_mask = attention_mask.masked_fill_(
-        ~expanded_mask, -torch.finfo(dtype).max / 2
-    ).unsqueeze(1)
-
-    return attention_mask
+    return torch.full(
+        (B, 1, S, T), -torch.finfo(dtype).max / 2, dtype=dtype, device=device
+    ).masked_fill_(attend.unsqueeze(1), 0.0)
 
 
 @AutoModel.register("transformer")
@@ -130,17 +123,16 @@ class Transformer(AutoModel):
         input_ids: Tensor,
         input_mask: Optional[Tensor] = None,
         paged_cache: Optional[CacheView] = None,
-        start_pos: int = 0,
+        position_ids: Optional[Tensor] = None,
     ) -> Tensor:
         assert input_ids.ndim == 2
 
         x = self.embed_tokens(input_ids)
-        rotary_emb = self.rotary_embedding(x, start_pos)
-
-        attn_mask = process_attention_mask(input_mask, x, start_pos, is_causal=True)
+        rotary_emb = self.rotary_embedding(x, position_ids)
+        attn_mask = process_attention_mask(x, position_ids, input_mask, is_causal=True)
 
         for layer in self.layers:
-            x = layer(x, rotary_emb, attn_mask, paged_cache, start_pos)
+            x = layer(x, rotary_emb, attn_mask, paged_cache, position_ids)
 
         hidden_states = self.norm(x)
         logits = self.lm_head(hidden_states)

@@ -37,8 +37,8 @@ def apply_rotary_emb(x: torch.Tensor, rotary_emb: Tuple[Tensor, Tensor]) -> Tens
     """Apply rotary embedding via cos/sin (shape-preserving)."""
     dtype = x.dtype
     cos, sin = rotary_emb
-    cos = cos.unsqueeze(0).unsqueeze(2)
-    sin = sin.unsqueeze(0).unsqueeze(2)
+    cos = cos.unsqueeze(2)
+    sin = sin.unsqueeze(2)
     x_real = x[..., 0::2]
     x_imag = x[..., 1::2]
     x_real_rot = x_real * cos - x_imag * sin
@@ -63,12 +63,25 @@ class RotaryEmbedding(nn.Module):
         self.register_buffer("sin_cached", sin_cached, persistent=False)
         self.max_len_cached = max_len
 
-    def forward(self, x: Tensor, start_pos: int = 0) -> Tuple[Tensor, Tensor]:
-        seq_len = x.size(1)
-        if self.max_len_cached < seq_len + start_pos:
-            self._set_rotary_buffer(self.max_len_cached * 2, x.device)
-        cos = self.cos_cached[start_pos : start_pos + seq_len]
-        sin = self.sin_cached[start_pos : start_pos + seq_len]
+    def forward(
+        self, x: Tensor, position_ids: Optional[Tensor] = None
+    ) -> Tuple[Tensor, Tensor]:
+        if position_ids is None:
+            position_ids = (
+                torch.arange(x.size(1), device=x.device)
+                .unsqueeze(0)
+                .expand(x.size(0), -1)
+            )
+        max_pos = position_ids.max().item()
+        if self.max_len_cached <= max_pos:
+            self._set_rotary_buffer(
+                max_pos + 1
+                if self.max_len_cached is None
+                else max(max_pos + 1, self.max_len_cached * 2),
+                x.device,
+            )
+        cos = self.cos_cached[position_ids]
+        sin = self.sin_cached[position_ids]
         return (cos, sin)
 
 
@@ -151,12 +164,11 @@ class GQA(nn.Module):
         self,
         x: Tensor,
         rotary_emb: Tuple[Tensor, Tensor],
-        mask: Tensor = None,
+        attn_mask: Tensor = None,
+        position_ids: Optional[Tensor] = None,
         paged_cache: Optional[CacheView] = None,
-        start_pos: int = 0,
     ) -> Tensor:
-        bsz, seq_len, _ = x.size()
-        is_causal = mask is None
+        is_causal = attn_mask is None
 
         # (bsz, seq_len, dim) -> (bsz, seq_len, n_heads, head_dim)
         q = self._split_heads(self.q_proj(x), self.n_heads)
@@ -168,7 +180,7 @@ class GQA(nn.Module):
             q, k = self.q_norm(q), self.k_norm(k)
 
         if paged_cache is not None:
-            paged_cache.write(self.layer_id, start_pos, k, v)
+            paged_cache.write(self.layer_id, position_ids, k, v)
             k, v = paged_cache.gather(self.layer_id)
 
         k, v = repeat_kv(k, self.n_rep), repeat_kv(v, self.n_rep)
@@ -176,7 +188,7 @@ class GQA(nn.Module):
         # (bsz, seq_len, n_heads, head_dim) -> (bsz, n_heads, seq_len, head_dim)
         q, k, v = q.permute(0, 2, 1, 3), k.permute(0, 2, 1, 3), v.permute(0, 2, 1, 3)
         sdqa_out = (
-            F.scaled_dot_product_attention(q, k, v, mask, is_causal=is_causal)
+            F.scaled_dot_product_attention(q, k, v, attn_mask, is_causal=is_causal)
             .permute(0, 2, 1, 3)
             .contiguous()
             .flatten(2)
@@ -233,12 +245,12 @@ class MLA(nn.Module):
         self,
         x: Tensor,
         rotary_emb: Tuple[Tensor, Tensor],
-        mask: Tensor = None,
+        attn_mask: Tensor = None,
+        position_ids: Optional[Tensor] = None,
         paged_cache: Optional[CacheView] = None,
-        start_pos: int = 0,
     ) -> Tensor:
         bsz, seq_len, _ = x.size()
-        is_causal = mask is None
+        is_causal = attn_mask is None
 
         q = self.q_proj(x)
         q = q.view(bsz, seq_len, self.n_heads, self.head_dim)
@@ -264,14 +276,16 @@ class MLA(nn.Module):
         k = torch.cat([k_nope, k_rope], dim=-1)
 
         if paged_cache is not None:
-            paged_cache.write(self.layer_id, start_pos, k, v)
+            paged_cache.write(self.layer_id, position_ids, k, v)
             k, v = paged_cache.gather(self.layer_id)
 
         q = q.permute(0, 2, 1, 3)
         k = k.permute(0, 2, 1, 3)
         v = v.permute(0, 2, 1, 3)
 
-        attn_out = F.scaled_dot_product_attention(q, k, v, mask, is_causal=is_causal)
+        attn_out = F.scaled_dot_product_attention(
+            q, k, v, attn_mask, is_causal=is_causal
+        )
         attn_out = attn_out.permute(0, 2, 1, 3).contiguous().flatten(2)
 
         if self.use_gated_attention:
@@ -312,15 +326,15 @@ class DecoderBlock(nn.Module):
         x: Tensor,
         rotary_emb: Tuple[Tensor, Tensor],
         attention_mask: Optional[Tensor] = None,
+        position_ids: Optional[Tensor] = None,
         paged_cache: Optional[CacheView] = None,
-        start_pos: int = 0,
     ) -> Tensor:
         attn_output = self.attention(
             self.input_norm(x),
             rotary_emb,
             attention_mask,
             paged_cache,
-            start_pos,
+            position_ids,
         )
         x = attn_output + x
 
