@@ -2,7 +2,7 @@
 
 import torch
 
-from astrai.inference.cache import (
+from astrai.inference import (
     PagedCache,
     PagePool,
     PrefixCache,

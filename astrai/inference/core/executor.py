@@ -3,9 +3,9 @@ from typing import List, Optional
 
 import torch
 
-from astrai.inference.cache import PagedCache
+from astrai.inference.core.cache import PagedCache
+from astrai.inference.core.task import Task
 from astrai.inference.sample import sample
-from astrai.inference.task import Task
 from astrai.model.automodel import AutoModel
 from astrai.tokenize.tokenizer import AutoTokenizer
 

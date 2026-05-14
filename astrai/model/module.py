@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from astrai.inference.cache import CacheView
+from astrai.inference.core.cache import CacheView
 
 
 def repeat_kv(x: Tensor, n_rep: int) -> Tensor:

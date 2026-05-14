@@ -2,7 +2,7 @@
 
 import pytest
 
-from astrai.inference.server import app
+from astrai.inference import app
 
 
 def test_health_no_model(client):

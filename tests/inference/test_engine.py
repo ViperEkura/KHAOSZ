@@ -3,8 +3,8 @@
 import threading
 from unittest.mock import MagicMock, patch
 
+from astrai.inference import STOP
 from astrai.inference.engine import GenerateResult
-from astrai.inference.task import STOP
 
 
 def test_result_append_single():

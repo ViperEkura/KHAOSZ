@@ -1,13 +1,40 @@
 """Inference module for continuous batching.
 
 Layers:
-  - engine.py:    Facade (InferenceEngine), Value Object (GenerationParams, GenerationRequest)
-  - scheduler.py: Continuous-batching loop, Task state machine, TaskStatus enum
-  - cache.py:     PagedCache (page-table-indirected KV cache with alloc/free)
-  - sampling.py:  Strategy pattern (TemperatureStrategy, TopKStrategy, TopPStrategy)
-  - server.py:    FastAPI HTTP server (OpenAI-compatible endpoints)
+  - core/:           Core inference loop (cache, executor, scheduler, task)
+  - api/:            HTTP protocol handlers (OpenAI, Anthropic)
+  - engine.py:       Facade (InferenceEngine), Value Object (GenerationParams, GenerationRequest)
+  - sample.py:       Strategy pattern (TemperatureStrategy, TopKStrategy, TopPStrategy)
 """
 
+from astrai.inference.api import (
+    AnthropicHandler,
+    AnthropicMessage,
+    ChatCompletionRequest,
+    ChatMessage,
+    MessagesRequest,
+    OpenAIHandler,
+    ProtocolHandler,
+    SSEBuilder,
+    StopChecker,
+    StreamContext,
+    app,
+    run_server,
+)
+from astrai.inference.core import (
+    STOP,
+    CacheView,
+    Executor,
+    InferenceScheduler,
+    PagedCache,
+    PagePool,
+    PrefixCache,
+    Task,
+    TaskManager,
+    TaskStatus,
+    TaskTable,
+    page_hash,
+)
 from astrai.inference.engine import (
     GenerationParams,
     GenerationRequest,
@@ -21,19 +48,26 @@ from astrai.inference.sample import (
     TopPStrategy,
     sample,
 )
-from astrai.inference.scheduler import InferenceScheduler
-from astrai.inference.task import STOP, Task, TaskStatus
 
 __all__ = [
     # Engine / Requests
     "InferenceEngine",
     "GenerationRequest",
     "GenerationParams",
-    # Scheduler
+    # Core scheduler
     "InferenceScheduler",
+    "Executor",
     "STOP",
     "Task",
+    "TaskManager",
     "TaskStatus",
+    # Core cache
+    "CacheView",
+    "PagedCache",
+    "PagePool",
+    "PrefixCache",
+    "TaskTable",
+    "page_hash",
     # Sampling (Strategy pattern)
     "sample",
     "BaseSamplingStrategy",
@@ -41,4 +75,18 @@ __all__ = [
     "TopKStrategy",
     "TopPStrategy",
     "SamplingPipeline",
+    # Protocol
+    "ProtocolHandler",
+    "SSEBuilder",
+    "StopChecker",
+    "StreamContext",
+    "AnthropicHandler",
+    "OpenAIHandler",
+    # Server
+    "ChatMessage",
+    "ChatCompletionRequest",
+    "AnthropicMessage",
+    "MessagesRequest",
+    "app",
+    "run_server",
 ]

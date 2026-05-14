@@ -3,7 +3,7 @@ from pathlib import Path
 
 import torch
 
-from astrai.inference.server import run_server
+from astrai.inference import run_server
 
 
 def main():

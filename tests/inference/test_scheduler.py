@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-from astrai.inference.scheduler import InferenceScheduler
+from astrai.inference import InferenceScheduler
 
 
 @pytest.fixture
@@ -36,8 +36,8 @@ def test_scheduler_concurrent_add_task(mock_model_and_tokenizer):
     """Test concurrent add_task operations."""
     mock_model, mock_tokenizer = mock_model_and_tokenizer
 
-    with patch("astrai.inference.scheduler.AutoModel"):
-        with patch("astrai.inference.scheduler.AutoTokenizer"):
+    with patch("astrai.inference.core.scheduler.AutoModel"):
+        with patch("astrai.inference.core.scheduler.AutoTokenizer"):
             scheduler = InferenceScheduler(
                 model=mock_model,
                 tokenizer=mock_tokenizer,
@@ -75,8 +75,8 @@ def test_scheduler_concurrent_add_remove_task(mock_model_and_tokenizer):
     """Test concurrent add and remove task operations."""
     mock_model, mock_tokenizer = mock_model_and_tokenizer
 
-    with patch("astrai.inference.scheduler.AutoModel"):
-        with patch("astrai.inference.scheduler.AutoTokenizer"):
+    with patch("astrai.inference.core.scheduler.AutoModel"):
+        with patch("astrai.inference.core.scheduler.AutoTokenizer"):
             scheduler = InferenceScheduler(
                 model=mock_model,
                 tokenizer=mock_tokenizer,
@@ -124,8 +124,8 @@ def test_scheduler_concurrent_get_stats(mock_model_and_tokenizer):
     """Test concurrent get_stats operations."""
     mock_model, mock_tokenizer = mock_model_and_tokenizer
 
-    with patch("astrai.inference.scheduler.AutoModel"):
-        with patch("astrai.inference.scheduler.AutoTokenizer"):
+    with patch("astrai.inference.core.scheduler.AutoModel"):
+        with patch("astrai.inference.core.scheduler.AutoTokenizer"):
             scheduler = InferenceScheduler(
                 model=mock_model,
                 tokenizer=mock_tokenizer,

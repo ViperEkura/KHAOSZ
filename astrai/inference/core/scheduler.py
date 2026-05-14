@@ -4,9 +4,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
-from astrai.inference.cache import PagedCache
-from astrai.inference.executor import Executor
-from astrai.inference.task import STOP, Task, TaskManager, TaskStatus
+from astrai.inference.core.cache import PagedCache
+from astrai.inference.core.executor import Executor
+from astrai.inference.core.task import STOP, Task, TaskManager, TaskStatus
 from astrai.model.automodel import AutoModel
 from astrai.tokenize.tokenizer import AutoTokenizer
 

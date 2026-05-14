@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from astrai.config.model_config import ModelConfig
-from astrai.inference.cache import CacheView
+from astrai.inference.core.cache import CacheView
 from astrai.model.automodel import AutoModel
 from astrai.model.module import (
     DecoderBlock,
