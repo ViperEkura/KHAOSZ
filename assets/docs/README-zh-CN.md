@@ -71,6 +71,16 @@ pip install -e .
 pip install -e ".[dev]"
 ```
 
+#### 下载预训练模型
+
+下载预训练模型权重（1B 双语检查点）到 `params/` 目录：
+
+```bash
+python scripts/demo/download.py
+```
+
+或从 [HuggingFace](https://huggingface.co/ViperEk/KHAOSZ) 手动下载放入 `params/`。
+
 #### 训练模型
 
 ```bash

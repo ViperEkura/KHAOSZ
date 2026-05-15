@@ -91,8 +91,8 @@ classDiagram
         }
 
         class BaseStorage {
-            +Dict segments
-            +List keys
+            +MultiSegmentFetcher _fetcher
+            +keys (property)
             +load(load_path, tokenizer)
             +fetch(begin, end, keys)
             +__len__()
@@ -145,7 +145,7 @@ classDiagram
             +ModelConfig config
             +Registry _registry
             +register(model_type) decorator
-            +get_model_class(model_type) Type
+            +get_component_class(model_type) Type
             +from_pretrained(path, disable_random_init) nn.Module
             +save_pretrained(save_directory)
             +to(*args, **kwargs) Self
@@ -214,7 +214,7 @@ classDiagram
             +int dim
             +int max_len
             +float base
-            +forward(x, position_ids=None) Tuple[Tensor, Tensor]
+            +forward(x, position_ids=None) Tensor
         }
 
         class Embedding {
@@ -225,13 +225,10 @@ classDiagram
 
     namespace tokenize {
         class AutoTokenizer {
-            +List[int] stop_ids
-            +int bos_id
-            +int eos_id
-            +int pad_id
             +vocab_size int
             +encode(tokens, out_ids, add_special_tokens) List[int]
             +decode(tokens, skip_special_tokens) str
+            +__getattr__(name) Any (bos_id, eos_id, pad_id, stop_ids)
             +apply_chat_template(messages, tokenize) Union[str, List[int]]
             +set_chat_template(template)
             +load(path)
@@ -325,6 +322,8 @@ classDiagram
             +float clip_eps
             +float kl_coef
             +int group_size
+            +str reduction
+            +int sync_interval
             +compute_loss(batch) Tensor
         }
 
@@ -369,11 +368,6 @@ classDiagram
             +on_step_begin(context)
         }
 
-        class SchedulerCallback {
-            +on_train_begin(context)
-            +on_batch_end(context)
-        }
-
         class CheckpointCallback {
             +str save_dir
             +int interval
@@ -409,8 +403,6 @@ classDiagram
             +nn.Module model
             +AutoTokenizer tokenizer
             +InferenceScheduler scheduler
-            +int max_batch_size
-            +Optional int max_seq_len
             +generate(prompt, stream, max_tokens, temperature, top_p, top_k) Union[Generator, str, List[str]]
             +generate_with_request(request) Union[Generator, str, List[str]]
             +generate_async(prompt, max_tokens, temperature, top_p, top_k) AsyncGenerator
@@ -421,13 +413,12 @@ classDiagram
         class InferenceScheduler {
             +nn.Module model
             +AutoTokenizer tokenizer
-            +KVCache page_cache
+            +KVCache _page_cache
             +int max_batch_size
             +int max_seq_len
             +int max_prompt_len
             +int page_size
-            +List waiting_queue
-            +List active_tasks
+            +TaskManager _task_mgr
             +add_task(prompt, max_tokens, temperature, top_p, top_k, stream_callback) str
             +remove_task(task_id)
             +start()
@@ -568,7 +559,7 @@ classDiagram
         }
 
         class GenerateResult {
-            +List[str] tokens
+            +List[Tuple[int, str]] tokens
             +List[str] results
             +List[bool] _done
             +append(token, idx)
@@ -643,7 +634,6 @@ classDiagram
     BaseScheduler <|-- SGDRScheduler
     CallbackFactory ..> TrainCallback : creates
     TrainCallback <|-- GradientClippingCallback
-    TrainCallback <|-- SchedulerCallback
     TrainCallback <|-- CheckpointCallback
     TrainCallback <|-- ProgressBarCallback
     TrainCallback <|-- MetricLoggerCallback

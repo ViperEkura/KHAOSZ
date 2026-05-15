@@ -65,6 +65,16 @@ For development dependencies:
 pip install -e ".[dev]"
 ```
 
+#### Download Pre-trained Model
+
+Download pre-trained model weights (1B bilingual checkpoint) to `params/`:
+
+```bash
+python scripts/demo/download.py
+```
+
+Or download manually from [HuggingFace](https://huggingface.co/ViperEk/KHAOSZ) into `params/`.
+
 #### Train a Model
 
 ```bash

@@ -88,7 +88,7 @@ flowchart LR
 - **`DecoderBlock`**: GQA attention + residual + MLP + RMSNorm
 - **`GQA`**: Grouped Query Attention (also `MLA` for multi-latent attention)
 - **`MLP`**: `SiLU(gate(x)) * up(x)` → down projection
-- **`RotaryEmbedding`**: RoPE cos/sin cache
+- **`RotaryEmbedding`**: RoPE complex cache (freqs_cis)
 - **`RMSNorm`**: Layer normalization
 
 ### 4. Training Module
@@ -104,22 +104,23 @@ The training loop is nested: **epoch** → **batch** (with step phase interspers
 ```
 on_train_begin
   on_epoch_begin
-    for each batch:
-      if iteration % accumulation_steps == 0:        ← step phase
-        on_step_begin → optimizer.step() → zero_grad → on_step_end
-                                                      ← batch phase
-      on_batch_begin → strategy(batch) → loss → backward → on_batch_end
-      iteration += 1
+    for each accumulation window of batches:        ← step phase
+      on_step_begin
+        for each batch in window:                    ← batch phase
+          on_batch_begin → strategy(batch) → loss → backward → on_batch_end
+          iteration += 1
+      on_step_end
+      optimizer.step() → zero_grad
 
     on_epoch_end
 on_train_end
 ```
 
 Key points:
-- `on_step_*` wraps optimizer step (fires every `accumulation_steps` batches)
-- `on_batch_*` wraps loss computation (fires every batch)
-- `SchedulerCallback` fires on `on_batch_end` — LR scheduler steps every batch
-- `GradientClippingCallback` fires on `on_step_begin`
+- `on_step_*` fires every `accumulation_steps` batches, wrapping optimizer step AFTER the hook
+- `on_batch_*` fires every batch, wrapping loss computation
+- `GradientClippingCallback` fires on `on_step_end`
+- LR scheduler steps inline (no `SchedulerCallback` class)
 
 #### 4.3 Strategy (`strategy.py`)
 - **`SEQStrategy`**: Next-token prediction, cross-entropy with label smoothing
@@ -136,8 +137,7 @@ Key points:
 - **`CheckpointCallback`**: Saves safetensors at `ckpt_interval` iterations
 - **`ProgressBarCallback`**: tqdm progress display
 - **`MetricLoggerCallback`**: Writes JSONL metrics to `{ckpt_dir}/logs/`
-- **`GradientClippingCallback`**: `clip_grad_norm_` on `on_step_begin`
-- **`SchedulerCallback`**: `scheduler.step()` on `on_batch_end`
+- **`GradientClippingCallback`**: `clip_grad_norm_` on `on_step_end`
 
 ### 5. Inference Module
 
