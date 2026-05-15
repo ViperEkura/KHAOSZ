@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from astrai.factory import BaseFactory
 from astrai.inference.core.cache import KvcacheView
 from astrai.model.components.linear import Linear
 from astrai.model.components.norm import RMSNorm
@@ -22,6 +23,13 @@ def repeat_kv(x: Tensor, n_rep: int) -> Tensor:
     )
 
 
+class AttnFactory(BaseFactory[nn.Module]):
+    @classmethod
+    def create(cls, attn_type: str, **kwargs) -> nn.Module:
+        return super().create(attn_type, **kwargs)
+
+
+@AttnFactory.register("gqa")
 class GQA(nn.Module):
     def __init__(
         self,
@@ -32,6 +40,7 @@ class GQA(nn.Module):
         norm_eps: float,
         use_gated_attention: bool,
         layer_id: int,
+        **kwargs,
     ):
         super().__init__()
         assert dim % n_heads == 0
@@ -101,6 +110,7 @@ class GQA(nn.Module):
         return out
 
 
+@AttnFactory.register("mla")
 class MLA(nn.Module):
     def __init__(
         self,
@@ -113,6 +123,7 @@ class MLA(nn.Module):
         norm_eps: float,
         use_gated_attention: bool,
         layer_id: int,
+        **kwargs,
     ):
         super().__init__()
         self.dim = dim

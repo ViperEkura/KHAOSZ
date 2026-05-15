@@ -69,6 +69,12 @@ class Transformer(AutoModel):
                     config.use_qk_norm,
                     config.use_gated_attention,
                     layer_id,
+                    attn_type=config.attn_type,
+                    ffn_type=config.ffn_type,
+                    n_routed_experts=config.n_routed_experts,
+                    n_shared_experts=config.n_shared_experts,
+                    n_activated_experts=config.n_activated_experts,
+                    topk_method=config.moe_topk_method,
                 )
                 for layer_id in range(config.n_layers)
             ]
