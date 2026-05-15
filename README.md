@@ -208,9 +208,10 @@ Watch a video walkthrough on [bilibili](https://www.bilibili.com/video/BV1z5RPYH
 | Document | Description |
 |----------|-------------|
 | [Parameter Guide](./assets/docs/params.md) | Training & inference parameters |
-| [Design Document](./assets/docs/design.md) | Framework architecture & module design |
-| [Data Flow](./assets/docs/dataflow.md) | Data processing pipeline details |
-| [Model Introduction](./assets/docs/introduction.md) | Model architecture & technical details |
+| [Architecture](./assets/docs/architecture.md) | System architecture, class diagram & design patterns |
+| [Training](./assets/docs/training.md) | Training loop, strategies & formulas |
+| [Inference](./assets/docs/inference.md) | KVCache, continuous batching, sampling & HTTP API |
+| [Data Flow](./assets/docs/dataflow.md) | Data pipeline, storage backends & dataset architecture |
 
 ### Contributing
 

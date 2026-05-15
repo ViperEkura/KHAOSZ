@@ -1,14 +1,16 @@
-## 1. Why I Created This Project
+# AstrAI Architecture
 
-There are many large language models on the market today, such as GPT, LLaMA, and others, with tens of billions or even hundreds of billions of parameters. But honestly, these models have extremely high hardware requirements, making them inaccessible for ordinary developers. I thought: **Can we create a model that is both useful and can run on ordinary computers?** This is also what most people currently hope for - a locally deployable AI project that achieves complete privatization while maintaining some level of intelligence.
-
-Thus, the AstrAI project was born - 1B parameters, Chinese-English bilingual, supporting dialogue, text generation, and the training code is open source!
-
-## 2. System Architecture
+## Class Diagram
 
 ```mermaid
 classDiagram
     namespace config {
+        class BaseModelConfig {
+            +Optional[str] model_type
+            +load(config_path) Self
+            +save(config_path)
+        }
+
         class ModelConfig {
             +int vocab_size
             +int dim
@@ -565,6 +567,19 @@ classDiagram
             ABORTED
         }
 
+        class TaskManager {
+            +AutoTokenizer tokenizer
+            +Deque waiting_queue
+            +List active_tasks
+            +add_task(prompt, **kwargs) str
+            +remove_task(task_id) List[Task]
+            +remove_finished_tasks(stop_ids) List[Task]
+            +pull_candidates(n) List[Task]
+            +activate(task)
+            +return_to_waiting(tasks)
+            +get_active_tasks() List[Task]
+        }
+
         class GenerationRequest {
             +List[Dict] messages
             +int top_k
@@ -736,6 +751,7 @@ classDiagram
     ParallelModel <|-- RowParallelLinear
     ParallelModel <|-- ColumnParallelLinear
     AutoModel <|-- Transformer
+    BaseModelConfig <|-- ModelConfig
     BaseFactory <|-- AutoModel
     BaseFactory <|-- AttnFactory
     BaseFactory <|-- FFNFactory
@@ -763,6 +779,8 @@ classDiagram
     Transformer *-- Embedding
     DecoderBlock *-- RMSNorm
     BaseDataset *-- BaseStorage
+    ChatCompletionRequest *-- ChatMessage
+    MessagesRequest *-- AnthropicMessage
 
     %% --- Aggregation (weak ownership) ---
     AutoModel o-- ModelConfig
@@ -795,6 +813,10 @@ classDiagram
     KVCache ..> KvcacheView : binds
     InferenceEngine ..> GenerationRequest : uses
     InferenceEngine ..> GenerateResult : creates
+    OpenAIHandler ..> ChatCompletionRequest : receives
+    AnthropicHandler ..> MessagesRequest : receives
+    ProtocolHandler ..> StopChecker : creates
+    ProtocolHandler ..> StreamContext : creates
 
     %% --- Association (general usage) ---
     Trainer --> TrainConfig
@@ -809,99 +831,51 @@ classDiagram
     TaskManager --> AutoTokenizer
     MultiSegmentFetcher --> BaseSegmentFetcher
     ResumableDistributedSampler --> BaseDataset
+
 ```
 
-### Module Overview
+
+## Module Overview
 
 | Module | Components | Description |
 |--------|------------|-------------|
 | **astrai.config** | ModelConfig, TrainConfig | Configuration management |
-| **astrai.dataset** | BaseDataset, SEQDataset, SFTDataset, DPODataset, GRPODataset, BaseStorage, H5Storage, JSONStorage, BaseSegmentFetcher, MultiSegmentFetcher, ResumableDistributedSampler, DatasetFactory, save_h5, load_h5, save_json, load_json, create_storage, detect_format | Dataset loading and management |
-| **astrai.serialization** | Checkpoint | Model serialization and checkpoint management |
+| **astrai.dataset** | BaseDataset–GRPODataset, BaseStorage–JSONStorage, BaseSegmentFetcher, MultiSegmentFetcher, ResumableDistributedSampler, DatasetFactory | Dataset loading and management |
+| **astrai.serialization** | Checkpoint | Model serialization |
 | **astrai.model** | AutoModel, Transformer, DecoderBlock, GQA, MLA, MLP, DeepSeekMoE, AttnFactory, FFNFactory, RMSNorm, Linear, RotaryEmbedding, Embedding | Neural network model |
 | **astrai.tokenize** | AutoTokenizer, ChatTemplate | Tokenizer and chat template |
-| **astrai.trainer** | Trainer, TrainContext, TrainContextBuilder, BaseStrategy, StrategyFactory, BaseScheduler, SchedulerFactory, TrainCallback, CallbackFactory | Training workflow management |
-| **astrai.inference** | InferenceEngine, InferenceScheduler, Executor, KVCache, KvcacheView, Allocator, PrefixCache, PagePool, Storage, TaskTable, Task, TaskManager, TaskStatus, GenerationRequest, BaseSamplingStrategy, TemperatureStrategy, TopKStrategy, TopPStrategy, SamplingPipeline, sample, ChatMessage, ChatCompletionRequest, AnthropicMessage, MessagesRequest, OpenAIHandler, AnthropicHandler, ProtocolHandler, StreamContext, StopChecker, app, run_server | Inference service with continuous batching and paged KV cache |
-| **astrai.parallel** | spawn_parallel_fn, setup_parallel, get_rank, get_world_size, get_current_device, only_on_rank, ParallelModel, ColumnParallelLinear, RowParallelLinear | Distributed parallel |
-| **astrai.factory** | Registry, BaseFactory[T] | Generic component registration with decorator pattern |
+| **astrai.trainer** | Trainer, TrainContext, TrainContextBuilder, BaseStrategy–GRPOStrategy, StrategyFactory, BaseScheduler–SGDRScheduler, SchedulerFactory, TrainCallback–MetricLoggerCallback, CallbackFactory | Training workflow |
+| **astrai.inference** | InferenceEngine, InferenceScheduler, Executor, KVCache–KvcacheView, Allocator–Storage, Task, TaskManager, TaskStatus, GenerationRequest, BaseSamplingStrategy–SamplingPipeline, ProtocolHandler–AnthropicHandler, ChatMessage–MessagesRequest, app | Inference service |
+| **astrai.parallel** | spawn_parallel_fn, setup_parallel, get_rank/get_world_size/get_current_device, only_on_rank, ParallelModel, RowParallelLinear, ColumnParallelLinear | Distributed parallel |
+| **astrai.factory** | Registry, BaseFactory[T] | Component registration |
 
-### Design Patterns
+## Design Patterns
 
 | Pattern | Classes | Purpose |
 |---------|---------|---------|
-| **Strategy** | `BaseStrategy`, `SEQStrategy`, `SFTStrategy`, `DPOStrategy`, `GRPOStrategy`, `StrategyFactory` | Flexible training strategy switching, supports SEQ/SFT/DPO/GRPO |
-| **Builder** | `TrainContextBuilder` | Chain-building training context, step-by-step initialization of components |
-| **Factory** | `StrategyFactory`, `SchedulerFactory`, `DatasetFactory`, `CallbackFactory`, `BaseFactory` | Decorator registration mechanism, dynamically create training strategies, schedulers, datasets, and callbacks |
-| **Observer** | `TrainCallback`, `CallbackFactory` | Callback mechanism for training process monitoring (checkpoint, gradient clipping, metrics) |
-| **Context** | `TrainContext` | Training process state container with model, optimizer, scheduler and checkpoint |
-| **Registry** | `BaseFactory`, `Registry` | Generic component registration with category and priority support |
-| **Object Pool** | `Allocator`, `PagePool` | Page-based KV cache with O(1) alloc/free via bitmask + LRU eviction |
-| **Strategy (Sampling)** | `BaseSamplingStrategy`, `TemperatureStrategy`, `TopKStrategy`, `TopPStrategy`, `SamplingPipeline` | Composable logit transformations with temperature, top-k, top-p |
-| **Producer-Consumer** | `InferenceScheduler`, `Task`, `waiting_queue`, `active_tasks` | Continuous batching with dynamic task queue management |
-| **Event-Driven** | `threading.Event`, `_task_event` | Non-blocking wait mechanism for task scheduling using Python's `threading` module |
-| **AutoModel Registry** | `AutoModel`, `Transformer` | Model type registration and dynamic loading via decorator pattern |
-| **Generator Pattern** | `GenerateResult`, `GenerationRequest` | Event-based result notification for streaming/non-streaming generation |
-| **Template Method** | `ProtocolHandler`, `OpenAIHandler`, `AnthropicHandler` | `handle()` template with stream/non-stream branches, protocol-specific format hooks |
-| **Storage** | `BaseStorage`, `H5Storage`, `JSONStorage`, `_STORAGE_REGISTRY` | Format-agnostic data access with registry-dispatch (HDF5 / JSON) |
+| **Factory** | `AttnFactory`, `FFNFactory`, `StrategyFactory`, `DatasetFactory`, `SchedulerFactory`, `CallbackFactory` | Decorator-based component creation |
+| **Registry** | `BaseFactory`, `Registry` | Component registration with category/priority |
+| **Strategy** | `SEQStrategy`, `SFTStrategy`, `DPOStrategy`, `GRPOStrategy` | Training strategy switching |
+| **Strategy (Sampling)** | `TemperatureStrategy`, `TopKStrategy`, `TopPStrategy`, `SamplingPipeline` | Composable logit transformations |
+| **Template Method** | `ProtocolHandler`, `OpenAIHandler`, `AnthropicHandler` | HTTP API handler with format hooks |
+| **Builder** | `TrainContextBuilder` | Chain-building training context |
+| **Observer** | `TrainCallback`, callback implementations | Training process monitoring |
+| **Context** | `TrainContext` | Unified training state bag |
+| **Object Pool** | `Allocator`, `PagePool` | Page-based KV cache with LRU eviction |
+| **Storage** | `BaseStorage`, `H5Storage`, `JSONStorage` | Format-agnostic data access |
+| **Producer-Consumer** | `InferenceScheduler`, `Task`, queues | Continuous batching |
+| **AutoModel Registry** | `AutoModel`, `Transformer` | Model-type dynamic loading |
 
-### Core Relationships
+## Core Relationships
 
-1. **Configuration → Training**: `TrainConfig` holds model, dataset, optimizer_fn, scheduler_fn and other training configuration references
-2. **Training Flow**: `Trainer` → `TrainContextBuilder` → `TrainContext`, uses `BaseStrategy` to compute loss
-3. **Strategy Selection**: `StrategyFactory` creates corresponding strategy instance based on `train_type`
-4. **Inference Flow**: `InferenceEngine` → `InferenceScheduler` → `Transformer`, uses `KVCache` (backed by `Allocator` + `PrefixCache` + `PagePool` + `Storage`) for paged KV cache management and `SamplingPipeline` for efficient continuous batching with streaming/non-streaming
-5. **Distributed Support**: `spawn_parallel_fn` and `setup_parallel` provide multi-process training capability for `Trainer`
-6. **Dataset Loading**: `DatasetFactory` creates datasets (SEQDataset, SFTDataset, DPODataset, GRPODataset), supports HDF5 and JSON loading via `BaseStorage` (`H5Storage` / `JSONStorage`) with `BaseSegmentFetcher` and `MultiSegmentFetcher`
-7. **Checkpoint Management**: `Checkpoint` handles model state serialization/deserialization with safetensors
-8. **Scheduler Support**: `SchedulerFactory` creates learning rate schedulers (CosineScheduler, SGDRScheduler)
-9. **AutoModel Loading**: `AutoModel.from_pretrained()` dynamically loads model based on `config.json` model_type, uses `Registry` pattern for model type registration
-
-## 3. Training Process
-
-The common training process for large language models (LLM) typically includes three stages: **Pre-training (SEQ)**, **Supervised Fine-Tuning (SFT)**, and **Reinforcement Learning from Human Feedback (DPO/GRPO)**. This system is designed to support seamless end-to-end flow, achieving efficient switching and state management of different training stages through modular strategies.
-
-### Core Formulas
-
-**Pre-training (SEQ):**
-
-$$
-L_{\text{PT}} = - \sum_{t=1}^{T} \log P(x_t \mid x_{\lt t}; \theta)
-$$
-
-**SFT:**
-
-$$
-L_{\text{SFT}} = - \sum_{t=P+1}^{P+L} \log P(s_t \mid s_{\lt t}; \theta)
-$$
-
-**DPO:**
-
-$$
-L_{\text{DPO}} = -\mathbb{E}_{(x, y_w, y_l) \sim D} \left[ \log \sigma\left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \right) \right]
-$$
-
-**GRPO:**
-
-GRPO (Group Relative Policy Optimization) computes advantages from multiple responses to the same prompt, then optimizes using a PPO-style clipped objective:
-
-$$
-\text{Advantage}_i = \frac{r_i - \mu}{\sigma + \epsilon}
-$$
-
-Where $r_i$ is the reward for the $i$-th response, $\mu$ and $\sigma$ are the mean and standard deviation of group rewards.
-
-$$
-L_{\text{GRPO}} = -\mathbb{E} \left[ \min\left( \frac{\pi_\theta(a|s)}{\pi_{\text{ref}}(a|s)} \cdot A, \text{clip}\left(\frac{\pi_\theta(a|s)}{\pi_{\text{ref}}(a|s)}, 1-\epsilon, 1+\epsilon\right) \cdot A \right) \right] + \lambda \cdot D_{KL}
-$$
-
-The KL divergence term uses mean squared error approximation:
-
-$$
-L_{KL} = \lambda \cdot \mathbb{E} \left[ (\log \pi_\theta - \log \pi_{\text{ref}})^2 \right]
-$$
-
-The final loss is the sum of both: $L = L_{\text{policy}} + L_{KL}$
-
-Through the above three-stage progressive training, the model completes its evolution from a general language foundation to a specialized, highly-aligned dialogue intelligence.
+1. **Config → Training**: `TrainConfig` holds model, dataset, optimizer_fn, scheduler_fn
+2. **Training Flow**: `Trainer` → `TrainContextBuilder` → `TrainContext`, uses `BaseStrategy` for loss
+3. **Strategy Selection**: `StrategyFactory` creates strategy by `train_type`
+4. **Inference Flow**: `InferenceEngine` → `InferenceScheduler` → `Transformer`, backed by `KVCache` + `SamplingPipeline`
+5. **Distributed**: `spawn_parallel_fn` + `setup_parallel` for multi-process DDP
+6. **Dataset Loading**: `DatasetFactory` creates datasets, `BaseStorage` (H5Storage/JSONStorage) loads via `BaseSegmentFetcher` + `MultiSegmentFetcher`
+7. **Checkpoint**: `Checkpoint` saves/loads safetensors + metadata (rank-0 only)
+8. **Scheduler**: `SchedulerFactory` creates `CosineScheduler`/`SGDRScheduler`
+9. **AutoModel**: `from_pretrained()` loads `config.json` + `model.safetensors`, `_disable_random_init` replaces `nn.init.*` with no-ops
 
 > Document Update Time: 2026-05-15

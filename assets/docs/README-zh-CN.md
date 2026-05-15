@@ -214,9 +214,10 @@ python scripts/demo/generate_ar.py
 | 文档 | 说明 |
 |------|------|
 | [参数说明](./params.md) | 训练与推理参数配置 |
-| [设计文档](./design.md) | 系统架构与模块设计 |
-| [数据流程](./dataflow.md) | 数据处理管道详解 |
-| [模型介绍](./introduction.md) | 模型架构与技术细节 |
+| [架构文档](./architecture.md) | 系统架构、类图与设计模式 |
+| [训练文档](./training.md) | 训练循环、策略与公式 |
+| [推理文档](./inference.md) | KVCache、连续批处理、采样与 HTTP API |
+| [数据流程](./dataflow.md) | 数据管道、存储后端与数据集架构 |
 
 ### 贡献
 
