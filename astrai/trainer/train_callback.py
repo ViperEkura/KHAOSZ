@@ -79,28 +79,9 @@ class GradientClippingCallback(TrainCallback):
     def __init__(self, max_grad_norm: float):
         self.max_grad_norm = max_grad_norm
 
-    def on_step_begin(self, context: TrainContext):
+    def on_step_end(self, context: TrainContext):
         _ = context
         clip_grad_norm_(context.model.parameters(), self.max_grad_norm)
-
-
-@CallbackFactory.register("scheduler")
-class SchedulerCallback(TrainCallback):
-    """
-    Scheduler callback for trainer.
-    """
-
-    def __init__(self):
-        pass
-
-    def on_train_begin(self, context: TrainContext):
-        for group in context.optimizer.param_groups:
-            if "initial_lr" not in group:
-                group["initial_lr"] = group["lr"]
-
-    def on_batch_end(self, context: TrainContext):
-        if context.scheduler:
-            context.scheduler.step()
 
 
 @CallbackFactory.register("checkpoint")

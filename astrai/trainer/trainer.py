@@ -1,4 +1,5 @@
 import logging
+from itertools import batched
 from typing import List, Optional
 
 from astrai.config import TrainConfig
@@ -30,7 +31,6 @@ class Trainer:
             CallbackFactory.create("checkpoint", cfg.ckpt_dir, cfg.ckpt_interval),
             CallbackFactory.create("metric_logger", cfg.ckpt_dir, cfg.ckpt_interval),
             CallbackFactory.create("gradient_clipping", cfg.max_grad_norm),
-            CallbackFactory.create("scheduler"),
         ]
 
     def _build_context(self, checkpoint: Optional[Checkpoint]) -> TrainContext:
@@ -62,31 +62,32 @@ class Trainer:
 
         try:
             context.model.train()
-            # 1.epoch
+            accumulation_steps = max(self.train_config.accumulation_steps, 1)
+
             for epoch in range(context.epoch, self.train_config.n_epoch):
                 context.epoch = epoch
                 self._call_callbacks("on_epoch_begin", context)
 
-                accumulation_steps = max(self.train_config.accumulation_steps, 1)
-                for batch in context.dataloader:
-                    if context.iteration % accumulation_steps == 0:
-                        # 2. step
-                        self._call_callbacks("on_step_begin", context)
-                        context.optimizer.step()
-                        context.optimizer.zero_grad()
-                        self._call_callbacks("on_step_end", context)
+                for steps in batched(context.dataloader, accumulation_steps):
+                    self._call_callbacks("on_step_begin", context)
 
-                    # 3. batch
-                    self._call_callbacks("on_batch_begin", context)
-                    loss = context.strategy(batch)
-                    context.loss = loss.item()
-                    context.iteration += 1
+                    step_batch_nums = len(steps)
+                    for batch in steps:
+                        self._call_callbacks("on_batch_begin", context)
+                        loss = context.strategy(batch)
+                        context.loss = loss.item()
+                        context.iteration += 1
 
-                    # to make the loss normalized by accumulation steps
-                    stand_loss = loss / accumulation_steps
-                    stand_loss.backward()
+                        stand_loss = loss / step_batch_nums
+                        stand_loss.backward()
+                        self._call_callbacks("on_batch_end", context)
 
-                    self._call_callbacks("on_batch_end", context)
+                    self._call_callbacks("on_step_end", context)
+                    context.optimizer.step()
+                    context.optimizer.zero_grad()
+
+                    if context.scheduler:
+                        context.scheduler.step()
 
                 self._call_callbacks("on_epoch_end", context)
 
