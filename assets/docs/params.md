@@ -60,7 +60,7 @@
 | Parameter | Description | Default | Used by |
 |-----------|-------------|---------|---------|
 | `--dpo_beta` | DPO beta value | 0.1 | `dpo` |
-| `--label_smoothing` | Label smoothing for cross-entropy loss | 0.1 | `seq`, `sft` |
+| `--label_smoothing` | Label smoothing for cross-entropy loss | 0.1 (CLI) / 0.0 (strategy default) | `seq`, `sft` |
 | `--group_size` | GRPO group size | 4 | `grpo` |
 | `--grpo_clip_eps` | GRPO clipping epsilon | 0.2 | `grpo` |
 | `--grpo_kl_coef` | GRPO KL penalty coefficient | 0.01 | `grpo` |
@@ -98,7 +98,7 @@ python scripts/tools/train.py \
 | `temperature` | Sampling temperature (higher = more random) | 1.0 |
 | `top_p` | Nucleus sampling threshold | 1.0 |
 | `top_k` | Top-k sampling count | 50 |
-| `max_tokens` | Maximum generation length | None (unlimited) |
+| `max_tokens` | Maximum generation length | None (defaults to max_seq_len - prompt_len) |
 | `stream` | Whether to stream output | False |
 
 ### Usage Example
@@ -155,4 +155,4 @@ result = engine.generate(
 | `stream=True` | Streaming output, yields token by token |
 | `stream=False` | Non-streaming output, returns complete result |
 
-> Document Update Time: 2026-05-14
+> Document Update Time: 2026-05-15

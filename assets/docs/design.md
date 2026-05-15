@@ -22,6 +22,12 @@ classDiagram
             +int n_kv_heads
             +bool use_qk_norm
             +bool use_gated_attention
+            +str attn_type
+            +str ffn_type
+            +int n_routed_experts
+            +int n_shared_experts
+            +int n_activated_experts
+            +str moe_topk_method
             +load(config_path) ModelConfig
             +save(config_path)
         }
@@ -42,7 +48,7 @@ classDiagram
             +int ckpt_interval
             +int random_seed
             +int num_workers
-            +int prefetch_factor
+            +Optional[int] prefetch_factor
             +bool pin_memory
             +int nprocs
             +str backend
@@ -118,8 +124,8 @@ classDiagram
         }
 
         class ResumableDistributedSampler {
-            +int epoch
-            +int iter
+            +int start_epoch
+            +int start_iter
         }
 
         class DatasetFactory {
@@ -135,6 +141,7 @@ classDiagram
             +dict state_dict
             +int epoch
             +int iteration
+            +dict extra
             +save(save_dir)
             +load(save_dir) Checkpoint
         }
@@ -158,15 +165,15 @@ classDiagram
             +ModuleList layers
             +RMSNorm norm
             +Linear lm_head
-            +forward(input_ids, input_mask, paged_cache, position_ids) Tensor
+            +forward(input_ids, input_mask, paged_cache, position_ids) Dict
             +load_state_dict(state_dict)
             +state_dict()
         }
 
         class DecoderBlock {
-            +GQA attention
+            +nn.Module attention  # GQA or MLA via AttnFactory
             +RMSNorm input_norm
-            +MLP mlp
+            +nn.Module mlp        # MLP or DeepSeekMoE via FFNFactory
             +RMSNorm post_attention_norm
             +forward(x, rotary_emb, attention_mask, paged_cache) Tensor
         }
@@ -175,8 +182,12 @@ classDiagram
             +int n_heads
             +int n_kv_heads
             +int head_dim
+            +int n_rep
+            +bool use_qk_norm
+            +bool use_gated_attention
             +Linear q_proj, k_proj, v_proj, o_proj
-            +RMSNorm q_norm, k_norm
+            +Linear gate  # only if use_gated_attention
+            +RMSNorm q_norm, k_norm  # only if use_qk_norm
             +forward(x, rotary_emb, attn_mask, paged_cache) Tensor
         }
 
@@ -187,8 +198,11 @@ classDiagram
             +int kv_lora_rank
             +int qk_nope_head_dim
             +int qk_rope_head_dim
+            +int n_rep
+            +bool use_gated_attention
             +Linear q_proj, kv_a_proj, kv_b_proj
             +Linear o_proj
+            +Linear gate  # only if use_gated_attention
             +RMSNorm kv_norm
             +forward(x, rotary_emb, attn_mask, paged_cache) Tensor
         }
@@ -196,6 +210,25 @@ classDiagram
         class MLP {
             +Linear up, gate, down
             +forward(x) Tensor
+        }
+
+        class DeepSeekMoE {
+            +int n_routed_experts
+            +int n_shared_experts
+            +int n_activated_experts
+            +str topk_method
+            +Linear router
+            +ModuleList shared_experts
+            +ModuleList routed_experts
+            +forward(x) Tensor
+        }
+
+        class AttnFactory {
+            +create(attn_type, **kwargs) nn.Module
+        }
+
+        class FFNFactory {
+            +create(ffn_type, dim, dim_ffn, **kwargs) nn.Module
         }
 
         class RMSNorm {
@@ -206,7 +239,7 @@ classDiagram
 
         class Linear {
             +Parameter weight
-            +Parameter bias
+            +Optional[Parameter] bias  # only if bias=True
             +forward(x) Tensor
         }
 
@@ -365,7 +398,7 @@ classDiagram
 
         class GradientClippingCallback {
             +float max_grad_norm
-            +on_step_begin(context)
+            +on_step_end(context)
         }
 
         class CheckpointCallback {
@@ -410,15 +443,24 @@ classDiagram
             +shutdown()
         }
 
-        class InferenceScheduler {
-            +nn.Module model
+        class Executor {
+            +AutoModel model
             +AutoTokenizer tokenizer
+            +KVCache page_cache
+            +execute_prefill(tasks, prompt_len, start_pos)
+            +execute_decode(tasks) List[int]
+        }
+
+        class InferenceScheduler {
             +KVCache _page_cache
+            +Executor _executor
+            +TaskManager _task_mgr
+            +bool _running
+            +Thread _loop_thread
             +int max_batch_size
             +int max_seq_len
             +int max_prompt_len
             +int page_size
-            +TaskManager _task_mgr
             +add_task(prompt, max_tokens, temperature, top_p, top_k, stream_callback) str
             +remove_task(task_id)
             +start()
@@ -428,8 +470,8 @@ classDiagram
 
         class Allocator {
             +int _free_mask
-            +int refs_count
-            +LRU _lru
+            +List[int] _refs
+            +OrderedDict _lru
             +alloc() int
             +free(idx, keep_cached)
             +inc_ref(idx)
@@ -564,9 +606,9 @@ classDiagram
             +List[bool] _done
             +append(token, idx)
             +get_results() List[str]
-            +pop_all() List[str]
+            +pop_all() List[Tuple[int, str]]
             +wait(timeout) bool
-            +wait_completion()
+            +wait_completion(timeout)
         }
 
         class ChatMessage {
@@ -583,6 +625,65 @@ classDiagram
             +bool stream
             +Optional[str] stop
             +Optional[int] n
+        }
+
+        class AnthropicMessage {
+            +str role
+            +Union[str, List[Dict]] content
+        }
+
+        class MessagesRequest {
+            +List[AnthropicMessage] messages
+            +Optional[str] system
+            +float temperature
+            +float top_p
+            +int top_k
+            +int max_tokens
+            +bool stream
+            +Optional[List[str]] stop_sequences
+        }
+
+        class ProtocolHandler {
+            <<abstract>>
+            +build_prompt() str
+            +create_response_id() str
+            +format_stream_start(ctx) List[str]
+            +format_stream_token(ctx, token) str
+            +format_stream_end(ctx) List[str]
+            +format_non_stream_response(ctx, content) Dict
+            +handle() Union[StreamingResponse, Dict]
+        }
+
+        class OpenAIHandler {
+            +build_prompt() str
+            +create_response_id() str
+        }
+
+        class AnthropicHandler {
+            +List[str] stop_sequences
+            +build_prompt() str
+            +create_response_id() str
+            +on_token(ctx, token, stop_checker) Optional[str]
+        }
+
+        class StopChecker {
+            +check(text) Optional[str]
+            +trim(text, matched) str
+        }
+
+        class StreamContext {
+            +str resp_id
+            +int created
+            +str model
+            +int prompt_tokens
+            +int completion_tokens
+            +str accumulated
+            +Optional[str] stop_matched
+        }
+
+        class app {
+            <<singleton>>
+            +FastAPI app
         }
     }
 
@@ -610,79 +711,104 @@ classDiagram
         }
     }
 
-    %% Relationships
-    TrainConfig --> BaseDataset : uses
-    TrainConfig ..> BaseStrategy : selects
-    StrategyFactory ..> BaseStrategy : creates
+    %% Relationships — UML notation: <|-- generalization, *-- composition, o-- aggregation, --> association, ..> dependency
+
+    %% --- Generalization (inheritance) ---
     BaseStrategy <|-- SEQStrategy
     BaseStrategy <|-- SFTStrategy
     BaseStrategy <|-- DPOStrategy
     BaseStrategy <|-- GRPOStrategy
-    DPOStrategy --> Transformer : uses
-    GRPOStrategy --> Transformer : uses
-    Trainer --> TrainConfig : uses
-    Trainer --> TrainContextBuilder : uses
-    Trainer --> TrainCallback : manages
-    TrainContextBuilder --> TrainContext : creates
-    TrainContextBuilder --> StrategyFactory : uses
-    Checkpoint ..> Checkpoint : serializes
-    TrainContext --> Checkpoint : manages
-    TrainContext --> BaseStrategy : uses
-    TrainContext --> BaseScheduler : uses
-    SchedulerFactory ..> BaseScheduler : creates
     BaseScheduler <|-- CosineScheduler
     BaseScheduler <|-- SGDRScheduler
-    CallbackFactory ..> TrainCallback : creates
     TrainCallback <|-- GradientClippingCallback
     TrainCallback <|-- CheckpointCallback
     TrainCallback <|-- ProgressBarCallback
     TrainCallback <|-- MetricLoggerCallback
-    PagePool --> Allocator : composes
-    PagePool --> PrefixCache : composes
-    KVCache --> PagePool : composes
-    KVCache --> Storage : composes
-    KVCache --> TaskTable : composes
-    KvcacheView --> Storage : wraps
-    InferenceEngine --> InferenceScheduler : uses
-    InferenceEngine --> GenerationRequest : uses
-    InferenceEngine --> GenerateResult : creates
-    InferenceScheduler --> Task : manages
-    InferenceScheduler --> TaskStatus : uses
-    InferenceScheduler --> KVCache : uses
-    InferenceScheduler --> Transformer : uses
-    Task --> TaskStatus : uses
-    InferenceEngine --> Transformer : uses
-    BaseSamplingStrategy <|-- TemperatureStrategy
-    BaseSamplingStrategy <|-- TopKStrategy
-    BaseSamplingStrategy <|-- TopPStrategy
-    SamplingPipeline --> BaseSamplingStrategy : composes
     BaseDataset <|-- SEQDataset
     BaseDataset <|-- SFTDataset
     BaseDataset <|-- DPODataset
     BaseDataset <|-- GRPODataset
-    DatasetFactory ..> BaseDataset : creates
     BaseStorage <|-- H5Storage
     BaseStorage <|-- JSONStorage
-    BaseDataset --> BaseStorage : uses
-    MultiSegmentFetcher --> BaseSegmentFetcher : uses
-    AutoModel <|-- Transformer
-    AutoModel --> ModelConfig : contains
-    Transformer --> DecoderBlock : uses
-    Transformer --> RotaryEmbedding : uses
-    Transformer --> Embedding : uses
-    DecoderBlock --> GQA : uses
-    DecoderBlock --> MLP : uses
-    DecoderBlock --> RMSNorm : uses
-    TrainContextBuilder --> ResumableDistributedSampler : creates
-    ResumableDistributedSampler --> BaseDataset : samples
+    BaseSamplingStrategy <|-- TemperatureStrategy
+    BaseSamplingStrategy <|-- TopKStrategy
+    BaseSamplingStrategy <|-- TopPStrategy
     ParallelModel <|-- RowParallelLinear
     ParallelModel <|-- ColumnParallelLinear
-    AutoTokenizer --> ChatTemplate : uses
+    AutoModel <|-- Transformer
     BaseFactory <|-- AutoModel
+    BaseFactory <|-- AttnFactory
+    BaseFactory <|-- FFNFactory
     BaseFactory <|-- DatasetFactory
     BaseFactory <|-- StrategyFactory
     BaseFactory <|-- SchedulerFactory
     BaseFactory <|-- CallbackFactory
+    ProtocolHandler <|-- OpenAIHandler
+    ProtocolHandler <|-- AnthropicHandler
+
+    %% --- Composition (strong ownership, part destroyed with whole) ---
+    KVCache *-- PagePool
+    KVCache *-- Storage
+    KVCache *-- TaskTable
+    KVCache *-- Allocator
+    KVCache *-- PrefixCache
+    InferenceEngine *-- InferenceScheduler
+    InferenceScheduler *-- KVCache
+    InferenceScheduler *-- Executor
+    InferenceScheduler *-- TaskManager
+    SamplingPipeline *-- BaseSamplingStrategy
+    TrainContextBuilder *-- TrainContext
+    Transformer *-- DecoderBlock
+    Transformer *-- RotaryEmbedding
+    Transformer *-- Embedding
+    DecoderBlock *-- RMSNorm
+    BaseDataset *-- BaseStorage
+
+    %% --- Aggregation (weak ownership) ---
+    AutoModel o-- ModelConfig
+    Trainer o-- TrainCallback
+    TrainContext o-- BaseStrategy
+    TrainContext o-- BaseScheduler
+    TrainContext o-- Checkpoint
+    AutoTokenizer o-- ChatTemplate
+    KvcacheView o-- Storage
+    BaseFactory o-- Registry
+
+    %% --- Dependency (uses temporarily) ---
+    TrainConfig ..> BaseStrategy : selects
+    StrategyFactory ..> BaseStrategy : creates
+    SchedulerFactory ..> BaseScheduler : creates
+    DatasetFactory ..> BaseDataset : creates
+    CallbackFactory ..> TrainCallback : creates
+    AttnFactory ..> GQA : creates
+    AttnFactory ..> MLA : creates
+    FFNFactory ..> MLP : creates
+    FFNFactory ..> DeepSeekMoE : creates
+    DecoderBlock ..> AttnFactory : uses
+    DecoderBlock ..> FFNFactory : uses
+    Trainer ..> TrainContextBuilder : uses
+    Trainer ..> Functions : spawns
+    TrainContextBuilder ..> StrategyFactory : uses
+    TrainContextBuilder ..> ResumableDistributedSampler : creates
+    Checkpoint ..> Checkpoint : serializes
+    CheckpointCallback ..> Checkpoint : creates
+    KVCache ..> KvcacheView : binds
+    InferenceEngine ..> GenerationRequest : uses
+    InferenceEngine ..> GenerateResult : creates
+
+    %% --- Association (general usage) ---
+    Trainer --> TrainConfig
+    DPOStrategy --> Transformer
+    GRPOStrategy --> Transformer
+    InferenceScheduler --> Task
+    InferenceScheduler --> TaskStatus
+    Task --> TaskStatus
+    InferenceEngine --> Transformer
+    Executor --> Transformer
+    Executor --> AutoTokenizer
+    TaskManager --> AutoTokenizer
+    MultiSegmentFetcher --> BaseSegmentFetcher
+    ResumableDistributedSampler --> BaseDataset
 ```
 
 ### Module Overview
@@ -690,14 +816,14 @@ classDiagram
 | Module | Components | Description |
 |--------|------------|-------------|
 | **astrai.config** | ModelConfig, TrainConfig | Configuration management |
-| **astrai.dataset** | BaseDataset, SEQDataset, SFTDataset, DPODataset, GRPODataset, BaseStorage, H5Storage, JSONStorage, BaseSegmentFetcher, MultiSegmentFetcher, ResumableDistributedSampler, DatasetFactory, save_h5, load_h5 | Dataset loading and management |
+| **astrai.dataset** | BaseDataset, SEQDataset, SFTDataset, DPODataset, GRPODataset, BaseStorage, H5Storage, JSONStorage, BaseSegmentFetcher, MultiSegmentFetcher, ResumableDistributedSampler, DatasetFactory, save_h5, load_h5, save_json, load_json, create_storage, detect_format | Dataset loading and management |
 | **astrai.serialization** | Checkpoint | Model serialization and checkpoint management |
-| **astrai.model** | AutoModel, Transformer, DecoderBlock, GQA, MLA, MLP, RMSNorm, Linear, RotaryEmbedding, Embedding | Neural network model |
+| **astrai.model** | AutoModel, Transformer, DecoderBlock, GQA, MLA, MLP, DeepSeekMoE, AttnFactory, FFNFactory, RMSNorm, Linear, RotaryEmbedding, Embedding | Neural network model |
 | **astrai.tokenize** | AutoTokenizer, ChatTemplate | Tokenizer and chat template |
 | **astrai.trainer** | Trainer, TrainContext, TrainContextBuilder, BaseStrategy, StrategyFactory, BaseScheduler, SchedulerFactory, TrainCallback, CallbackFactory | Training workflow management |
-| **astrai.inference** | InferenceEngine, InferenceScheduler, KVCache, KvcacheView, Allocator, PrefixCache, PagePool, Storage, TaskTable, Task, TaskStatus, GenerationRequest, BaseSamplingStrategy, TemperatureStrategy, TopKStrategy, TopPStrategy, SamplingPipeline, ChatMessage, ChatCompletionRequest | Inference service with continuous batching and paged KV cache |
-| **astrai.parallel** | spawn_parallel_fn, setup_parallel, get_rank, get_world_size, get_current_device, ParallelModel, ColumnParallelLinear, RowParallelLinear | Distributed parallel |
-| **astrai.factory** | Registry, BaseFactory | Generic component registration |
+| **astrai.inference** | InferenceEngine, InferenceScheduler, Executor, KVCache, KvcacheView, Allocator, PrefixCache, PagePool, Storage, TaskTable, Task, TaskManager, TaskStatus, GenerationRequest, BaseSamplingStrategy, TemperatureStrategy, TopKStrategy, TopPStrategy, SamplingPipeline, sample, ChatMessage, ChatCompletionRequest, AnthropicMessage, MessagesRequest, OpenAIHandler, AnthropicHandler, ProtocolHandler, StreamContext, StopChecker, app, run_server | Inference service with continuous batching and paged KV cache |
+| **astrai.parallel** | spawn_parallel_fn, setup_parallel, get_rank, get_world_size, get_current_device, only_on_rank, ParallelModel, ColumnParallelLinear, RowParallelLinear | Distributed parallel |
+| **astrai.factory** | Registry, BaseFactory[T] | Generic component registration with decorator pattern |
 
 ### Design Patterns
 
@@ -706,7 +832,7 @@ classDiagram
 | **Strategy** | `BaseStrategy`, `SEQStrategy`, `SFTStrategy`, `DPOStrategy`, `GRPOStrategy`, `StrategyFactory` | Flexible training strategy switching, supports SEQ/SFT/DPO/GRPO |
 | **Builder** | `TrainContextBuilder` | Chain-building training context, step-by-step initialization of components |
 | **Factory** | `StrategyFactory`, `SchedulerFactory`, `DatasetFactory`, `CallbackFactory`, `BaseFactory` | Decorator registration mechanism, dynamically create training strategies, schedulers, datasets, and callbacks |
-| **Observer** | `TrainCallback`, `CallbackFactory` | Callback mechanism for training process monitoring (checkpoint, early stopping, metrics) |
+| **Observer** | `TrainCallback`, `CallbackFactory` | Callback mechanism for training process monitoring (checkpoint, gradient clipping, metrics) |
 | **Context** | `TrainContext` | Training process state container with model, optimizer, scheduler and checkpoint |
 | **Registry** | `BaseFactory`, `Registry` | Generic component registration with category and priority support |
 | **Object Pool** | `Allocator`, `PagePool` | Page-based KV cache with O(1) alloc/free via bitmask + LRU eviction |
@@ -715,6 +841,8 @@ classDiagram
 | **Event-Driven** | `threading.Event`, `_task_event` | Non-blocking wait mechanism for task scheduling using Python's `threading` module |
 | **AutoModel Registry** | `AutoModel`, `Transformer` | Model type registration and dynamic loading via decorator pattern |
 | **Generator Pattern** | `GenerateResult`, `GenerationRequest` | Event-based result notification for streaming/non-streaming generation |
+| **Template Method** | `ProtocolHandler`, `OpenAIHandler`, `AnthropicHandler` | `handle()` template with stream/non-stream branches, protocol-specific format hooks |
+| **Storage** | `BaseStorage`, `H5Storage`, `JSONStorage`, `_STORAGE_REGISTRY` | Format-agnostic data access with registry-dispatch (HDF5 / JSON) |
 
 ### Core Relationships
 
@@ -723,7 +851,7 @@ classDiagram
 3. **Strategy Selection**: `StrategyFactory` creates corresponding strategy instance based on `train_type`
 4. **Inference Flow**: `InferenceEngine` → `InferenceScheduler` → `Transformer`, uses `KVCache` (backed by `Allocator` + `PrefixCache` + `PagePool` + `Storage`) for paged KV cache management and `SamplingPipeline` for efficient continuous batching with streaming/non-streaming
 5. **Distributed Support**: `spawn_parallel_fn` and `setup_parallel` provide multi-process training capability for `Trainer`
-6. **Dataset Loading**: `DatasetFactory` creates datasets (SEQDataset, SFTDataset, DPODataset, GRPODataset), supports HDF5 loading via `BaseSegmentFetcher` and `MultiSegmentFetcher`
+6. **Dataset Loading**: `DatasetFactory` creates datasets (SEQDataset, SFTDataset, DPODataset, GRPODataset), supports HDF5 and JSON loading via `BaseStorage` (`H5Storage` / `JSONStorage`) with `BaseSegmentFetcher` and `MultiSegmentFetcher`
 7. **Checkpoint Management**: `Checkpoint` handles model state serialization/deserialization with safetensors
 8. **Scheduler Support**: `SchedulerFactory` creates learning rate schedulers (CosineScheduler, SGDRScheduler)
 9. **AutoModel Loading**: `AutoModel.from_pretrained()` dynamically loads model based on `config.json` model_type, uses `Registry` pattern for model type registration
@@ -776,4 +904,4 @@ The final loss is the sum of both: $L = L_{\text{policy}} + L_{KL}$
 
 Through the above three-stage progressive training, the model completes its evolution from a general language foundation to a specialized, highly-aligned dialogue intelligence.
 
-> Document Update Time: 2026-05-14
+> Document Update Time: 2026-05-15

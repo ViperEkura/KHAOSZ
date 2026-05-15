@@ -224,7 +224,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 | `temperature` | float | 1.0 | Sampling temperature (0.0-2.0) |
 | `top_p` | float | 1.0 | Nucleus sampling threshold |
 | `top_k` | int | 50 | Top-k sampling parameter |
-| `max_tokens` | int | 1024 | Maximum tokens to generate |
+| `max_tokens` | int | 2048 | Maximum tokens to generate |
 | `stream` | bool | false | Enable streaming response |
 
 **Response (non-streaming):**
@@ -331,4 +331,4 @@ curl http://localhost:8000/stats
 # {"total_tasks": 10, "total_tokens": 5000, "active_tasks": 1, "waiting_queue": 0}
 ```
 
-> Document Update Time: 2026-05-14
+> Document Update Time: 2026-05-15

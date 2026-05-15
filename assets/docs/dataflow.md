@@ -5,7 +5,7 @@ This document describes the data flow of the AstrAI project (a training and infe
 ## Overview
 
 AstrAI adopts a modular design with the following main components:
-- **Dataset Module** (`astrai/dataset/`): Dataset, sampler, serialization tools
+- **Dataset Module** (`astrai/dataset/`): Dataset, sampler, storage backends
 - **Model Module** (`astrai/model/`): AutoModel, Transformer model and its submodules
 - **Training Module** (`astrai/trainer/`): Trainer, training context, strategies, schedulers, callbacks, metric utilities
 - **Inference Module** (`astrai/inference/`): Inference engine with continuous batching, streaming generation
@@ -71,7 +71,8 @@ flowchart LR
 - **`BaseDataset`**: Abstract base class for windowed sequence sampling
 - **`BaseSegmentFetcher` / `MultiSegmentFetcher`**: Fetch tensor segments by index range
 - **`DatasetFactory`**: Creates dataset instances by `train_type` (`seq`, `sft`, `dpo`, `grpo`)
-- Data keys: `"sequence"` (SEQ), `"loss_mask"` (SFT), `"chosen_mask"/"rejected_mask"` (DPO), `"masks"` (GRPO)
+- Data keys: `"sequence"` (SEQ), `"loss_mask"` (SFT), `"chosen"/"rejected"` (DPO), `"prompts"/"responses"/"masks"/"rewards"` (GRPO)
+- Storage backends: HDF5 (`.h5`) or JSON (`.json`/`.jsonl`), auto-detected by `detect_format()`
 
 #### 2.2 Sampler (`sampler.py`)
 - **`ResumableDistributedSampler`**: Tracks `epoch` and `iter` for breakpoint resume; supports shuffle and drop_last
@@ -85,8 +86,9 @@ flowchart LR
 - RoPE position encoding, optional weight tying
 
 #### 3.2 Submodules (`module.py`)
-- **`DecoderBlock`**: GQA attention + residual + MLP + RMSNorm
-- **`GQA`**: Grouped Query Attention (also `MLA` for multi-latent attention)
+- **`DecoderBlock`**: Pre-LN (norm→attention→residual, norm→MLP→residual), uses `AttnFactory` / `FFNFactory`
+- **`GQA`**: Grouped Query Attention (q_heads ÷ kv_heads = n_rep)
+- **`MLA`**: Multi-head Latent Attention with KV compression (kv_lora_rank)
 - **`MLP`**: `SiLU(gate(x)) * up(x)` → down projection
 - **`RotaryEmbedding`**: RoPE complex cache (freqs_cis)
 - **`RMSNorm`**: Layer normalization
@@ -107,10 +109,12 @@ on_train_begin
     for each accumulation window of batches:        ← step phase
       on_step_begin
         for each batch in window:                    ← batch phase
-          on_batch_begin → strategy(batch) → loss → backward → on_batch_end
+          on_batch_begin → strategy(batch) → loss
+          (loss / window_size).backward() → on_batch_end
           iteration += 1
       on_step_end
       optimizer.step() → zero_grad
+      scheduler.step()                              ← per step, not per batch
 
     on_epoch_end
 on_train_end
@@ -120,7 +124,7 @@ Key points:
 - `on_step_*` fires every `accumulation_steps` batches, wrapping optimizer step AFTER the hook
 - `on_batch_*` fires every batch, wrapping loss computation
 - `GradientClippingCallback` fires on `on_step_end`
-- LR scheduler steps inline (no `SchedulerCallback` class)
+- LR scheduler steps inline (no `SchedulerCallback` class), once per optimizer step
 
 #### 4.3 Strategy (`strategy.py`)
 - **`SEQStrategy`**: Next-token prediction, cross-entropy with label smoothing
@@ -167,7 +171,7 @@ Background thread runs continuously:
 
 ### 6. Tokenizer Module
 
-- **`AutoTokenizer`**: Wraps HuggingFace tokenizers (BBPE); `encode`/`decode`/`apply_chat_template`
+- **`AutoTokenizer`**: Wraps HuggingFace `tokenizers.Tokenizer` (not `transformers`); `encode`/`decode`/`apply_chat_template`
 - **`ChatTemplate`**: Jinja2-based template rendering for multi-turn chat
 
 ### 7. Factory & Parallel
@@ -195,14 +199,14 @@ Background thread runs continuously:
    - Computes task-specific loss (cross-entropy, DPO, GRPO)
 
 5. **Backward & Accumulation**
-   - `loss = raw_loss / accumulation_steps`
-   - `loss.backward()` accumulates gradients
+   - `stand_loss = loss / step_batch_nums` (divide by actual batch count in this window)
+   - `stand_loss.backward()` accumulates gradients
    - Every `accumulation_steps` batches: `optimizer.step()` → `zero_grad()`
-   - Every batch: `scheduler.step()` updates learning rate
+   - Every optimizer step: `scheduler.step()` updates learning rate
 
 6. **Checkpoint**
    - `CheckpointCallback` saves `model.state_dict()` + metadata to safetensors at `ckpt_interval` iterations
-   - Does NOT save optimizer/scheduler state (resume resets those)
+   - Does NOT save optimizer/scheduler state by default; `Checkpoint.extra` or `save_extra_fn` can store arbitrary additional data
 
 ## Inference Data Flow — Detailed Steps
 
@@ -230,8 +234,8 @@ Background thread runs continuously:
 
 ## Checkpoint & Serialization
 
-- **Training Checkpoint**: safetensors weights + epoch/iteration metadata. Optimizer/scheduler state is NOT persisted.
+- **Training Checkpoint**: safetensors weights + epoch/iteration metadata + optional extras. Optimizer/scheduler state is NOT persisted by default but can be stored via `extra`.
 - **Inference Loading**: `AutoModel.from_pretrained()` loads from the same safetensors format.
 - **Dataset Serialization**: HDF5 with shared memory support for large-scale pre-training data.
 
-> Document Update Time: 2026-05-14
+> Document Update Time: 2026-05-15

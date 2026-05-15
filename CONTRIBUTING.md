@@ -1,68 +1,100 @@
 # Contributing to AstrAI
 
-Thank you for your interest in contributing to AstrAI! This document provides guidelines and steps for contributing.
+Thank you for your interest in contributing! This document provides step-by-step guidelines.
 
-## How to Contribute
+## Quick Start
 
-### Reporting Issues
-If you encounter a bug or have a feature request, please open an issue on GitHub. Include as much detail as possible:
-- A clear description of the problem or request.
-- Steps to reproduce (for bugs).
-- Your environment (Python version, OS, etc.).
+```bash
+git clone https://github.com/your-username/AstrAI.git
+cd AstrAI
+pip install -e ".[dev]"     # install with dev dependencies (pytest, ruff)
+```
 
-### Submitting Changes
-1. **Fork** the repository.
-2. **Clone** your fork:
-   ```bash
-   git clone https://github.com/your-username/AstrAI.git
-   cd AstrAI
-   ```
-3. **Create a feature branch**:
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-4. **Make your changes**. Follow the code style guidelines below.
-5. **Commit your changes** with a descriptive commit message:
-   ```bash
-   git commit -m "Add: brief description of the change"
-   ```
-6. **Push** to your fork:
-   ```bash
-   git push origin feature/your-feature-name
-   ```
-7. **Open a Pull Request** (PR) against the `main` branch of the upstream repository.
+## Before You Commit
 
-## Code Style
+Run the following checks **in order** — CI will reject if any fail.
 
-AstrAI uses [Ruff](https://docs.astral.sh/ruff/) for code formatting and linting. Please ensure your code is formatted before submitting.
+### 1. Format
 
-- Run Ruff to format and lint (requires conda environment `nlp`):
-  ```bash
-  conda run -n nlp ruff format .
-  conda run -n nlp ruff check --fix .
-  ```
-- The project uses **double quotes** for strings and **4‑space indentation** (as configured in `pyproject.toml`).
+```bash
+ruff format .
+```
 
-## Testing
+> **Note**: `ruff format` may rename parameters (e.g. `mask` → `attn_mask`).  
+> Always review the diff after formatting.
 
-If you add or modify functionality, please include appropriate tests.
+### 2. Import sorting
 
-- Run the test suite with:
-  ```bash
-  conda run -n nlp python -u -m pytest
-  ```
-- Ensure all tests pass before submitting your PR.
+```bash
+ruff check . --select I
+```
+
+If this fails, **manually fix** import ordering (ruff does not auto-fix in this project's CI):
+
+```bash
+ruff check . --select I --fix .
+ruff format .    # re-format after fix
+```
+
+### 3. Run tests
+
+```bash
+python -u -m pytest tests/ -v
+```
+
+> Failed tests may leave orphan tempdirs under `%TEMP%`. Clean them manually if needed.
+
+### 4. (Optional) Full pre-commit check
+
+If you have Git Bash available:
+
+```bash
+bash scripts/pre_commit.sh
+```
+
+This runs format check, import sort check, and tests in one go.
+
+## Commit Style
+
+```
+fix/feat/chore/docs/refactor/perf/test/style/ci/build/revert : short description (~50 chars)
+
+- bullet point body (each ~60 chars)
+```
+
+- **Type** must be one of: `fix`, `feat`, `chore`, `docs`, `refactor`, `perf`, `test`, `style`, `ci`, `build`, `revert`.
+- **Subject line** ends with no period.
+- **Body** uses bullet points starting with `-`.
+- No `(scope)` parentheses.
+
+## Common Issues
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| `ruff check --select I` fails | Wrong import order | `ruff check . --select I --fix .` then `ruff format .` |
+| `ruff format` changed many files | Not formatted before commit | Review diff carefully before staging |
+| Pre-commit hook rejects | Tests or lint failed | Fix individually, do not `--no-verify` |
+| Tests fail with tempdir left | Test crash | Clean `%TEMP%` manually |
+
+## Submitting Changes
+
+1. Fork the repo.
+2. Create a feature branch: `git checkout -b feat/my-feature`
+3. Make changes following the steps above.
+4. Commit with the commit style above.
+5. Push: `git push origin feat/my-feature`
+6. Open a Pull Request against `main`.
 
 ## Code Review
 
-All submissions will be reviewed. We may request changes or discuss alternatives. Please be responsive to feedback.
+- All PRs are reviewed. We may request changes.
+- CI runs `ruff format --check .` then `ruff check . --select I` (no `--fix` in CI).
+- Ensure all tests pass.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the same [GPL-3.0 License](LICENSE) that covers the project.
+By contributing, you agree that your contributions will be licensed under the [GPL-3.0 License](LICENSE).
 
 ---
 
-If you have any questions, feel free to ask in the [GitHub Discussions](https://github.com/ViperEkura/AstrAI/discussions) or open an issue.
-
-Happy contributing!
+Questions? Ask in [GitHub Discussions](https://github.com/ViperEkura/AstrAI/discussions) or open an issue.
