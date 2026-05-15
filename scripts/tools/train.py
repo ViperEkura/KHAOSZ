@@ -155,18 +155,20 @@ def parse_args() -> argparse.Namespace:
 
 def ddp_wrap(model: nn.Module):
     local_rank = get_rank()
-    model = model.to(dtype=torch.bfloat16)
     ddp_model = DDP(
         model,
         device_ids=[local_rank],
         output_device=local_rank,
+        static_graph=True,
         find_unused_parameters=False,
+        gradient_as_bucket_view=True,
+        broadcast_buffers=False,
     )
     return ddp_model
 
 
 def create_optimizer(model: nn.Module, **kwargs) -> optim.Optimizer:
-    return optim.AdamW(model.parameters(), **kwargs)
+    return optim.AdamW(model.parameters(), fused=True, **kwargs)
 
 
 def create_scheduler(
@@ -230,6 +232,8 @@ def train(
     if os.path.exists(weights_path):
         state_dict = st.load_file(weights_path)
         model.load_state_dict(state_dict, strict=False)
+
+    model = model.to(dtype=torch.bfloat16)
 
     strategy_kwargs = {
         "dpo_beta": dpo_beta,
