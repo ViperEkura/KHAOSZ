@@ -7,13 +7,11 @@ from torch import Tensor
 from astrai.config.model_config import ModelConfig
 from astrai.inference.core.cache import KvcacheView
 from astrai.model.automodel import AutoModel
-from astrai.model.module import (
-    DecoderBlock,
-    Embedding,
-    Linear,
-    RMSNorm,
-    RotaryEmbedding,
-)
+from astrai.model.components.decoder_block import DecoderBlock
+from astrai.model.components.embedding import Embedding
+from astrai.model.components.linear import Linear
+from astrai.model.components.norm import RMSNorm
+from astrai.model.components.rope import RotaryEmbedding
 
 
 def process_attention_mask(
