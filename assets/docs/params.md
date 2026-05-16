@@ -25,8 +25,8 @@
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `--adamw_beta1` | AdamW beta1 | 0.9 |
-| `--adamw_beta2` | AdamW beta2 | 0.95 |
+| `--adamw_beta1` | AdamW beta1 | 0.95 |
+| `--adamw_beta2` | AdamW beta2 | 0.99 |
 | `--adamw_weight_decay` | AdamW weight decay | 0.01 |
 
 ### Data Loading
@@ -60,7 +60,7 @@
 | Parameter | Description | Default | Used by |
 |-----------|-------------|---------|---------|
 | `--dpo_beta` | DPO beta value | 0.1 | `dpo` |
-| `--label_smoothing` | Label smoothing for cross-entropy loss | 0.1 (CLI) / 0.0 (strategy default) | `seq`, `sft` |
+| `--label_smoothing` | Label smoothing for cross-entropy loss | 0.05 | `seq`, `sft` |
 | `--group_size` | GRPO group size | 4 | `grpo` |
 | `--grpo_clip_eps` | GRPO clipping epsilon | 0.2 | `grpo` |
 | `--grpo_kl_coef` | GRPO KL penalty coefficient | 0.01 | `grpo` |
@@ -73,7 +73,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 nohup python scripts/tools/train.py \
     --nprocs=4 \
-    --train_type=sft \
+    --train_type=pt \
     --data_root_path=/path/to/dataset \
     --param_path=/path/to/model \
     --batch_per_device=4 \
@@ -81,14 +81,14 @@ nohup python scripts/tools/train.py \
     --warmup_ratio=0.05 \
     --max_lr=1e-4 \
     --max_grad_norm=1.0 \
-    --adamw_beta1=0.99 \
-    --adamw_beta2=0.95 \
-    --adamw_weight_decay=1e-5 \
+    --adamw_beta1=0.95 \
+    --adamw_beta2=0.99 \
+    --adamw_weight_decay=0.01 \
     --window_size=2048 \
     --ckpt_interval=10000 \
     --ckpt_dir=./checkpoint \
     --random_seed=3407 \
-    --label_smoothing=0.1 \
+    --label_smoothing=0.05 \
     > out.log 2> err.log &
 ```
 

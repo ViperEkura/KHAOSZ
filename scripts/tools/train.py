@@ -69,13 +69,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--adamw_beta1",
         type=float,
-        default=0.9,
+        default=0.95,
         help="Beta values for AdamW optimizer.",
     )
     parser.add_argument(
         "--adamw_beta2",
         type=float,
-        default=0.95,
+        default=0.99,
         help="Beta values for AdamW optimizer.",
     )
     parser.add_argument(
@@ -116,7 +116,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--label_smoothing",
         type=float,
-        default=0.1,
+        default=0.05,
         help="cross_entropy function label smoothing parameter",
     )
 
