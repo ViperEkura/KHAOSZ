@@ -143,7 +143,7 @@ class MLA(nn.Module):
 
         self.kv_b_proj = Linear(
             kv_lora_rank,
-            n_kv_heads * (self.head_dim + qk_rope_head_dim + self.head_dim),
+            n_kv_heads * (2 * self.head_dim),
         )
 
         self.o_proj = Linear(dim, dim, bias=False)
@@ -176,7 +176,7 @@ class MLA(nn.Module):
 
         q_nope, q_rope = (
             q[..., : self.qk_nope_head_dim],
-            q[..., self.qk_rope_head_dim :],
+            q[..., self.qk_nope_head_dim :],
         )
         q_rope = apply_rotary_emb(q_rope, rotary_emb)
         k_rope = apply_rotary_emb(k_rope, rotary_emb)

@@ -16,13 +16,13 @@ class DecoderBlock(nn.Module):
         n_heads: int,
         dim_ffn: int,
         n_kv_heads: int,
-        norm_eps: int,
+        norm_eps: float,
         use_qk_norm: bool,
         use_gated_attention: bool,
         layer_id: int,
         attn_type: str = "gqa",
         ffn_type: str = "mlp",
-        **moe_kwargs,
+        **kwargs,
     ):
         super().__init__()
         self.attention = AttnFactory.create(
@@ -34,10 +34,11 @@ class DecoderBlock(nn.Module):
             norm_eps=norm_eps,
             use_gated_attention=use_gated_attention,
             layer_id=layer_id,
+            **kwargs,
         )
         self.input_norm = RMSNorm(dim, norm_eps)
         self.post_attention_norm = RMSNorm(dim, norm_eps)
-        self.mlp = FFNFactory.create(ffn_type, dim, dim_ffn, **moe_kwargs)
+        self.mlp = FFNFactory.create(ffn_type, dim, dim_ffn, **kwargs)
 
     def forward(
         self,

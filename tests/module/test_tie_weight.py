@@ -17,10 +17,10 @@ def transformer_test_env():
 
     config = {
         "vocab_size": 1000,
-        "dim": 128,
-        "n_heads": 4,
-        "n_kv_heads": 2,
-        "dim_ffn": 256,
+        "dim": 8,
+        "n_heads": 2,
+        "n_kv_heads": 1,
+        "dim_ffn": 16,
         "max_len": 64,
         "n_layers": 2,
         "norm_eps": 1e-5,

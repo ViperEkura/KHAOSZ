@@ -107,12 +107,12 @@ def test_model():
     """Session-scoped small Transformer model, created once."""
     config = ModelConfig(
         vocab_size=1000,
-        dim=16,
-        n_heads=4,
-        n_kv_heads=2,
-        dim_ffn=32,
-        max_len=1024,
-        n_layers=4,
+        dim=8,
+        n_heads=2,
+        n_kv_heads=1,
+        dim_ffn=16,
+        max_len=64,
+        n_layers=2,
         norm_eps=1e-5,
     )
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -137,12 +137,12 @@ def base_test_env(test_model, test_tokenizer):
         json.dump(
             {
                 "vocab_size": 1000,
-                "dim": 16,
-                "n_heads": 4,
-                "n_kv_heads": 2,
-                "dim_ffn": 32,
-                "max_len": 1024,
-                "n_layers": 4,
+                "dim": 8,
+                "n_heads": 2,
+                "n_kv_heads": 1,
+                "dim_ffn": 16,
+                "max_len": 64,
+                "n_layers": 2,
                 "norm_eps": 1e-5,
             },
             f,

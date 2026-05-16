@@ -106,6 +106,11 @@ class ModelConfig(BaseModelConfig):
     use_qk_norm: Optional[bool] = None
     use_gated_attention: Optional[bool] = None
 
+    # MLA
+    kv_lora_rank: Optional[int] = None
+    qk_nope_head_dim: Optional[int] = None
+    qk_rope_head_dim: Optional[int] = None
+
     # MoE
     ffn_type: str = "mlp"
     n_routed_experts: Optional[int] = None

@@ -53,9 +53,13 @@ class Transformer(AutoModel):
     def __init__(self, config: ModelConfig):
         super().__init__(config)
         self.config = config
-        self.rotary_embedding = RotaryEmbedding(
-            config.dim // config.n_heads, config.max_len
+        rope_dim = (
+            config.qk_rope_head_dim
+            if config.attn_type == "mla"
+            else config.dim // config.n_heads
         )
+        rope_base = config.rope_theta if config.rope_theta is not None else 10000
+        self.rotary_embedding = RotaryEmbedding(rope_dim, config.max_len, rope_base)
         self.embed_tokens = Embedding(config.vocab_size, config.dim)
 
         self.layers = nn.ModuleList(
@@ -75,6 +79,9 @@ class Transformer(AutoModel):
                     n_shared_experts=config.n_shared_experts,
                     n_activated_experts=config.n_activated_experts,
                     topk_method=config.moe_topk_method,
+                    kv_lora_rank=config.kv_lora_rank,
+                    qk_nope_head_dim=config.qk_nope_head_dim,
+                    qk_rope_head_dim=config.qk_rope_head_dim,
                 )
                 for layer_id in range(config.n_layers)
             ]
@@ -83,7 +90,7 @@ class Transformer(AutoModel):
         self.norm = RMSNorm(config.dim, config.norm_eps)
         self.lm_head = Linear(config.dim, config.vocab_size)
 
-        if self.config.tie_weight:
+        if self.config.tie_weight is True:
             self.lm_head.weight = self.embed_tokens.weight
 
         self._init_weights()
@@ -99,7 +106,7 @@ class Transformer(AutoModel):
 
         state_dict = dict(state_dict)
 
-        if self.config.tie_weight:
+        if self.config.tie_weight is True:
             # same tensor for embed and lm_head
             if embed_key in state_dict:
                 state_dict[lm_head_key] = state_dict[embed_key]
@@ -115,7 +122,7 @@ class Transformer(AutoModel):
             destination=destination, prefix=prefix, keep_vars=keep_vars
         )
 
-        if self.config.tie_weight:
+        if self.config.tie_weight is True:
             lm_head_key = prefix + "lm_head.weight"
             if lm_head_key in state_dict:
                 del state_dict[lm_head_key]

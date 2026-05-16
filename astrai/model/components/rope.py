@@ -30,7 +30,7 @@ def apply_rotary_emb(x: torch.Tensor, freqs_cis: Tensor) -> Tensor:
 
 
 class RotaryEmbedding(nn.Module):
-    def __init__(self, dim: int, max_len: int, base: int = 10000):
+    def __init__(self, dim: int, max_len: int, base: float = 10000):
         super().__init__()
         self.dim = dim
         self.max_len = max_len
