@@ -163,4 +163,5 @@ def run_server(
         app,
         host=host,
         port=port,
+        reload=reload,
     )

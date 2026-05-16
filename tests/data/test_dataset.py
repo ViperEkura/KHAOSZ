@@ -10,7 +10,7 @@ from astrai.dataset.storage import (
     BaseSegmentFetcher,
     H5Storage,
     MultiSegmentFetcher,
-    create_storage,
+    StorageFactory,
     detect_format,
     load_json,
     save_h5,
@@ -368,9 +368,9 @@ def test_detect_format_unsupported_file(base_test_env):
 
 
 def test_create_storage_invalid_type():
-    """create_storage raises ValueError for unknown type"""
-    with pytest.raises(ValueError, match="Unknown storage type"):
-        create_storage("parquet")
+    """StorageFactory.create raises ValueError for unknown type"""
+    with pytest.raises(ValueError, match="Unknown component"):
+        StorageFactory.create("parquet")
 
 
 def test_json_pretokenized_without_tokenizer(base_test_env):

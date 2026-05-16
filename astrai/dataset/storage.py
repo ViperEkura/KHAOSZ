@@ -15,6 +15,8 @@ import h5py
 import torch
 from torch import Tensor
 
+from astrai.factory import BaseFactory
+
 
 def save_h5(file_path: str, file_name: str, tensor_group: Dict[str, List[Tensor]]):
     os.makedirs(file_path, exist_ok=True)
@@ -258,6 +260,24 @@ class BaseStorage(ABC):
         return self._fetcher.multi_keys
 
 
+class StorageFactory(BaseFactory["BaseStorage"]):
+    """Factory for creating storage backends by type name.
+
+    Example:
+        @StorageFactory.register("custom")
+        class CustomStorage(BaseStorage):
+            ...
+
+        storage = StorageFactory.create("custom")
+    """
+
+    @classmethod
+    def _validate_component(cls, storage_cls: type) -> None:
+        if not issubclass(storage_cls, BaseStorage):
+            raise TypeError(f"{storage_cls.__name__} must inherit from BaseStorage")
+
+
+@StorageFactory.register("h5")
 class H5Storage(BaseStorage):
     """HDF5-based storage backend (pre-tokenized data)."""
 
@@ -266,6 +286,7 @@ class H5Storage(BaseStorage):
         self._fetcher = MultiSegmentFetcher(segments)
 
 
+@StorageFactory.register("json")
 class JSONStorage(BaseStorage):
     """JSON-based storage backend.
 
@@ -278,35 +299,3 @@ class JSONStorage(BaseStorage):
     def load(self, load_path: str, tokenizer=None) -> None:
         segments = load_json(load_path, tokenizer=tokenizer)
         self._fetcher = MultiSegmentFetcher(segments)
-
-
-_STORAGE_REGISTRY: Dict[str, type] = {
-    "h5": H5Storage,
-    "json": JSONStorage,
-}
-
-
-def create_storage(storage_type: str) -> BaseStorage:
-    """Create a storage instance by type name.
-
-    Args:
-        storage_type: Storage type name ("h5", "json")
-
-    Returns:
-        Storage instance
-
-    Raises:
-        ValueError: If the storage type is unknown
-    """
-    storage_cls = _STORAGE_REGISTRY.get(storage_type)
-    if storage_cls is None:
-        raise ValueError(
-            f"Unknown storage type: '{storage_type}'. "
-            f"Available: {sorted(_STORAGE_REGISTRY.keys())}"
-        )
-    return storage_cls()
-
-
-def available_storage_types() -> List[str]:
-    """Return list of registered storage type names."""
-    return sorted(_STORAGE_REGISTRY.keys())

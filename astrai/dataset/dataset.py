@@ -9,7 +9,7 @@ from torch.utils.data import Dataset
 
 from astrai.dataset.storage import (
     BaseStorage,
-    create_storage,
+    StorageFactory,
     detect_format,
 )
 from astrai.factory import BaseFactory
@@ -42,7 +42,7 @@ class BaseDataset(Dataset, ABC):
         """
         if storage_type is None:
             storage_type = detect_format(load_path)
-        self.storage = create_storage(storage_type)
+        self.storage = StorageFactory.create(storage_type)
         self.storage.load(load_path, tokenizer=tokenizer)
 
     def load_json(self, load_path: str, tokenizer=None):
