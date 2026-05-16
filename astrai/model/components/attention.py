@@ -40,7 +40,6 @@ class GQA(nn.Module):
         norm_eps: float,
         use_gated_attention: bool,
         layer_id: int,
-        **kwargs,
     ):
         super().__init__()
         assert dim % n_heads == 0
@@ -123,7 +122,6 @@ class MLA(nn.Module):
         norm_eps: float,
         use_gated_attention: bool,
         layer_id: int,
-        **kwargs,
     ):
         super().__init__()
         self.dim = dim

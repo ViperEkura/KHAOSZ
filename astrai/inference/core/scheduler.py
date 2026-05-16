@@ -22,14 +22,22 @@ class InferenceScheduler:
         tokenizer: AutoTokenizer,
         max_batch_size: int = 16,
         max_seq_len: Optional[int] = None,
-        max_prompt_len: int = 512,
+        max_prompt_len: int = 2048,
         page_size: int = 64,
         device: Optional[str] = None,
         dtype: Optional[torch.dtype] = None,
     ):
         config = model.config
 
-        self.max_seq_len = max_seq_len or config.max_len
+        if max_seq_len is not None:
+            self.max_seq_len = max_seq_len
+        elif config.max_len is not None:
+            self.max_seq_len = config.max_len
+        else:
+            raise ValueError(
+                "max_seq_len must be provided either as argument "
+                "or in model config (config.max_len)"
+            )
         self.device = device or next(model.parameters()).device
         self.dtype = dtype or next(model.parameters()).dtype
 

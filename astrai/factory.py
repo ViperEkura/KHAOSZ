@@ -1,5 +1,6 @@
 """Base factory class for extensible component registration."""
 
+import inspect
 from abc import ABC
 from typing import Callable, Dict, Generic, List, Optional, Tuple, Type, TypeVar
 
@@ -122,6 +123,10 @@ class BaseFactory(ABC, Generic[T]):
     def create(cls, name: str, *args, **kwargs) -> T:
         """Create a component instance by name.
 
+        Filters kwargs to match the component's __init__ signature,
+        so components don't need to declare **kwargs just to absorb
+        parameters meant for other components.
+
         Args:
             name: Registered name of the component
             *args: Positional arguments passed to component constructor
@@ -139,6 +144,17 @@ class BaseFactory(ABC, Generic[T]):
                 f"Supported types: {sorted(cls._registry.list_names())}"
             )
         component_cls = cls._registry.get(name)
+        sig = inspect.signature(component_cls.__init__)
+        has_var_kwargs = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        if not has_var_kwargs:
+            valid = {
+                p.name
+                for p in sig.parameters.values()
+                if p.name != "self" and p.kind != inspect.Parameter.VAR_KEYWORD
+            }
+            kwargs = {k: v for k, v in kwargs.items() if k in valid}
         return component_cls(*args, **kwargs)
 
     @classmethod
