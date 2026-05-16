@@ -1,5 +1,4 @@
 import logging
-from itertools import batched
 from typing import List, Optional
 
 from astrai.config import TrainConfig
@@ -33,11 +32,6 @@ class Trainer:
             CallbackFactory.create("gradient_clipping", cfg.max_grad_norm),
         ]
 
-    def _build_context(self, checkpoint: Optional[Checkpoint]) -> TrainContext:
-        return (
-            TrainContextBuilder(self.train_config).with_checkpoint(checkpoint).build()
-        )
-
     def _call_callbacks(self, method_name: str, context: TrainContext):
         for callback in self.callbacks:
             method = getattr(callback, method_name, None)
@@ -45,49 +39,47 @@ class Trainer:
                 method(context)
 
     def train(self, checkpoint: Optional[Checkpoint] = None):
-        config = self.train_config
+        cfg = self.train_config
         spawn_parallel_fn(
             self._train_impl,
-            backend=config.backend,
-            world_size=config.nprocs,
-            master_addr=config.master_addr,
-            master_port=config.master_port,
-            device_type=config.device_type,
+            backend=cfg.backend,
+            world_size=cfg.nprocs,
+            master_addr=cfg.master_addr,
+            master_port=cfg.master_port,
+            device_type=cfg.device_type,
             checkpoint=checkpoint,
         )
 
-    def _train_impl(self, checkpoint: Optional[Checkpoint] = None) -> Checkpoint:
-        context = self._build_context(checkpoint)
+    def _train_impl(self, checkpoint: Optional[Checkpoint] = None):
+        cfg = self.train_config
+        context = TrainContextBuilder(cfg).with_checkpoint(checkpoint).build()
         self._call_callbacks("on_train_begin", context)
 
         try:
             context.model.train()
-            accumulation_steps = max(self.train_config.accumulation_steps, 1)
+            grad_accum_steps = cfg.grad_accum_steps
 
-            for epoch in range(context.epoch, self.train_config.n_epoch):
+            for epoch in range(context.epoch, cfg.n_epoch):
                 context.epoch = epoch
                 self._call_callbacks("on_epoch_begin", context)
 
-                for steps in batched(context.dataloader, accumulation_steps):
-                    self._call_callbacks("on_step_begin", context)
+                for batch in context.dataloader:
+                    self._call_callbacks("on_batch_begin", context)
+                    loss = context.strategy(batch)
+                    context.loss = loss.item()
+                    stand_loss = loss / grad_accum_steps
+                    stand_loss.backward()
+                    context.iteration += 1
+                    self._call_callbacks("on_batch_end", context)
 
-                    step_batch_nums = len(steps)
-                    for batch in steps:
-                        self._call_callbacks("on_batch_begin", context)
-                        loss = context.strategy(batch)
-                        context.loss = loss.item()
-                        context.iteration += 1
+                    if context.iteration % grad_accum_steps == 0:
+                        self._call_callbacks("on_step_begin", context)
+                        context.optimizer.step()
+                        context.optimizer.zero_grad()
+                        self._call_callbacks("on_step_end", context)
 
-                        stand_loss = loss / step_batch_nums
-                        stand_loss.backward()
-                        self._call_callbacks("on_batch_end", context)
-
-                    self._call_callbacks("on_step_end", context)
-                    context.optimizer.step()
-                    context.optimizer.zero_grad()
-
-                    if context.scheduler:
-                        context.scheduler.step()
+                        if context.scheduler:
+                            context.scheduler.step()
 
                 self._call_callbacks("on_epoch_end", context)
 

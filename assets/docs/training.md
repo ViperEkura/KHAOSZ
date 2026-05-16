@@ -65,24 +65,24 @@ The complex rotation `freqs_cis` is pre-computed once (`cos, sin` pairs per posi
 
 ## Training Loop
 
-Nested loop: **epoch** → **step** (accumulation window) → **batch**.
+Two-level loop: **epoch** → **batch**. Optimizer step fires every `grad_accum_steps` batches.
 
 ```
 on_train_begin
   on_epoch_begin
-    for steps in batched(dataloader, accumulation_steps):
-      on_step_begin
-        step_batch_nums = len(steps)
-        for batch in steps:
-          on_batch_begin
-          loss = strategy(batch)
-          (loss / step_batch_nums).backward()
-          iteration += 1
-          on_batch_end
-      on_step_end
-      optimizer.step()
-      optimizer.zero_grad()
-      scheduler.step()
+    for batch in dataloader:
+      on_batch_begin
+      loss = strategy(batch)
+      (loss / grad_accum_steps).backward()
+      iteration += 1
+      on_batch_end
+
+      if iteration % grad_accum_steps == 0:
+        on_step_begin
+        optimizer.step()
+        optimizer.zero_grad()
+        on_step_end
+        scheduler.step()
     on_epoch_end
 on_train_end
 ```
@@ -91,9 +91,9 @@ on_train_end
 
 | Hook | Fires | Default callback |
 |------|-------|-----------------|
-| `on_step_end` | Every accumulation window | `GradientClippingCallback` |
+| `on_step_begin` | Every accumulation window | `GradientClippingCallback` |
 | `on_batch_end` | Every batch | `CheckpointCallback`, `MetricLoggerCallback`, `ProgressBarCallback` |
-| `on_train_end` | Training ends | `CheckpointCallback` (final save) |
+| `on_train_end` | Training ends | `CheckpointCallback`, `MetricLoggerCallback` (final save) |
 
 Default callbacks: `progress_bar` (tqdm), `checkpoint` (safetensors, rank-0), `metric_logger` (JSONL, rank-0), `gradient_clipping`.
 
@@ -162,7 +162,7 @@ Checkpoint(state_dict, epoch, iteration, extra)
   └── load(save_dir)    broadcasts metadata from rank-0
 ```
 
-Optimizer/scheduler state NOT persisted by default; `Checkpoint.extra` can store arbitrary data.
+Optimizer/scheduler state persisted by default via `Checkpoint.extra`.
 
 ## TrainContextBuilder (Builder Pattern)
 
@@ -183,17 +183,29 @@ context = (
 ## Training CLI
 
 ```bash
-python scripts/tools/train.py \
-    --train_type seq \
-    --data_root_path /path/to/data \
-    --param_path /path/to/model \
-    --batch_size 4 \
-    --accumulation_steps 8 \
-    --max_lr 3e-4 \
-    --warmup_steps 1000 \
-    --n_epoch 1
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+
+nohup python scripts/tools/train.py \
+    --nprocs=4 \
+    --train_type=sft \
+    --data_root_path=/path/to/dataset \
+    --param_path=/path/to/model \
+    --batch_per_device=4 \
+    --grad_accum_steps=8 \
+    --warmup_ratio=0.05 \
+    --max_lr=1e-4 \
+    --max_grad_norm=1.0 \
+    --adamw_beta1=0.99 \
+    --adamw_beta2=0.95 \
+    --adamw_weight_decay=1e-5 \
+    --window_size=2048 \
+    --ckpt_interval=10000 \
+    --ckpt_dir=./checkpoint \
+    --random_seed=3407 \
+    --label_smoothing=0.1 \
+    > out.log 2> err.log &
 ```
 
 Full parameter reference at [params.md](params.md).
 
-> Document Update Time: 2026-05-15
+> Document Update Time: 2026-05-16

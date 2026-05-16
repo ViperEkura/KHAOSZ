@@ -10,14 +10,14 @@
 | `--data_root_path` | Dataset root directory | required |
 | `--param_path` | Model parameters or checkpoint path | required |
 | `--n_epoch` | Total training epochs | 1 |
-| `--batch_size` | Batch size | 1 |
-| `--accumulation_steps` | Gradient accumulation steps between optimizer steps | 1 |
+| `--batch_per_device` | Batch size per device | 1 |
+| `--grad_accum_steps` | Gradient accumulation steps between optimizer steps | 1 |
 
 ### Learning Rate Scheduling
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `--warmup_steps` | Warmup steps | 1000 |
+| `--warmup_ratio` | Fraction of total steps used for LR warmup | 0.05 |
 | `--max_lr` | Maximum learning rate (cosine decay after warmup) | 3e-4 |
 | `--max_grad_norm` | Maximum gradient norm for clipping | 1.0 |
 
@@ -69,90 +69,29 @@
 ### Usage Example
 
 ```bash
-python scripts/tools/train.py \
-  --train_type seq \
-  --data_root_path /path/to/dataset \
-  --param_path /path/to/model \
-  --n_epoch 3 \
-  --batch_size 4 \
-  --accumulation_steps 8 \
-  --max_lr 3e-4 \
-  --warmup_steps 2000 \
-  --max_grad_norm 1.0 \
-  --ckpt_interval 5000 \
-  --ckpt_dir ./checkpoints \
-  --num_workers 4 \
-  --nprocs 1 \
-  --device_type cuda
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+
+nohup python scripts/tools/train.py \
+    --nprocs=4 \
+    --train_type=sft \
+    --data_root_path=/path/to/dataset \
+    --param_path=/path/to/model \
+    --batch_per_device=4 \
+    --grad_accum_steps=8 \
+    --warmup_ratio=0.05 \
+    --max_lr=1e-4 \
+    --max_grad_norm=1.0 \
+    --adamw_beta1=0.99 \
+    --adamw_beta2=0.95 \
+    --adamw_weight_decay=1e-5 \
+    --window_size=2048 \
+    --ckpt_interval=10000 \
+    --ckpt_dir=./checkpoint \
+    --random_seed=3407 \
+    --label_smoothing=0.1 \
+    > out.log 2> err.log &
 ```
 
 ---
 
-## Generation Parameters
-
-### GenerationRequest Parameters
-
-| Parameter | Description | Default Value |
-|-----------|-------------|---------------|
-| `messages` | List of message dictionaries (role, content) | required |
-| `temperature` | Sampling temperature (higher = more random) | 1.0 |
-| `top_p` | Nucleus sampling threshold | 1.0 |
-| `top_k` | Top-k sampling count | 50 |
-| `max_tokens` | Maximum generation length | None (defaults to max_seq_len - prompt_len) |
-| `stream` | Whether to stream output | False |
-
-### Usage Example
-
-```python
-import torch
-from astrai.model import AutoModel
-from astrai.tokenize import AutoTokenizer
-from astrai.inference import InferenceEngine, GenerationRequest
-
-# Load model using AutoModel
-model = AutoModel.from_pretrained("your_model_dir")
-
-# Load tokenizer
-tokenizer = AutoTokenizer.from_pretrained("your_model_dir")
-
-# Create engine with separate model and tokenizer
-engine = InferenceEngine(
-    model=model,
-    tokenizer=tokenizer,
-)
-
-# Build request with messages format
-request = GenerationRequest(
-    messages=[
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "Hello"},
-    ],
-    temperature=0.8,
-    top_p=0.95,
-    top_k=50,
-    max_tokens=None,
-)
-
-# Generate (streaming)
-for token in engine.generate_with_request(request):
-    print(token, end="", flush=True)
-
-# Or use simple generate interface
-result = engine.generate(
-    prompt="Hello",
-    stream=False,
-    max_tokens=1024,
-    temperature=0.8,
-    top_p=0.95,
-    top_k=50,
-)
-```
-
-### Generation Modes
-
-| Mode | Description |
-|------|-------------|
-| `stream=True` | Streaming output, yields token by token |
-| `stream=False` | Non-streaming output, returns complete result |
-
-> Document Update Time: 2026-05-15
+> Document Update Time: 2026-05-16

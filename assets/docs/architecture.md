@@ -30,6 +30,9 @@ classDiagram
             +int n_shared_experts
             +int n_activated_experts
             +str moe_topk_method
+            +Optional[int] kv_lora_rank
+            +Optional[int] qk_nope_head_dim
+            +Optional[int] qk_rope_head_dim
             +load(config_path) ModelConfig
             +save(config_path)
         }
@@ -41,8 +44,8 @@ classDiagram
             +Callable optimizer_fn
             +Callable scheduler_fn
             +int n_epoch
-            +int batch_size
-            +int accumulation_steps
+            +int batch_per_device
+            +int grad_accum_steps
             +float max_grad_norm
             +int start_epoch
             +int start_batch
@@ -69,7 +72,7 @@ classDiagram
         class BaseDataset {
             +int window_size
             +int stride
-            +BaseStorage storage
+            +Optional[BaseStorage] storage
             +load(load_path, storage_type, tokenizer)
             +__getitem__(index)
             +__len__()
@@ -126,8 +129,8 @@ classDiagram
         }
 
         class ResumableDistributedSampler {
-            +int start_epoch
-            +int start_iter
+            +int epoch
+            +int iter
         }
 
         class DatasetFactory {
@@ -155,7 +158,7 @@ classDiagram
             +Registry _registry
             +register(model_type) decorator
             +get_component_class(model_type) Type
-            +from_pretrained(path, disable_random_init) nn.Module
+            +from_pretrained(path, disable_random_init, strict) nn.Module
             +save_pretrained(save_directory)
             +to(*args, **kwargs) Self
         }
@@ -167,7 +170,7 @@ classDiagram
             +ModuleList layers
             +RMSNorm norm
             +Linear lm_head
-            +forward(input_ids, input_mask, paged_cache, position_ids) Dict
+            +forward(input_ids, input_mask, paged_cache, position_ids) Dict[str, Tensor]
             +load_state_dict(state_dict)
             +state_dict()
         }
@@ -185,6 +188,7 @@ classDiagram
             +int n_kv_heads
             +int head_dim
             +int n_rep
+            +int layer_id
             +bool use_qk_norm
             +bool use_gated_attention
             +Linear q_proj, k_proj, v_proj, o_proj
@@ -201,6 +205,7 @@ classDiagram
             +int qk_nope_head_dim
             +int qk_rope_head_dim
             +int n_rep
+            +int layer_id
             +bool use_gated_attention
             +Linear q_proj, kv_a_proj, kv_b_proj
             +Linear o_proj
@@ -215,6 +220,7 @@ classDiagram
         }
 
         class DeepSeekMoE {
+            +int dim
             +int n_routed_experts
             +int n_shared_experts
             +int n_activated_experts
@@ -236,6 +242,7 @@ classDiagram
         class RMSNorm {
             +Parameter weight
             +float norm_eps
+            +tuple normalized_shape
             +forward(x) Tensor
         }
 
@@ -299,7 +306,6 @@ classDiagram
             +TrainConfig train_config
             +List[TrainCallback] callbacks
             +train(checkpoint)
-            +_build_context(checkpoint) TrainContext
             +_get_default_callbacks() List[TrainCallback]
         }
 
@@ -324,7 +330,7 @@ classDiagram
         }
 
         class BaseStrategy {
-            +nn.Module model
+            +Union[Callable, nn.Module] model
             +str device
             +compute_loss(batch) Tensor
         }
@@ -332,7 +338,7 @@ classDiagram
         class StrategyFactory {
             +Registry _registry
             +register(name) decorator
-            +create(model, train_type, device, **kwargs) BaseStrategy
+            +create(train_type, model, device, **kwargs) BaseStrategy
         }
 
         class SEQStrategy {
@@ -400,7 +406,7 @@ classDiagram
 
         class GradientClippingCallback {
             +float max_grad_norm
-            +on_step_end(context)
+            +on_step_begin(context)
         }
 
         class CheckpointCallback {
@@ -459,10 +465,7 @@ classDiagram
             +TaskManager _task_mgr
             +bool _running
             +Thread _loop_thread
-            +int max_batch_size
             +int max_seq_len
-            +int max_prompt_len
-            +int page_size
             +add_task(prompt, max_tokens, temperature, top_p, top_k, stream_callback) str
             +remove_task(task_id)
             +start()
@@ -500,10 +503,7 @@ classDiagram
         }
 
         class Storage {
-            +int n_layers
             +int page_size
-            +int head_dim
-            +int n_kv_heads
             +Tensor k_cache
             +Tensor v_cache
             +write(layer_id, page_table, start_pos, k, v)
@@ -675,7 +675,6 @@ classDiagram
         }
 
         class AnthropicHandler {
-            +List[str] stop_sequences
             +build_prompt() str
             +create_response_id() str
             +on_token(ctx, token, stop_checker) Optional[str]
@@ -704,7 +703,7 @@ classDiagram
 
     namespace parallel {
         class Functions {
-            +spawn_parallel_fn(fn, nprocs)
+            +spawn_parallel_fn(func, world_size, backend, master_addr, master_port, device_type, **kwargs)
             +setup_parallel(rank, world_size, backend, master_addr, master_port, device_type)
             +get_current_device() str
             +get_world_size() int
@@ -878,4 +877,4 @@ classDiagram
 8. **Scheduler**: `SchedulerFactory` creates `CosineScheduler`/`SGDRScheduler`
 9. **AutoModel**: `from_pretrained()` loads `config.json` + `model.safetensors`, `_disable_random_init` replaces `nn.init.*` with no-ops
 
-> Document Update Time: 2026-05-15
+> Document Update Time: 2026-05-16

@@ -28,9 +28,9 @@ def test_early_stopping_simulation(base_test_env, early_stopping_dataset):
         dataset=early_stopping_dataset,
         ckpt_dir=base_test_env["test_dir"],
         n_epoch=2,
-        batch_size=2,
+        batch_per_device=2,
         ckpt_interval=1,
-        accumulation_steps=2,
+        grad_accum_steps=2,
         random_seed=np.random.randint(1e4),
         device_type=base_test_env["device"],
     )

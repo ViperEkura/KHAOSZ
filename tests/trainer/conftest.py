@@ -31,8 +31,8 @@ def create_train_config(
     device: str,
     strategy: str = "seq",
     n_epoch: int = 1,
-    batch_size: int = 2,
-    accumulation_steps: int = 1,
+    batch_per_device: int = 2,
+    grad_accum_steps: int = 1,
     max_grad_norm: float = 1.0,
     ckpt_interval: int = 5,
     random_seed: int = 42,
@@ -47,8 +47,8 @@ def create_train_config(
         device: Device type ("cuda" or "cpu")
         strategy: Training strategy type (default: "seq")
         n_epoch: Number of epochs (default: 1)
-        batch_size: Batch size (default: 2)
-        accumulation_steps: Gradient accumulation steps (default: 1)
+        batch_per_device: Batch size per device (default: 2)
+        grad_accum_steps: Gradient accumulation steps (default: 1)
         max_grad_norm: Maximum gradient norm for clipping (default: 1.0)
         ckpt_interval: Checkpoint save interval in iterations (default: 5)
         random_seed: Random seed for reproducibility (default: 42)
@@ -74,9 +74,9 @@ def create_train_config(
         scheduler_fn=scheduler_fn,
         ckpt_dir=test_dir,
         n_epoch=n_epoch,
-        batch_size=batch_size,
+        batch_per_device=batch_per_device,
         ckpt_interval=ckpt_interval,
-        accumulation_steps=accumulation_steps,
+        grad_accum_steps=grad_accum_steps,
         max_grad_norm=max_grad_norm,
         random_seed=random_seed,
         device_type=device,

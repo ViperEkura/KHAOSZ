@@ -70,7 +70,7 @@ class TrainContextBuilder:
         context.scheduler = self.config.scheduler_fn(context.optimizer)
 
         cfg = self.config
-        sampler_offset = context.iteration * cfg.batch_size
+        sampler_offset = context.iteration * cfg.batch_per_device
         sampler = ResumableDistributedSampler(
             data_source=cfg.dataset,
             start_epoch=context.epoch,
@@ -79,7 +79,7 @@ class TrainContextBuilder:
         )
         context.dataloader = DataLoader(
             cfg.dataset,
-            batch_size=cfg.batch_size,
+            batch_size=cfg.batch_per_device,
             sampler=sampler,
             num_workers=cfg.num_workers,
             pin_memory=cfg.pin_memory,

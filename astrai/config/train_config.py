@@ -20,8 +20,10 @@ class TrainConfig:
         default=None, metadata={"help": "Scheduler factory for training."}
     )
     n_epoch: int = field(default=1, metadata={"help": "Number of epochs for training."})
-    batch_size: int = field(default=4, metadata={"help": "Batch size for training."})
-    accumulation_steps: int = field(
+    batch_per_device: int = field(
+        default=4, metadata={"help": "Batch size per device."}
+    )
+    grad_accum_steps: int = field(
         default=1, metadata={"help": "Number of iterations between steps."}
     )
     max_grad_norm: float = field(

@@ -78,15 +78,27 @@ Or download manually from [HuggingFace](https://huggingface.co/ViperEk/KHAOSZ) i
 #### Train a Model
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/tools/train.py \
-    --train_type seq \
-    --data_root_path /path/to/dataset \
-    --param_path /path/to/model \
-    --batch_size 4 \
-    --accumulation_steps 8 \
-    --max_lr 3e-4 \
-    --warmup_steps 1000 \
-    --n_epoch 1
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+
+nohup python scripts/tools/train.py \
+    --nprocs=4 \
+    --train_type=sft \
+    --data_root_path=/path/to/dataset \
+    --param_path=/path/to/model \
+    --batch_per_device=4 \
+    --grad_accum_steps=8 \
+    --warmup_ratio=0.05 \
+    --max_lr=1e-4 \
+    --max_grad_norm=1.0 \
+    --adamw_beta1=0.99 \
+    --adamw_beta2=0.95 \
+    --adamw_weight_decay=1e-5 \
+    --window_size=2048 \
+    --ckpt_interval=10000 \
+    --ckpt_dir=./checkpoint \
+    --random_seed=3407 \
+    --label_smoothing=0.1 \
+    > out.log 2> err.log &
 ```
 
 Full reference at [Parameter Guide](assets/docs/params.md).

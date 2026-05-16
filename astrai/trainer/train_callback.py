@@ -79,8 +79,7 @@ class GradientClippingCallback(TrainCallback):
     def __init__(self, max_grad_norm: float):
         self.max_grad_norm = max_grad_norm
 
-    def on_step_end(self, context: TrainContext):
-        _ = context
+    def on_step_begin(self, context: TrainContext):
         clip_grad_norm_(context.model.parameters(), self.max_grad_norm)
 
 

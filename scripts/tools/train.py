@@ -42,18 +42,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--n_epoch", type=int, default=1, help="Number of epochs to train."
     )
-    parser.add_argument("--batch_size", type=int, default=1, help="Batch size per GPU.")
     parser.add_argument(
-        "--accumulation_steps",
+        "--batch_per_device", type=int, default=1, help="Batch size per GPU."
+    )
+    parser.add_argument(
+        "--grad_accum_steps",
         type=int,
         default=1,
         help="Number of iterations between each optimizer step.",
     )
     parser.add_argument(
-        "--warmup_steps",
-        type=int,
-        default=1000,
-        help="Number of warmup steps for LR scheduler.",
+        "--warmup_ratio",
+        type=float,
+        default=0.05,
+        help="Fraction of total steps used for LR warmup.",
     )
     parser.add_argument(
         "--max_lr", type=float, default=3e-4, help="Max learning rate for training."
@@ -177,24 +179,25 @@ def create_scheduler(
     return SchedulerFactory.create(optimizer, **kwargs)
 
 
-def ceil_div(a: int, b: int) -> int:
-    return (a + b - 1) // b
+def prepare_checkpoint(model: nn.Module) -> dict:
+    return model.module.state_dict()
 
 
 def compute_total_steps(
     dataset_len: int,
     n_epoch: int,
-    batch_size: int,
+    batch_per_device: int,
     nprocs: int,
-    accumulation_steps: int,
+    grad_accum_steps: int,
 ) -> int:
+
+    def ceil_div(a: int, b: int) -> int:
+        return (a + b - 1) // b
+
     samples_per_replica = ceil_div(dataset_len, nprocs)
-    batches_per_replica = ceil_div(samples_per_replica, batch_size)
-    return ceil_div(batches_per_replica, accumulation_steps) * n_epoch
-
-
-def prepare_checkpoint(model: nn.Module) -> dict:
-    return model.module.state_dict()
+    batches_per_replica = ceil_div(samples_per_replica, batch_per_device)
+    total_steps = (batches_per_replica // grad_accum_steps) * n_epoch
+    return total_steps
 
 
 def train(
@@ -203,11 +206,11 @@ def train(
     data_root_path: str,
     max_lr: float,
     n_epoch: int,
-    batch_size: int,
+    batch_per_device: int,
     start_epoch: int,
     start_batch: int,
-    accumulation_steps: int,
-    warmup_steps: int,
+    grad_accum_steps: int,
+    warmup_ratio: float,
     ckpt_interval: int,
     ckpt_dir: str,
     dpo_beta: float,
@@ -277,8 +280,10 @@ def train(
     )
 
     total_steps = compute_total_steps(
-        len(dataset), n_epoch, batch_size, nprocs, accumulation_steps
+        len(dataset), n_epoch, batch_per_device, nprocs, grad_accum_steps
     )
+    warmup_steps = int(warmup_ratio * total_steps)
+
     scheduler_fn = partial(
         create_scheduler,
         **{
@@ -296,11 +301,11 @@ def train(
         scheduler_fn=scheduler_fn,
         ckpt_dir=ckpt_dir,
         n_epoch=n_epoch,
-        batch_size=batch_size,
+        batch_per_device=batch_per_device,
         start_epoch=start_epoch,
         start_batch=start_batch,
         ckpt_interval=ckpt_interval,
-        accumulation_steps=accumulation_steps,
+        grad_accum_steps=grad_accum_steps,
         max_grad_norm=max_grad_norm,
         random_seed=random_seed,
         num_workers=num_workers,
