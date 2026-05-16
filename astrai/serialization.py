@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -35,13 +36,15 @@ class Checkpoint:
             meta = {
                 "epoch": self.epoch,
                 "iteration": self.iteration,
+                "timestamp": time.time(),
             }
             with open(save_path / "meta.json", "w") as f:
                 json.dump(meta, f, indent=2)
 
             st.save_file(self.state_dict, save_path / "state_dict.safetensors")
             if self.extra:
-                torch.save(self.extra, save_path / "extra.pt")
+                for key, value in self.extra.items():
+                    torch.save(value, save_path / f"{key}.pt")
 
     @classmethod
     def load(
@@ -64,14 +67,14 @@ class Checkpoint:
 
         state_dict = st.load_file(save_path / "state_dict.safetensors")
 
-        extra = None
-        extra_path = save_path / "extra.pt"
-        if extra_path.exists():
-            extra = torch.load(extra_path, map_location="cpu", weights_only=False)
+        extra = {}
+        for f in save_path.iterdir():
+            if f.suffix == ".pt" and f.stem not in ("meta",):
+                extra[f.stem] = torch.load(f, map_location="cpu", weights_only=False)
 
         return cls(
             state_dict=state_dict,
             epoch=meta["epoch"],
             iteration=meta["iteration"],
-            extra=extra,
+            extra=extra or None,
         )

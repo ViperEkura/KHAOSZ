@@ -90,6 +90,8 @@ class CheckpointCallback(TrainCallback):
     Checkpoint callback for trainer.
     """
 
+    extra_keys = ("optimizer", "scheduler")
+
     def __init__(
         self,
         save_dir: str,
@@ -97,12 +99,14 @@ class CheckpointCallback(TrainCallback):
         weight_only: bool = False,
         state_dict_fn: Optional[Callable[[nn.Module], dict]] = None,
         save_extra_fn: Optional[Callable[["TrainContext"], dict]] = None,
+        load_extra_fn: Optional[Callable[[dict, "TrainContext"], None]] = None,
     ):
         self.save_dir = save_dir
         self.interval = interval
         self.weight_only = weight_only
         self.state_dict_fn = state_dict_fn
-        self.save_extra_fn = save_extra_fn
+        self.save_extra_fn = save_extra_fn or CheckpointCallback.save_extra
+        self.load_extra_fn = load_extra_fn or CheckpointCallback.load_extra
         self.last_ckpt_iter = 0
 
     @only_on_rank(0)
@@ -116,7 +120,7 @@ class CheckpointCallback(TrainCallback):
             else context.model.state_dict()
         )
 
-        extra = self.save_extra_fn(context) if self.save_extra_fn else None
+        extra = self.save_extra_fn(context)
         context.checkpoint = Checkpoint(
             state_dict=state_dict,
             epoch=context.epoch,
@@ -126,6 +130,10 @@ class CheckpointCallback(TrainCallback):
 
         context.checkpoint.save(save_path)
         self.last_ckpt_iter = context.iteration
+
+    def on_train_begin(self, context: TrainContext):
+        if context.checkpoint and context.checkpoint.extra:
+            self.load_extra_fn(context.checkpoint.extra, context)
 
     def on_batch_end(self, context: TrainContext):
         if context.iteration - self.last_ckpt_iter >= self.interval:
@@ -137,6 +145,21 @@ class CheckpointCallback(TrainCallback):
 
     def on_error(self, context: TrainContext):
         self._save_checkpoint(context)
+
+    @staticmethod
+    def save_extra(context: TrainContext) -> dict:
+        extra = {}
+        for name in CheckpointCallback.extra_keys:
+            obj = getattr(context, name, None)
+            if obj:
+                extra[name] = obj.state_dict()
+        return extra
+
+    @staticmethod
+    def load_extra(extra: dict, context: TrainContext):
+        for name in CheckpointCallback.extra_keys:
+            if name in extra:
+                getattr(context, name).load_state_dict(extra[name])
 
 
 @CallbackFactory.register("progress_bar")

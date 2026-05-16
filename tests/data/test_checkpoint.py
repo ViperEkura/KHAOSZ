@@ -35,6 +35,33 @@ def test_single_process():
         assert loaded_checkpoint.iteration == 30
 
 
+def test_checkpoint_with_extra():
+    """Verify extra keys are saved as individual .pt files and loaded back."""
+    model = torch.nn.Linear(10, 5)
+    optimizer = AdamW(model.parameters(), lr=1e-3)
+    optimizer.step()
+
+    extra = {
+        "optimizer": optimizer.state_dict(),
+        "scheduler": {"last_epoch": 5},
+    }
+    checkpoint = Checkpoint(
+        state_dict=model.state_dict(), epoch=1, iteration=10, extra=extra
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        checkpoint.save(tmpdir)
+
+        import os
+
+        assert os.path.exists(os.path.join(tmpdir, "optimizer.pt"))
+        assert os.path.exists(os.path.join(tmpdir, "scheduler.pt"))
+
+        loaded = Checkpoint.load(tmpdir)
+        assert loaded.extra["scheduler"]["last_epoch"] == 5
+        assert "state" in loaded.extra["optimizer"]
+
+
 def simple_training():
     model = torch.nn.Linear(10, 5)
     optimizer = AdamW(model.parameters(), lr=1e-3)
