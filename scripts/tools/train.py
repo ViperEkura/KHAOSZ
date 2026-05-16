@@ -235,10 +235,8 @@ def train(
     assert os.path.exists(param_path)
 
     # Load config
-    config = ModelConfig()
     config_path = os.path.join(param_path, "config.json")
-    if os.path.exists(config_path):
-        config.load(config_path)
+    config = ModelConfig.from_file(config_path)
 
     if window_size is None:
         window_size = config.max_len

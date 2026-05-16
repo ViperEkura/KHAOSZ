@@ -50,7 +50,7 @@ def test_tie_weight_init(transformer_test_env):
     with open(config_path, "w") as f:
         json.dump(config_data, f)
 
-    config = ModelConfig().load(config_path)
+    config = ModelConfig.from_file(config_path)
     model = Transformer(config)
 
     assert torch.equal(model.lm_head.weight, model.embed_tokens.weight)
@@ -68,7 +68,7 @@ def test_tie_weight_init(transformer_test_env):
     with open(config_path, "w") as f:
         json.dump(config_data, f)
 
-    config = ModelConfig().load(config_path)
+    config = ModelConfig.from_file(config_path)
     model = Transformer(config)
 
     assert not torch.equal(model.lm_head.weight, model.embed_tokens.weight)
@@ -94,12 +94,12 @@ def test_model_save_load_with_tie_weight(transformer_test_env):
     with open(config_path, "w") as f:
         json.dump(config_data, f)
 
-    config = ModelConfig().load(config_path)
+    config = ModelConfig.from_file(config_path)
     original_model = Transformer(config)
 
     st.save_file(original_model.state_dict(), model_path)
 
-    loaded_config = ModelConfig().load(config_path)
+    loaded_config = ModelConfig.from_file(config_path)
     model = Transformer(loaded_config)
     model.load_state_dict(st.load_file(model_path))
 
@@ -112,7 +112,7 @@ def test_model_save_load_with_tie_weight(transformer_test_env):
     with open(config_path, "w") as f:
         json.dump(config_data, f)
 
-    loaded_config = ModelConfig().load(config_path)
+    loaded_config = ModelConfig.from_file(config_path)
     model = Transformer(loaded_config)
     model.load_state_dict(st.load_file(model_path))
 

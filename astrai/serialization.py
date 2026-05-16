@@ -17,11 +17,13 @@ class Checkpoint:
         epoch: int = 0,
         iteration: int = 0,
         extra: Optional[Dict[str, Any]] = None,
+        meta: Optional[Dict[str, Any]] = None,
     ):
         self.state_dict = state_dict
         self.epoch = epoch
         self.iteration = iteration
         self.extra = extra or {}
+        self.meta = meta or {}
 
     def save(
         self,
@@ -38,6 +40,7 @@ class Checkpoint:
                 "iteration": self.iteration,
                 "timestamp": time.time(),
             }
+            meta.update(self.meta)
             with open(save_path / "meta.json", "w") as f:
                 json.dump(meta, f, indent=2)
 

@@ -1,12 +1,14 @@
 import json
-import sys
+import warnings
 from dataclasses import dataclass, fields
-from typing import Any, Dict, Optional, Self, get_type_hints
+from typing import Any, Dict, Optional, Self
+
+from astrai.config.base import BaseConfig
 
 
 @dataclass
-class BaseModelConfig:
-    """Field-aware JSON load/save for dataclass configs.
+class BaseModelConfig(BaseConfig):
+    """Field-aware JSON from/to file for dataclass configs.
 
     Subclass with additional fields. The base ``model_type`` field
     enables ``AutoModel`` to pick the correct subclass.
@@ -14,75 +16,24 @@ class BaseModelConfig:
 
     model_type: Optional[str] = None
 
-    def load(self, config_path: str) -> Self:
-        raw: Dict[str, Any] = {}
+    @classmethod
+    def from_file(cls, config_path: str) -> Self:
         with open(config_path, "r") as f:
-            raw.update(json.load(f))
+            raw: Dict[str, Any] = json.load(f)
 
-        hints = get_type_hints(type(self))
-        valid = {fld.name for fld in fields(self)}
-        for key, value in raw.items():
+        valid = {fld.name for fld in fields(cls)}
+        for key in list(raw):
             if key not in valid:
-                sys.stderr.write(f"WARNING: unknown config key '{key}'\n")
-                continue
+                warnings.warn(f"Unknown config key '{key}'")
+                del raw[key]
 
-            target_type = self._unwrap_optional(hints.get(key))
-            if target_type is None:
-                continue
+        return cls.from_dict(raw)
 
-            try:
-                value = self._coerce(value, target_type)
-            except (TypeError, ValueError):
-                sys.stderr.write(
-                    f"WARNING: cannot coerce '{key}' = {value!r} to {target_type}\n"
-                )
-                continue
-
-            setattr(self, key, value)
-
-        return self
-
-    def save(self, config_path: str):
-        config_dict: Dict[str, Any] = {}
-        for fld in fields(self):
-            v = getattr(self, fld.name)
-            if v is not None:
-                config_dict[fld.name] = v
+    def to_file(self, config_path: str):
+        d = self.to_dict()
+        config_dict = {k: v for k, v in d.items() if v is not None}
         with open(config_path, "w") as f:
             json.dump(config_dict, f, indent=4)
-
-    @staticmethod
-    def _unwrap_optional(tp: type) -> Optional[type]:
-        if tp is None:
-            return None
-        origin = getattr(tp, "__origin__", None)
-        if origin is not None:
-            args = getattr(tp, "__args__", ())
-            non_none = [a for a in args if a is not type(None)]
-            return non_none[0] if non_none else None
-        return tp
-
-    @staticmethod
-    def _coerce(value: Any, target_type: type) -> Any:
-        if target_type is bool and isinstance(value, bool):
-            return value
-        if (
-            target_type is int
-            and isinstance(value, (int, float))
-            and not isinstance(value, bool)
-        ):
-            return int(value)
-        if (
-            target_type is float
-            and isinstance(value, (int, float))
-            and not isinstance(value, bool)
-        ):
-            return float(value)
-        if target_type is str and isinstance(value, str):
-            return value
-        if isinstance(value, target_type):
-            return value
-        raise TypeError
 
 
 @dataclass

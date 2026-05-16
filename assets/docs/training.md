@@ -157,12 +157,13 @@ Created by `SchedulerFactory.create(optimizer, schedule_type, **kwargs)`.
 ## Checkpoint
 
 ```
-Checkpoint(state_dict, epoch, iteration, extra)
-  ├── save(save_dir)    rank-0 only: meta.json + state_dict.safetensors + optional extra.pt
+Checkpoint(state_dict, epoch, iteration, extra, meta)
+  ├── save(save_dir)    rank-0 only: meta.json (includes training config) + state_dict.safetensors + optional extra.pt
   └── load(save_dir)    broadcasts metadata from rank-0
 ```
 
-Optimizer/scheduler state persisted by default via `Checkpoint.extra`.
+Optimizer/scheduler state persisted by default via `Checkpoint.extra`.  
+Training config (`TrainConfig.to_dict()`) saved into `meta.json` during training via `CheckpointCallback`.
 
 ## TrainContextBuilder (Builder Pattern)
 

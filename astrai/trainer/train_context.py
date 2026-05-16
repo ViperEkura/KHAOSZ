@@ -21,6 +21,7 @@ class TrainContext:
     optimizer: Optimizer = field(default=None)
     scheduler: LRScheduler = field(default=None)
     checkpoint: Checkpoint = field(default=None)
+    config: TrainConfig = field(default=None)
 
     epoch: int = field(default=0)
     iteration: int = field(default=0)
@@ -48,6 +49,7 @@ class TrainContextBuilder:
             model=self.config.model,
             world_size=get_world_size(),
             rank=get_rank(),
+            config=self.config,
         )
 
         device = get_current_device()

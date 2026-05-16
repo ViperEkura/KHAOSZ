@@ -6,9 +6,11 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import Dataset
 
+from astrai.config.base import BaseConfig
+
 
 @dataclass
-class TrainConfig:
+class TrainConfig(BaseConfig):
     # basic setting
     model: nn.Module = field(default=None, metadata={"help": "Model for training."})
     strategy: str = field(default=None, metadata={"help": "Training strategy."})

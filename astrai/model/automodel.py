@@ -60,10 +60,9 @@ class AutoModel(BaseFactory["AutoModel"], nn.Module):
         model_path = Path(path)
 
         # Load config
-        config = ModelConfig()
         config_path = model_path / "config.json"
         if config_path.exists():
-            config.load(str(config_path))
+            config = ModelConfig.from_file(str(config_path))
         else:
             raise FileNotFoundError(f"Config file not found: {config_path}")
 
@@ -89,7 +88,7 @@ class AutoModel(BaseFactory["AutoModel"], nn.Module):
         save_path.mkdir(parents=True, exist_ok=True)
 
         # Save config
-        self.config.save(str(save_path / "config.json"))
+        self.config.to_file(str(save_path / "config.json"))
 
         # Save weights
         st.save_file(self.state_dict(), str(save_path / "model.safetensors"))

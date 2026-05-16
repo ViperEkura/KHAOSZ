@@ -5,10 +5,15 @@
 ```mermaid
 classDiagram
     namespace config {
+        class BaseConfig {
+            +to_dict() Dict
+            +from_dict(d) Self
+        }
+
         class BaseModelConfig {
             +Optional[str] model_type
-            +load(config_path) Self
-            +save(config_path)
+            +from_file(config_path) Self
+            +to_file(config_path)
         }
 
         class ModelConfig {
@@ -147,6 +152,7 @@ classDiagram
             +int epoch
             +int iteration
             +dict extra
+            +dict meta
             +save(save_dir)
             +load(save_dir) Checkpoint
         }
@@ -750,6 +756,8 @@ classDiagram
     ParallelModel <|-- RowParallelLinear
     ParallelModel <|-- ColumnParallelLinear
     AutoModel <|-- Transformer
+    BaseConfig <|-- BaseModelConfig
+    BaseConfig <|-- TrainConfig
     BaseModelConfig <|-- ModelConfig
     BaseFactory <|-- AutoModel
     BaseFactory <|-- AttnFactory
@@ -838,7 +846,7 @@ classDiagram
 
 | Module | Components | Description |
 |--------|------------|-------------|
-| **astrai.config** | ModelConfig, TrainConfig | Configuration management |
+| **astrai.config** | BaseConfig, BaseModelConfig, ModelConfig, TrainConfig | Configuration management (to_dict/from_dict, to_file/from_file) |
 | **astrai.dataset** | BaseDataset–GRPODataset, BaseStorage–JSONStorage, BaseSegmentFetcher, MultiSegmentFetcher, ResumableDistributedSampler, DatasetFactory | Dataset loading and management |
 | **astrai.serialization** | Checkpoint | Model serialization |
 | **astrai.model** | AutoModel, Transformer, DecoderBlock, GQA, MLA, MLP, DeepSeekMoE, AttnFactory, FFNFactory, RMSNorm, Linear, RotaryEmbedding, Embedding | Neural network model |
