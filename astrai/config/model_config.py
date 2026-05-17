@@ -67,4 +67,4 @@ class ModelConfig(BaseModelConfig):
     n_routed_experts: Optional[int] = None
     n_shared_experts: Optional[int] = None
     n_activated_experts: Optional[int] = None
-    moe_topk_method: Optional[str] = None
+    topk_method: Optional[str] = None

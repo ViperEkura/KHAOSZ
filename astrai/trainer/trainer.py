@@ -26,8 +26,13 @@ class Trainer:
     def _get_default_callbacks(self) -> List[TrainCallback]:
         cfg = self.train_config
         return [
+            CallbackFactory.create(
+                "checkpoint",
+                cfg.ckpt_dir,
+                cfg.ckpt_interval,
+                state_dict_fn=cfg.state_dict_fn,
+            ),
             CallbackFactory.create("progress_bar", cfg.n_epoch),
-            CallbackFactory.create("checkpoint", cfg.ckpt_dir, cfg.ckpt_interval),
             CallbackFactory.create("metric_logger", cfg.ckpt_dir, cfg.ckpt_interval),
             CallbackFactory.create("gradient_clipping", cfg.max_grad_norm),
         ]

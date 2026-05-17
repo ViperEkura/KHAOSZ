@@ -120,6 +120,7 @@ class MLA(nn.Module):
         qk_nope_head_dim: int,
         qk_rope_head_dim: int,
         norm_eps: float,
+        use_qk_norm: bool,
         use_gated_attention: bool,
         layer_id: int,
     ):
@@ -133,9 +134,14 @@ class MLA(nn.Module):
         self.head_dim = qk_nope_head_dim + qk_rope_head_dim
         self.layer_id = layer_id
         self.n_rep = n_heads // n_kv_heads
+        self.use_qk_norm = use_qk_norm
         self.use_gated_attention = use_gated_attention
 
         self.q_proj = Linear(dim, n_heads * self.head_dim, bias=False)
+
+        if self.use_qk_norm:
+            self.q_norm = RMSNorm(self.head_dim, norm_eps)
+            self.k_norm = RMSNorm(self.head_dim, norm_eps)
         self.kv_a_proj = Linear(dim, kv_lora_rank, bias=False)
         self.kv_norm = RMSNorm(kv_lora_rank, norm_eps)
 
@@ -181,6 +187,10 @@ class MLA(nn.Module):
 
         q = torch.cat([q_nope, q_rope], dim=-1)
         k = torch.cat([k_nope, k_rope], dim=-1)
+
+        if self.use_qk_norm:
+            q = self.q_norm(q)
+            k = self.k_norm(k)
 
         if paged_cache is not None:
             paged_cache.write(self.layer_id, k, v)

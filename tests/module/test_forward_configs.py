@@ -40,7 +40,7 @@ CONFIGS = [
             "n_routed_experts": 4,
             "n_shared_experts": 1,
             "n_activated_experts": 2,
-            "moe_topk_method": "greedy",
+            "topk_method": "greedy",
         },
         id="gqa_moe",
     ),
