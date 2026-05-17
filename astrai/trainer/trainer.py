@@ -35,6 +35,7 @@ class Trainer:
             CallbackFactory.create("progress_bar", cfg.n_epoch),
             CallbackFactory.create("metric_logger", cfg.ckpt_dir, cfg.ckpt_interval),
             CallbackFactory.create("gradient_clipping", cfg.max_grad_norm),
+            CallbackFactory.create("validation"),
         ]
 
     def _call_callbacks(self, method_name: str, context: TrainContext):
@@ -43,20 +44,7 @@ class Trainer:
             if method:
                 method(context)
 
-    def train(self, checkpoint: Optional[Checkpoint] = None):
-        cfg = self.train_config
-        spawn_parallel_fn(
-            self._train_impl,
-            backend=cfg.backend,
-            world_size=cfg.nprocs,
-            master_addr=cfg.master_addr,
-            master_port=cfg.master_port,
-            device_type=cfg.device_type,
-            start_method=cfg.start_method,
-            checkpoint=checkpoint,
-        )
-
-    def _train_impl(self, checkpoint: Optional[Checkpoint] = None):
+    def _trainer_loop(self, checkpoint: Optional[Checkpoint] = None):
         cfg = self.train_config
         context = TrainContextBuilder(cfg).with_checkpoint(checkpoint).build()
         self._call_callbacks("on_train_begin", context)
@@ -95,3 +83,16 @@ class Trainer:
             raise
         finally:
             self._call_callbacks("on_train_end", context)
+
+    def train(self, checkpoint: Optional[Checkpoint] = None):
+        cfg = self.train_config
+        spawn_parallel_fn(
+            self._trainer_loop,
+            backend=cfg.backend,
+            world_size=cfg.nprocs,
+            master_addr=cfg.master_addr,
+            master_port=cfg.master_port,
+            device_type=cfg.device_type,
+            start_method=cfg.start_method,
+            checkpoint=checkpoint,
+        )

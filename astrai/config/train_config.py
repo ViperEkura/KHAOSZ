@@ -93,6 +93,14 @@ class TrainConfig(BaseConfig):
     device_type: str = field(
         default="cuda", metadata={"help": "Device type for distributed training."}
     )
+    val_dataset: Optional[Dataset] = field(
+        default=None, metadata={"help": "Dataset for validation."}
+    )
+    val_step: int = field(
+        default=1000,
+        metadata={"help": "Number of optimizer steps between validation runs."},
+    )
+
     extra_kwargs: dict = field(
         default_factory=dict, metadata={"help": "Other arguments."}
     )

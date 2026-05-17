@@ -47,6 +47,10 @@ def ctx_get_lr(ctx):
     return ctx.optimizer.param_groups[-1]["lr"]
 
 
+def ctx_get_val_loss(ctx):
+    return ctx.val_loss
+
+
 def ctx_get_grad_norm(ctx):
     return grad_norm(ctx.model)
 

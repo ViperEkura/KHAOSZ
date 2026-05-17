@@ -1,15 +1,19 @@
 import json
+import logging
 import os
 import time
 from pathlib import Path
 from typing import Callable, List, Optional, Protocol, runtime_checkable
 
+import torch
+import torch.distributed as dist
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
 from tqdm import tqdm
 
 from astrai.factory import BaseFactory
 from astrai.parallel import only_on_rank
+from astrai.parallel.setup import get_current_device
 from astrai.serialization import Checkpoint
 from astrai.trainer.metric_util import (
     ctx_get_grad_max,
@@ -20,8 +24,11 @@ from astrai.trainer.metric_util import (
     ctx_get_grad_std,
     ctx_get_loss,
     ctx_get_lr,
+    ctx_get_val_loss,
 )
 from astrai.trainer.train_context import TrainContext
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -182,12 +189,13 @@ class ProgressBarCallback(TrainCallback):
 
     @only_on_rank(0)
     def on_batch_end(self, context: TrainContext):
-        self.progress_bar.set_postfix(
-            {
-                "loss": f"{context.loss:.4f}",
-                "lr": f"{context.optimizer.param_groups[-1]['lr']:.2e}",
-            }
-        )
+        postfix = {
+            "loss": f"{context.loss:.4f}",
+            "lr": f"{context.optimizer.param_groups[-1]['lr']:.2e}",
+        }
+        if context.val_loss > 0:
+            postfix["val_loss"] = f"{context.val_loss:.4f}"
+        self.progress_bar.set_postfix(postfix)
         self.progress_bar.update(1)
 
     @only_on_rank(0)
@@ -219,6 +227,7 @@ class MetricLoggerCallback(TrainCallback):
         self._metric_funcs = {
             "loss": ctx_get_loss,
             "lr": ctx_get_lr,
+            "val_loss": ctx_get_val_loss,
             "grad_norm": ctx_get_grad_norm,
             "grad_std": ctx_get_grad_std,
             "grad_max": ctx_get_grad_max,
@@ -262,3 +271,43 @@ class MetricLoggerCallback(TrainCallback):
 
     def on_error(self, context):
         self._save_log(context.epoch, context.iteration)
+
+
+@CallbackFactory.register("validation")
+class ValidationCallback(TrainCallback):
+    def _run_validation(self, context: TrainContext):
+        context.model.eval()
+
+        total_loss = 0.0
+        num_batches = 0
+
+        with torch.no_grad():
+            for batch in context.val_dataloader:
+                loss = context.strategy(batch)
+                total_loss += loss.item()
+                num_batches += 1
+
+        avg_loss = total_loss / max(num_batches, 1)
+
+        if context.world_size > 1 and dist.is_initialized():
+            loss_tensor = torch.tensor([avg_loss], device=get_current_device())
+            dist.all_reduce(loss_tensor, op=dist.ReduceOp.AVG)
+            avg_loss = loss_tensor.item()
+
+        context.val_loss = avg_loss
+        context.model.train()
+
+        step_count = context.iteration // context.config.grad_accum_steps
+        logger.info(
+            f"Epoch {context.epoch + 1}, Step {step_count}, Val Loss: {avg_loss:.4f}"
+        )
+
+    def on_step_end(self, context: TrainContext):
+        if context.val_dataloader is None:
+            return
+        cfg = context.config
+        if cfg.val_step <= 0:
+            return
+        step_count = context.iteration // cfg.grad_accum_steps
+        if step_count % cfg.val_step == 0:
+            self._run_validation(context)

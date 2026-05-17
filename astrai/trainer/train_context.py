@@ -26,6 +26,8 @@ class TrainContext:
     epoch: int = field(default=0)
     iteration: int = field(default=0)
     loss: float = field(default=0.0)
+    val_dataloader: DataLoader = field(default=None)
+    val_loss: float = field(default=0.0)
 
     world_size: int = field(default=1)
     rank: int = field(default=0)
@@ -87,6 +89,23 @@ class TrainContextBuilder:
             pin_memory=cfg.pin_memory,
             prefetch_factor=cfg.prefetch_factor,
         )
+
+        if cfg.val_dataset is not None:
+            val_sampler = ResumableDistributedSampler(
+                data_source=cfg.val_dataset,
+                start_epoch=0,
+                start_iter=0,
+                seed=cfg.random_seed,
+                shuffle=False,
+            )
+            context.val_dataloader = DataLoader(
+                cfg.val_dataset,
+                batch_size=cfg.batch_per_device,
+                sampler=val_sampler,
+                num_workers=cfg.num_workers,
+                pin_memory=cfg.pin_memory,
+                prefetch_factor=cfg.prefetch_factor,
+            )
 
         context.strategy = StrategyFactory.create(
             model=context.model,
