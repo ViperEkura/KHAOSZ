@@ -52,6 +52,7 @@ class Trainer:
             master_addr=cfg.master_addr,
             master_port=cfg.master_port,
             device_type=cfg.device_type,
+            start_method=cfg.start_method,
             checkpoint=checkpoint,
         )
 

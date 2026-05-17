@@ -149,6 +149,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device_type", type=str, default="cuda", help="Device type to use."
     )
+    parser.add_argument(
+        "--start_method",
+        type=str,
+        default="spawn",
+        choices=["spawn", "fork", "forkserver"],
+        help="Multiprocessing start method.",
+    )
 
     args = parser.parse_args()
 
@@ -232,6 +239,7 @@ def train(
     stride: int,
     nprocs: int,
     device_type: str,
+    start_method: str,
 ):
     assert train_type in ["seq", "sft", "dpo", "grpo"]
     assert os.path.exists(param_path)
@@ -314,6 +322,7 @@ def train(
         parallel_wrapper=ddp_wrap,
         state_dict_fn=prepare_checkpoint,
         device_type=device_type,
+        start_method=start_method,
         extra_kwargs=strategy_kwargs,
     )
 

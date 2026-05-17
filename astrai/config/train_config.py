@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Callable, Optional
 
 import torch.nn as nn
@@ -9,17 +9,21 @@ from torch.utils.data import Dataset
 from astrai.config.base import BaseConfig
 
 
+def required(**kw):
+    return {"required": True, **kw}
+
+
 @dataclass
 class TrainConfig(BaseConfig):
     # basic setting
-    model: nn.Module = field(default=None, metadata={"help": "Model for training."})
-    strategy: str = field(default=None, metadata={"help": "Training strategy."})
-    dataset: Dataset = field(default=None, metadata={"help": "Dataset for training."})
+    model: nn.Module = field(default=None, metadata=required(help="Model for training."))
+    strategy: str = field(default=None, metadata=required(help="Training strategy."))
+    dataset: Dataset = field(default=None, metadata=required(help="Dataset for training."))
     optimizer_fn: Callable[[nn.Module], Optimizer] = field(
-        default=None, metadata={"help": "Optimizer factory for training."}
+        default=None, metadata=required(help="Optimizer factory for training.")
     )
     scheduler_fn: Callable[[Optimizer], LRScheduler] = field(
-        default=None, metadata={"help": "Scheduler factory for training."}
+        default=None, metadata=required(help="Scheduler factory for training.")
     )
     n_epoch: int = field(default=1, metadata={"help": "Number of epochs for training."})
     batch_per_device: int = field(
@@ -76,6 +80,10 @@ class TrainConfig(BaseConfig):
     state_dict_fn: Optional[Callable] = field(
         default=None, metadata={"help": "Parallel function for state  dict saving."}
     )
+    start_method: str = field(
+        default="spawn",
+        metadata={"help": "Multiprocessing start method (spawn/fork/forkserver)."},
+    )
 
     # others
     device_type: str = field(
@@ -89,14 +97,8 @@ class TrainConfig(BaseConfig):
         self.validate()
 
     def validate(self):
-        required_fields = [
-            "model",
-            "strategy",
-            "dataset",
-            "optimizer_fn",
-            "scheduler_fn",
-        ]
-
-        for field_name in required_fields:
-            if getattr(self, field_name) is None:
-                raise ValueError(f"{field_name} is required.")
+        for fld in fields(self):
+            if fld.metadata.get("required") and getattr(self, fld.name) is None:
+                raise ValueError(
+                    f"TrainConfig.{fld.name} is required but got None."
+                )

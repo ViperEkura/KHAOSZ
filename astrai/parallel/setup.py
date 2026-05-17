@@ -123,6 +123,7 @@ def spawn_parallel_fn(
     master_addr: str = "localhost",
     master_port: str = "29500",
     device_type: str = "cuda",
+    start_method: str = "spawn",
     **kwargs,
 ):
     # clear environment variables
@@ -156,6 +157,11 @@ def spawn_parallel_fn(
         kwargs,
     )
 
-    mp.spawn(
-        wrapper_spawn_func, nprocs=world_size, args=wrapper_spawn_func_args, join=True
+    mp.start_processes(
+        wrapper_spawn_func,
+        args=wrapper_spawn_func_args,
+        nprocs=world_size,
+        start_method=start_method,
+        join=True,
+        daemon=True,
     )
