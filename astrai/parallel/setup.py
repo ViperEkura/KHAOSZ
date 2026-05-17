@@ -163,5 +163,4 @@ def spawn_parallel_fn(
         nprocs=world_size,
         start_method=start_method,
         join=True,
-        daemon=True,
     )
