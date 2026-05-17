@@ -25,7 +25,11 @@ class Trainer:
 
     def _get_default_callbacks(self) -> List[TrainCallback]:
         cfg = self.train_config
-        return [
+        callbacks = [
+            CallbackFactory.create(
+                "gradient_checkpointing",
+                modules=cfg.gradient_checkpointing_modules,
+            ),
             CallbackFactory.create(
                 "checkpoint",
                 cfg.ckpt_dir,
@@ -37,6 +41,7 @@ class Trainer:
             CallbackFactory.create("gradient_clipping", cfg.max_grad_norm),
             CallbackFactory.create("validation"),
         ]
+        return callbacks
 
     def _call_callbacks(self, method_name: str, context: TrainContext):
         for callback in self.callbacks:

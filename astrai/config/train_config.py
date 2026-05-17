@@ -39,6 +39,10 @@ class TrainConfig(BaseConfig):
     max_grad_norm: float = field(
         default=1.0, metadata={"help": "Maximum gradient norm."}
     )
+    gradient_checkpointing_modules: list = field(
+        default_factory=list,
+        metadata={"help": "Module types to enable activation checkpointing for."},
+    )
 
     # checkpoint setting
     start_epoch: int = field(default=0, metadata={"help": "Start epoch for training."})

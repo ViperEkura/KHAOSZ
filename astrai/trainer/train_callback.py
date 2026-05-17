@@ -9,6 +9,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
+from torch.utils.checkpoint import checkpoint as torch_checkpoint
 from tqdm import tqdm
 
 from astrai.factory import BaseFactory
@@ -88,6 +89,41 @@ class GradientClippingCallback(TrainCallback):
 
     def on_step_begin(self, context: TrainContext):
         clip_grad_norm_(context.model.parameters(), self.max_grad_norm)
+
+
+@CallbackFactory.register("gradient_checkpointing")
+class GradientCheckpointingCallback(TrainCallback):
+    """
+    Activation checkpointing callback — trades compute for memory
+    by recomputing specified module activations during the backward pass.
+
+    Args:
+        modules: Module types to apply checkpointing to.
+    """
+
+    def __init__(self, modules: Optional[List[type]] = None):
+        self.modules = tuple(modules) if modules else ()
+
+    def _enable(self, module: nn.Module):
+        if self.modules and isinstance(module, self.modules):
+            fn = module.forward
+            module._original_forward = fn
+            module.forward = lambda *a, **kw: torch_checkpoint(
+                fn, *a, use_reentrant=False, **kw
+            )
+
+    @staticmethod
+    def _disable(module: nn.Module):
+        if hasattr(module, "_original_forward"):
+            module.forward = module._original_forward
+            del module._original_forward
+
+    def on_train_begin(self, context: TrainContext):
+        context.model.apply(self._enable)
+        logger.info("Gradient checkpointing enabled")
+
+    def on_train_end(self, context: TrainContext):
+        context.model.apply(self._disable)
 
 
 @CallbackFactory.register("checkpoint")
