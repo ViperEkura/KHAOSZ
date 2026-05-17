@@ -51,9 +51,26 @@ class AutoTokenizer:
                 self.set_chat_template(config["chat_template"])
 
     @classmethod
-    def from_pretrained(cls, path: Union[str, Path], **kwargs) -> "AutoTokenizer":
-        """Load tokenizer from pretrained directory."""
+    def from_pretrained(cls, path: Union[str, Path]) -> "AutoTokenizer":
+        """Load tokenizer from pretrained directory.
+
+        Raises:
+            FileNotFoundError: If tokenizer.json is missing.
+            RuntimeError: If tokenizer failed to initialize.
+        """
+        path = Path(path)
+        tokenizer_file = path / "tokenizer.json"
+        if not tokenizer_file.exists():
+            raise FileNotFoundError(
+                f"Tokenizer file not found: {tokenizer_file}. "
+                "A valid tokenizer.json is required."
+            )
         instance = cls(path)
+        if instance._tokenizer is None:
+            raise RuntimeError(
+                f"Failed to load tokenizer from {path}. "
+                "The tokenizer.json may be corrupted or incompatible."
+            )
         return instance
 
     def save_pretrained(self, save_path: str):

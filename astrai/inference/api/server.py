@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import torch
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from astrai.inference.api.protocol import AnthropicHandler, OpenAIHandler
@@ -67,6 +67,24 @@ class MessagesRequest(BaseModel):
     stop_sequences: Optional[List[str]] = None
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    config = app.state.server_config
+    if not config.get("_test", False):
+        try:
+            app.state.engine = _create_engine(**config)
+        except Exception as e:
+            logger.error(f"Failed to load model: {e}")
+            raise
+    yield
+    if app.state.engine:
+        app.state.engine.shutdown()
+        logger.info("Inference engine shutdown complete")
+
+
+app = FastAPI(title="AstrAI Inference Server", version="0.2.0", lifespan=lifespan)
+
+
 def _create_engine(
     param_path: Optional[Path] = None,
     device: str = "cuda",
@@ -92,54 +110,36 @@ def _create_engine(
     return engine
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    config = app.state.server_config
-    if not config.get("_test", False):
-        try:
-            app.state.engine = _create_engine(**config)
-        except Exception as e:
-            logger.error(f"Failed to load model: {e}")
-            raise
-    yield
-    if app.state.engine:
-        app.state.engine.shutdown()
-        logger.info("Inference engine shutdown complete")
-
-
-app = FastAPI(title="AstrAI Inference Server", version="0.2.0", lifespan=lifespan)
-
-
-def _get_engine(request: Request) -> InferenceEngine:
-    engine = request.app.state.engine
+def _get_engine() -> InferenceEngine:
+    engine = app.state.engine
     if engine is None:
         raise HTTPException(status_code=503, detail="Engine not initialized")
     return engine
 
 
 @app.get("/health")
-async def health(request: Request):
+async def health():
     return {
         "status": "ok",
-        "model_loaded": request.app.state.engine is not None,
+        "model_loaded": app.state.engine is not None,
     }
 
 
 @app.get("/stats")
-async def get_stats(request: Request):
-    return _get_engine(request).get_stats()
+async def get_stats():
+    return _get_engine().get_stats()
 
 
 @app.post("/v1/chat/completions")
-async def chat_completion(request: ChatCompletionRequest, req: Request):
-    engine = _get_engine(req)
+async def chat_completion(request: ChatCompletionRequest):
+    engine = _get_engine()
     handler = OpenAIHandler(request, engine)
     return await handler.handle()
 
 
 @app.post("/v1/messages")
-async def create_message(request: MessagesRequest, req: Request):
-    engine = _get_engine(req)
+async def create_message(request: MessagesRequest):
+    engine = _get_engine()
     handler = AnthropicHandler(request, engine)
     return await handler.handle()
 

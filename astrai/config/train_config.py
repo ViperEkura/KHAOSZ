@@ -16,9 +16,13 @@ def required(**kw):
 @dataclass
 class TrainConfig(BaseConfig):
     # basic setting
-    model: nn.Module = field(default=None, metadata=required(help="Model for training."))
+    model: nn.Module = field(
+        default=None, metadata=required(help="Model for training.")
+    )
     strategy: str = field(default=None, metadata=required(help="Training strategy."))
-    dataset: Dataset = field(default=None, metadata=required(help="Dataset for training."))
+    dataset: Dataset = field(
+        default=None, metadata=required(help="Dataset for training.")
+    )
     optimizer_fn: Callable[[nn.Module], Optimizer] = field(
         default=None, metadata=required(help="Optimizer factory for training.")
     )
@@ -99,6 +103,4 @@ class TrainConfig(BaseConfig):
     def validate(self):
         for fld in fields(self):
             if fld.metadata.get("required") and getattr(self, fld.name) is None:
-                raise ValueError(
-                    f"TrainConfig.{fld.name} is required but got None."
-                )
+                raise ValueError(f"TrainConfig.{fld.name} is required but got None.")
