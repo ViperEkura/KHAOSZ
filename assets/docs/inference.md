@@ -137,4 +137,4 @@ engine.generate(["A", "B"], stream=True)        # -> Generator[Tuple[int, str]]
 await engine.generate_async("Hello", ...)       # -> AsyncGenerator[str]
 ```
 
-> Document Update Time: 2026-05-15
+> Document Update Time: 2026-05-17

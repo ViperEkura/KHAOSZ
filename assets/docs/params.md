@@ -73,7 +73,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 nohup python scripts/tools/train.py \
     --nprocs=4 \
-    --train_type=pt \
+    --train_type=seq \
     --data_root_path=/path/to/dataset \
     --param_path=/path/to/model \
     --batch_per_device=4 \
@@ -94,4 +94,4 @@ nohup python scripts/tools/train.py \
 
 ---
 
-> Document Update Time: 2026-05-16
+> Document Update Time: 2026-05-17

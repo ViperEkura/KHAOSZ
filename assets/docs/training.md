@@ -91,11 +91,13 @@ on_train_end
 
 | Hook | Fires | Default callback |
 |------|-------|-----------------|
+| `on_train_begin` | Before training starts | `GradientCheckpointingCallback` |
 | `on_step_begin` | Every accumulation window | `GradientClippingCallback` |
 | `on_batch_end` | Every batch | `CheckpointCallback`, `MetricLoggerCallback`, `ProgressBarCallback` |
+| `on_step_end` | Every accumulation window | `ValidationCallback` |
 | `on_train_end` | Training ends | `CheckpointCallback`, `MetricLoggerCallback` (final save) |
 
-Default callbacks: `progress_bar` (tqdm), `checkpoint` (safetensors, rank-0), `metric_logger` (JSONL, rank-0), `gradient_clipping`.
+Default callbacks: `gradient_checkpointing` (activation checkpointing, optional), `progress_bar` (tqdm), `checkpoint` (safetensors, rank-0), `metric_logger` (JSONL, rank-0), `gradient_clipping`, `validation` (periodic validation on val_dataset).
 
 ## Strategies
 
@@ -154,6 +156,17 @@ Keys: `prompts`, `responses`, `masks`, `rewards`.
 
 Created by `SchedulerFactory.create(optimizer, schedule_type, **kwargs)`.
 
+## Gradient Checkpointing
+
+Trades compute for memory by recomputing activations during backward pass. Specify module types via `gradient_checkpointing_modules`:
+
+```python
+from astrai.model.components.decoder_block import DecoderBlock
+config = TrainConfig(..., gradient_checkpointing_modules=[DecoderBlock])
+```
+
+Callback wraps each `DecoderBlock.forward` with `torch.utils.checkpoint.checkpoint(use_reentrant=False)`, compatible with `torch.compile`. Uses `nn.Module.apply()` for traversal — works through DDP wrappers without manual unwrap. Empty list (default) means no-op.
+
 ## Checkpoint
 
 ```
@@ -188,7 +201,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 nohup python scripts/tools/train.py \
     --nprocs=4 \
-    --train_type=pt \
+    --train_type=seq \
     --data_root_path=/path/to/dataset \
     --param_path=/path/to/model \
     --batch_per_device=4 \
@@ -209,4 +222,4 @@ nohup python scripts/tools/train.py \
 
 Full parameter reference at [params.md](params.md).
 
-> Document Update Time: 2026-05-16
+> Document Update Time: 2026-05-17

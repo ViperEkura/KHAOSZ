@@ -15,8 +15,8 @@ Raw text is tokenized via `AutoTokenizer.encode()` and saved as HDF5 (`.h5`) or 
 Storage format is auto-detected by `detect_format()`; backends are dispatched via registry:
 
 ```
-create_storage("h5")   → H5Storage
-create_storage("json") → JSONStorage
+StorageFactory.create("h5")   → H5Storage
+StorageFactory.create("json") → JSONStorage
 ```
 
 Both support shared memory via `.share_memory_()`.
@@ -34,7 +34,7 @@ Both support shared memory via `.share_memory_()`.
 
 ```
 DatasetFactory.load(train_type, path, window_size, stride)
-  → create_storage(detect_format(path))
+  → StorageFactory.create(detect_format(path))
     → MultiSegmentFetcher(BaseSegmentFetcher per key)
       → BaseDataset.__getitem__(idx)
         → sliding window [begin, end) via get_index(idx)
@@ -54,4 +54,4 @@ DatasetFactory.load(train_type, path, window_size, stride)
 
 Standard PyTorch `DataLoader` with configurable `batch_size`, `num_workers`, `pin_memory`, `prefetch_factor`. Sampler produces indices; dataloader fetches tensor batches via `__getitem__`.
 
-> Document Update Time: 2026-05-15
+> Document Update Time: 2026-05-17
