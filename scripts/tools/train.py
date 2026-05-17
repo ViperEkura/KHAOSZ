@@ -69,14 +69,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--adamw_beta1",
         type=float,
-        default=0.95,
-        help="Beta values for AdamW optimizer.",
+        default=0.9,
+        help="Beta1 for AdamW optimizer.",
     )
     parser.add_argument(
         "--adamw_beta2",
         type=float,
-        default=0.99,
-        help="Beta values for AdamW optimizer.",
+        default=0.95,
+        help="Beta2 for AdamW optimizer.",
     )
     parser.add_argument(
         "--adamw_weight_decay",

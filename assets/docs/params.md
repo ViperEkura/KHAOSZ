@@ -25,8 +25,8 @@
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `--adamw_beta1` | AdamW beta1 | 0.95 |
-| `--adamw_beta2` | AdamW beta2 | 0.99 |
+| `--adamw_beta1` | AdamW beta1 | 0.9 |
+| `--adamw_beta2` | AdamW beta2 | 0.95 |
 | `--adamw_weight_decay` | AdamW weight decay | 0.01 |
 
 ### Data Loading
@@ -81,8 +81,8 @@ nohup python scripts/tools/train.py \
     --warmup_ratio=0.05 \
     --max_lr=1e-4 \
     --max_grad_norm=1.0 \
-    --adamw_beta1=0.95 \
-    --adamw_beta2=0.99 \
+    --adamw_beta1=0.9 \
+    --adamw_beta2=0.95 \
     --adamw_weight_decay=0.01 \
     --window_size=2048 \
     --ckpt_interval=10000 \
