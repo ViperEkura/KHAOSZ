@@ -1,3 +1,4 @@
+from astrai.trainer.optim import Muon
 from astrai.trainer.schedule import BaseScheduler, SchedulerFactory
 from astrai.trainer.strategy import BaseStrategy, StrategyFactory
 from astrai.trainer.train_callback import (
@@ -9,6 +10,8 @@ from astrai.trainer.trainer import Trainer
 __all__ = [
     # Main trainer
     "Trainer",
+    # Optimizer
+    "Muon",
     # Strategy factory
     "StrategyFactory",
     "BaseStrategy",
