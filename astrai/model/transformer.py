@@ -93,12 +93,11 @@ class Transformer(AutoModel):
         if self.config.tie_weight is True:
             self.lm_head.weight = self.embed_tokens.weight
 
-        self._init_weights()
+        self.apply(self._init_weights)
 
-    def _init_weights(self):
-        for param in self.parameters():
-            if param.dim() > 1:
-                nn.init.normal_(param, mean=0.0, std=0.006)
+    def _init_weights(self, module):
+        if hasattr(module, "reset_parameters"):
+            module.reset_parameters()
 
     def load_state_dict(self, state_dict: Mapping[str, Any], strict=True, assign=False):
         lm_head_key = "lm_head.weight"
