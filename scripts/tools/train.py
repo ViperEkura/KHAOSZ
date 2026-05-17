@@ -180,7 +180,9 @@ def create_scheduler(
 
 
 def prepare_checkpoint(model: nn.Module) -> dict:
-    return model.module.state_dict()
+    if isinstance(model, DDP):
+        return model.module.state_dict()
+    return model.state_dict()
 
 
 def compute_total_steps(
@@ -253,7 +255,7 @@ def train(
     model = model.to(dtype=torch.bfloat16)
 
     strategy_kwargs = {
-        "dpo_beta": dpo_beta,
+        "beta": dpo_beta,
         "label_smoothing": label_smoothing,
         "clip_eps": grpo_clip_eps,
         "kl_coef": grpo_kl_coef,
