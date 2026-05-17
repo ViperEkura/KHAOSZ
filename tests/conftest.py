@@ -8,8 +8,8 @@ import torch
 from tokenizers import Tokenizer, models, pre_tokenizers, trainers
 from torch.utils.data import Dataset
 
-from astrai.config.model_config import ModelConfig
-from astrai.model.transformer import Transformer
+from astrai.config.model_config import AutoRegressiveLMConfig
+from astrai.model.transformer import AutoRegressiveLM
 from astrai.tokenize import AutoTokenizer
 
 
@@ -104,8 +104,8 @@ def test_tokenizer():
 
 @pytest.fixture(scope="session")
 def test_model():
-    """Session-scoped small Transformer model, created once."""
-    config = ModelConfig(
+    """Session-scoped small AutoRegressiveLM model, created once."""
+    config = AutoRegressiveLMConfig(
         vocab_size=1000,
         dim=8,
         n_heads=2,
@@ -116,7 +116,7 @@ def test_model():
         norm_eps=1e-5,
     )
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = Transformer(config).to(device=device)
+    model = AutoRegressiveLM(config).to(device=device)
 
     return {
         "model": model,

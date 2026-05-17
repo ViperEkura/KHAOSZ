@@ -6,8 +6,8 @@ import pytest
 import safetensors.torch as st
 import torch
 
-from astrai.config.model_config import ModelConfig
-from astrai.model.transformer import Transformer
+from astrai.config.model_config import AutoRegressiveLMConfig
+from astrai.model.transformer import AutoRegressiveLM
 
 
 @pytest.fixture
@@ -50,8 +50,8 @@ def test_tie_weight_init(transformer_test_env):
     with open(config_path, "w") as f:
         json.dump(config_data, f)
 
-    config = ModelConfig.from_file(config_path)
-    model = Transformer(config)
+    config = AutoRegressiveLMConfig.from_file(config_path)
+    model = AutoRegressiveLM(config)
 
     assert torch.equal(model.lm_head.weight, model.embed_tokens.weight)
     assert model.lm_head.weight.data_ptr() == model.embed_tokens.weight.data_ptr()
@@ -68,8 +68,8 @@ def test_tie_weight_init(transformer_test_env):
     with open(config_path, "w") as f:
         json.dump(config_data, f)
 
-    config = ModelConfig.from_file(config_path)
-    model = Transformer(config)
+    config = AutoRegressiveLMConfig.from_file(config_path)
+    model = AutoRegressiveLM(config)
 
     assert not torch.equal(model.lm_head.weight, model.embed_tokens.weight)
     assert model.lm_head.weight.data_ptr() != model.embed_tokens.weight.data_ptr()
@@ -94,13 +94,13 @@ def test_model_save_load_with_tie_weight(transformer_test_env):
     with open(config_path, "w") as f:
         json.dump(config_data, f)
 
-    config = ModelConfig.from_file(config_path)
-    original_model = Transformer(config)
+    config = AutoRegressiveLMConfig.from_file(config_path)
+    original_model = AutoRegressiveLM(config)
 
     st.save_file(original_model.state_dict(), model_path)
 
-    loaded_config = ModelConfig.from_file(config_path)
-    model = Transformer(loaded_config)
+    loaded_config = AutoRegressiveLMConfig.from_file(config_path)
+    model = AutoRegressiveLM(loaded_config)
     model.load_state_dict(st.load_file(model_path))
 
     assert torch.equal(model.lm_head.weight, model.embed_tokens.weight)
@@ -112,8 +112,8 @@ def test_model_save_load_with_tie_weight(transformer_test_env):
     with open(config_path, "w") as f:
         json.dump(config_data, f)
 
-    loaded_config = ModelConfig.from_file(config_path)
-    model = Transformer(loaded_config)
+    loaded_config = AutoRegressiveLMConfig.from_file(config_path)
+    model = AutoRegressiveLM(loaded_config)
     model.load_state_dict(st.load_file(model_path))
 
     assert torch.equal(model.lm_head.weight, model.embed_tokens.weight)

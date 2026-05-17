@@ -4,7 +4,8 @@ from astrai.model.components.decoder_block import DecoderBlock
 from astrai.model.components.linear import Linear
 from astrai.model.components.mlp import MLP
 from astrai.model.components.norm import RMSNorm
-from astrai.model.transformer import Transformer
+from astrai.model.encoder import EmbeddingEncoder
+from astrai.model.transformer import AutoRegressiveLM
 
 __all__ = [
     # Modules
@@ -14,6 +15,7 @@ __all__ = [
     "GQA",
     "DecoderBlock",
     # Models
-    "Transformer",
+    "AutoRegressiveLM",
+    "EmbeddingEncoder",
     "AutoModel",
 ]

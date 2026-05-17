@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from astrai.config.model_config import ModelConfig
+from astrai.config.model_config import AutoRegressiveLMConfig
 from astrai.inference.core.cache import KvcacheView
 from astrai.model.automodel import AutoModel
 from astrai.model.components.decoder_block import DecoderBlock
@@ -46,11 +46,11 @@ def process_attention_mask(
     ).masked_fill_(attend.unsqueeze(1), 0.0)
 
 
-@AutoModel.register("transformer")
-class Transformer(AutoModel):
-    """Transformer language model with paged KV cache."""
+@AutoModel.register("autoregressive_lm")
+class AutoRegressiveLM(AutoModel):
+    """Autoregressive language model with paged KV cache."""
 
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: AutoRegressiveLMConfig):
         super().__init__(config)
         self.config = config
         rope_dim = (

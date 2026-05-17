@@ -1,13 +1,13 @@
-"""Benchmark Transformer with KVCache"""
+"""Benchmark AutoRegressiveLM with KVCache"""
 
 from dataclasses import dataclass
 from typing import Any, Dict
 
 import torch
 
-from astrai.config import ModelConfig
+from astrai.config import AutoRegressiveLMConfig
 from astrai.inference import KVCache
-from astrai.model.transformer import Transformer
+from astrai.model.transformer import AutoRegressiveLM
 
 
 @dataclass
@@ -21,7 +21,7 @@ class BenchmarkResult:
 class GenerationBenchmark:
     def __init__(
         self,
-        config: ModelConfig,
+        config: AutoRegressiveLMConfig,
         device: str = "cuda",
         dtype: torch.dtype = torch.bfloat16,
         page_size: int = 128,
@@ -29,7 +29,7 @@ class GenerationBenchmark:
         self.config = config
         self.device = device
         self.dtype = dtype
-        self.model = Transformer(config).to(device=device, dtype=dtype)
+        self.model = AutoRegressiveLM(config).to(device=device, dtype=dtype)
         self.model.eval()
         head_dim = config.dim // config.n_heads
         n_pages = (config.max_len * 4 + page_size - 1) // page_size
@@ -216,7 +216,7 @@ def print_benchmark_result(result: BenchmarkResult):
 
 
 if __name__ == "__main__":
-    config = ModelConfig(
+    config = AutoRegressiveLMConfig(
         vocab_size=10000,
         dim=1536,
         n_heads=24,
@@ -230,7 +230,7 @@ if __name__ == "__main__":
     benchmark = GenerationBenchmark(config)
 
     print("=" * 80)
-    print("Running Transformer Generation Benchmark (KVCache)")
+    print("Running AutoRegressiveLM Generation Benchmark (KVCache)")
     print("=" * 80)
 
     prefill_result = benchmark.run_prefill_benchmark(

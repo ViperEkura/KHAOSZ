@@ -2,6 +2,7 @@
 AutoModel base class for model loading and saving.
 """
 
+import json
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Self, Union
@@ -9,7 +10,7 @@ from typing import Self, Union
 import safetensors.torch as st
 import torch.nn as nn
 
-from astrai.config import ModelConfig
+from astrai.config.model_config import BaseModelConfig, ConfigFactory
 from astrai.factory import BaseFactory
 
 
@@ -45,7 +46,7 @@ class AutoModel(BaseFactory["AutoModel"], nn.Module):
     Provides model loading/saving, registration, and generation.
     """
 
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: BaseModelConfig):
         super().__init__()
         self.config = config
 
@@ -62,11 +63,13 @@ class AutoModel(BaseFactory["AutoModel"], nn.Module):
         # Load config
         config_path = model_path / "config.json"
         if config_path.exists():
-            config = ModelConfig.from_file(str(config_path))
+            with open(config_path, "r") as f:
+                raw = json.load(f)
+            config = ConfigFactory.load(raw)
+            model_type = config.model_type or "autoregressive_lm"
         else:
             raise FileNotFoundError(f"Config file not found: {config_path}")
 
-        model_type = config.model_type or "transformer"
         actual_cls = AutoModel.get_component_class(model_type)
 
         with _disable_random_init(enable=disable_random_init):

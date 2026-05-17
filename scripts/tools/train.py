@@ -8,16 +8,16 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from astrai.config import ModelConfig, TrainConfig
+from astrai.config import AutoRegressiveLMConfig, TrainConfig
 from astrai.dataset import DatasetFactory
-from astrai.model import Transformer
+from astrai.model import AutoRegressiveLM
 from astrai.parallel import get_rank
 from astrai.trainer import SchedulerFactory, Trainer
 
 
 def parse_args() -> argparse.Namespace:
 
-    parser = argparse.ArgumentParser(description="Train the Transformer model.")
+    parser = argparse.ArgumentParser(description="Train the AutoRegressiveLM model.")
 
     parser.add_argument(
         "--train_type",
@@ -246,13 +246,13 @@ def train(
 
     # Load config
     config_path = os.path.join(param_path, "config.json")
-    config = ModelConfig.from_file(config_path)
+    config = AutoRegressiveLMConfig.from_file(config_path)
 
     if window_size is None:
         window_size = config.max_len
 
-    # Create bare Transformer (for training, no tokenizer needed)
-    model = Transformer(config)
+    # Create bare AutoRegressiveLM (for training, no tokenizer needed)
+    model = AutoRegressiveLM(config)
 
     # Load weights if available
     weights_path = os.path.join(param_path, "model.safetensors")

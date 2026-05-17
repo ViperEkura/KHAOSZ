@@ -1,8 +1,8 @@
 import pytest
 import torch
 
-from astrai.config.model_config import ModelConfig
-from astrai.model.transformer import Transformer
+from astrai.config.model_config import AutoRegressiveLMConfig
+from astrai.model.transformer import AutoRegressiveLM
 
 TINY_CONFIG = dict(
     vocab_size=128,
@@ -66,9 +66,9 @@ CONFIGS = [
 
 @pytest.mark.parametrize("config_kwargs", CONFIGS)
 def test_model_forward(config_kwargs):
-    config = ModelConfig(**config_kwargs)
+    config = AutoRegressiveLMConfig(**config_kwargs)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = Transformer(config).to(device=device)
+    model = AutoRegressiveLM(config).to(device=device)
     model.eval()
 
     batch_size, seq_len = 2, 8
@@ -89,9 +89,9 @@ def test_model_forward(config_kwargs):
 
 @pytest.mark.parametrize("config_kwargs", CONFIGS)
 def test_model_forward_with_padding(config_kwargs):
-    config = ModelConfig(**config_kwargs)
+    config = AutoRegressiveLMConfig(**config_kwargs)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = Transformer(config).to(device=device)
+    model = AutoRegressiveLM(config).to(device=device)
     model.eval()
 
     batch_size, seq_len = 2, 8
