@@ -16,6 +16,7 @@ NC='\033[0m' # No Color
 IMAGE_NAME="astrai"
 IMAGE_TAG="latest"
 REGISTRY=""
+CONTAINER_ID=""
 
 # Print colored messages
 print_info() {
@@ -175,6 +176,10 @@ main() {
                 PORT="$2"
                 shift 2
                 ;;
+            --container)
+                CONTAINER_ID="$2"
+                shift 2
+                ;;
             --gpu)
                 GPU=true
                 shift
@@ -197,6 +202,7 @@ main() {
                 echo "  --dockerfile FILE  Dockerfile path (default: Dockerfile)"
                 echo "  --context PATH     Build context (default: .)"
                 echo "  --port PORT        Port for run (default: 8000)"
+                echo "  --container ID     Container ID for logs"
                 echo "  --gpu              Enable GPU support"
                 echo "  --help             Show this help message"
                 echo ""
@@ -205,6 +211,7 @@ main() {
                 echo "  $0 build --tag v1.0.0"
                 echo "  $0 run --port 8080"
                 echo "  $0 run --gpu"
+                echo "  $0 logs --container abc123"
                 echo "  $0 push --registry ghcr.io/username"
                 exit 0
                 ;;
@@ -237,7 +244,7 @@ main() {
             show_info
             ;;
         logs)
-            show_logs "$2"
+            show_logs "$CONTAINER_ID"
             ;;
         "")
             print_error "No command specified. Use --help for usage"

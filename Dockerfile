@@ -1,7 +1,7 @@
 # AstrAI Dockerfile - Multi-stage Build (Optimized)
 
 # Build stage - use base image with minimal build tools
-FROM nvidia/cuda:12.6.0-base-ubuntu24.04 AS builder
+FROM ubuntu:24.04 AS builder
 
 WORKDIR /app
 
@@ -18,7 +18,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 RUN python3.12 -m venv --copies /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy source code and install dependencies
+# Copy source code and install (deps read from pyproject.toml)
 COPY astrai/ ./astrai/
 COPY pyproject.toml .
 RUN pip install --no-cache-dir --upgrade pip \
@@ -26,13 +26,14 @@ RUN pip install --no-cache-dir --upgrade pip \
     --extra-index-url https://download.pytorch.org/whl/cu126
 
 # Production stage
-FROM nvidia/cuda:12.6.0-base-ubuntu24.04 AS production
+FROM ubuntu:24.04 AS production
 
 WORKDIR /app
 
-# Install Python 3.12 runtime
+# Install Python 3.12 runtime and healthcheck dependency
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     python3.12 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy virtual environment from builder

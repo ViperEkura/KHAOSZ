@@ -1,12 +1,13 @@
 services:
   server:
-    build: .
-    image: astrai:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: "${UID:-1000}:${GID:-1000}"
     ports:
       - "8000:8000"
     volumes:
       - ./params:/app/params:ro
-      - ./checkpoints:/app/checkpoints
     command: python -m scripts.tools.server --port 8000 --device cuda
     deploy:
       resources:
@@ -25,13 +26,14 @@ services:
 
   server-cpu:
     profiles: [cpu]
-    build: .
-    image: astrai:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: "${UID:-1000}:${GID:-1000}"
     ports:
       - "8000:8000"
     volumes:
       - ./params:/app/params:ro
-      - ./checkpoints:/app/checkpoints
     command: python -m scripts.tools.server --port 8000 --device cpu
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
