@@ -38,7 +38,7 @@ class Checkpoint:
             meta = {
                 "epoch": self.epoch,
                 "iteration": self.iteration,
-                "timestamp": time.time(),
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             }
             meta.update(self.meta)
             with open(save_path / "meta.json", "w") as f:
