@@ -213,7 +213,7 @@ python scripts/demo/generate_batch.py
 python scripts/demo/generate_ar.py
 ```
 
-Watch a video walkthrough on [bilibili](https://www.bilibili.com/video/BV1z5RPYHEkd).
+Watch a video walkthrough on [bilibili](https://www.bilibili.com/video/BV1fuLB6yEj6).
 
 ### Documentation
 

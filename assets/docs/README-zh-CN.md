@@ -219,7 +219,7 @@ python scripts/demo/generate_batch.py
 python scripts/demo/generate_ar.py
 ```
 
-观看 [bilibili](https://www.bilibili.com/video/BV1z5RPYHEkd) 上的视频演示。
+观看 [bilibili](https://www.bilibili.com/video/BV1fuLB6yEj6) 上的视频演示。
 
 ### 文档
 
