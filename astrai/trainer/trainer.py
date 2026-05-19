@@ -36,8 +36,14 @@ class Trainer:
                 cfg.ckpt_interval,
                 state_dict_fn=cfg.state_dict_fn,
             ),
+            CallbackFactory.create(
+                "metric_logger",
+                log_dir=cfg.log_dir,
+                save_interval=cfg.ckpt_interval,
+                log_interval=cfg.log_interval,
+                metrics=cfg.metrics,
+            ),
             CallbackFactory.create("progress_bar", cfg.n_epoch),
-            CallbackFactory.create("metric_logger", cfg.ckpt_dir, cfg.ckpt_interval),
             CallbackFactory.create("gradient_clipping", cfg.max_grad_norm),
             CallbackFactory.create("validation"),
         ]

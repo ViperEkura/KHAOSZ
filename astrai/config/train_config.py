@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field, fields
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 import torch.nn as nn
 from torch.optim import Optimizer
@@ -54,6 +54,19 @@ class TrainConfig(BaseConfig):
     )
     ckpt_interval: int = field(
         default=5000, metadata={"help": "Number of iterations between checkpoints."}
+    )
+
+    # metric setting
+    log_dir: str = field(
+        default="./checkpoint/logs", metadata={"help": "Directory for metric logs."}
+    )
+    log_interval: int = field(
+        default=100,
+        metadata={"help": "Number of batch iterations between metric logs."},
+    )
+    metrics: List[str] = field(
+        default_factory=lambda: ["loss", "lr"],
+        metadata={"help": "Metrics to record during training."},
     )
 
     # dataloader setting
