@@ -13,7 +13,7 @@ class BaseConfig:
                 d[fld.name] = v
             elif v is None:
                 d[fld.name] = None
-            elif isinstance(v, dict):
+            elif isinstance(v, (dict, list)):
                 try:
                     json.dumps(v)
                     d[fld.name] = v

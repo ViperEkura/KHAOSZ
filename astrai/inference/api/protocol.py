@@ -226,6 +226,17 @@ class OpenAIHandler(ProtocolHandler):
     def create_response_id(self) -> str:
         return f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
+    def get_stop_sequences(self) -> List[str]:
+        stop = self.request.stop
+        if stop is None:
+            return []
+        return [stop] if isinstance(stop, str) else stop
+
+    def on_token(
+        self, ctx: StreamContext, token: str, stop_checker: StopChecker
+    ) -> Optional[str]:
+        return stop_checker.check(ctx.accumulated)
+
     def format_stream_start(self, ctx: StreamContext) -> List[str]:
         return [
             _sse_event(

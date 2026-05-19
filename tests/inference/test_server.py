@@ -157,5 +157,60 @@ def test_messages_with_system(client, loaded_model):
     assert data["type"] == "message"
 
 
+def test_chat_completions_stop_sequence(client, loaded_model):
+    """POST /v1/chat/completions with stop parameter truncates at stop sequence."""
+
+    async def async_gen():
+        yield "Hello"
+        yield "X"
+        yield "world"
+
+    app.state.engine = loaded_model
+    loaded_model.generate_async.return_value = async_gen()
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 100,
+            "stream": False,
+            "stop": ["X"],
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    content = data["choices"][0]["message"]["content"]
+    assert "X" in content
+    assert "world" not in content
+
+
+def test_chat_completions_stop_sequence_stream(client, loaded_model):
+    """POST /v1/chat/completions with stop parameter truncates SSE stream."""
+
+    async def async_gen():
+        yield "Hello"
+        yield "X"
+        yield "world"
+
+    app.state.engine = loaded_model
+    loaded_model.generate_async.return_value = async_gen()
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 100,
+            "stream": True,
+            "stop": ["X"],
+        },
+        headers={"Accept": "text/event-stream"},
+    )
+    assert response.status_code == 200
+    content = response.content.decode("utf-8")
+    assert "Hello" in content
+    assert "world" not in content
+    assert any(
+        "finish_reason" in line for line in content.split("\n") if "stop" in line
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

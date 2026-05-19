@@ -11,7 +11,6 @@ __all__ = [
     "BaseModelConfig",
     "AutoRegressiveLMConfig",
     "EncoderConfig",
-    "ModelConfig",
     "ConfigFactory",
     "TrainConfig",
 ]

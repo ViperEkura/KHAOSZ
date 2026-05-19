@@ -77,6 +77,9 @@ classDiagram
             +int start_batch
             +str ckpt_dir
             +int ckpt_interval
+            +str log_dir
+            +int log_interval
+            +List[str] metrics
             +int random_seed
             +int num_workers
             +Optional[int] prefetch_factor
@@ -472,6 +475,10 @@ classDiagram
         class CheckpointCallback {
             +str save_dir
             +int interval
+            +bool weight_only
+            +Callable state_dict_fn
+            +Callable save_extra_fn
+            +Callable load_extra_fn
             +_save_checkpoint(context)
             +on_train_begin(context)
             +on_batch_end(context)
@@ -483,6 +490,8 @@ classDiagram
 
         class ProgressBarCallback {
             +int num_epoch
+            +int log_interval
+            +IO file
             +on_epoch_begin(context)
             +on_batch_end(context)
             +on_epoch_end(context)
@@ -491,6 +500,8 @@ classDiagram
         class MetricLoggerCallback {
             +str log_dir
             +int save_interval
+            +int log_interval
+            +List[str] metrics
             +on_batch_end(context)
             +on_train_end(context)
             +on_error(context)
@@ -687,7 +698,7 @@ classDiagram
         }
 
         class SamplingPipeline {
-            +List strategies
+            +List[BaseSamplingStrategy] strategies
             +apply(logits, filter_value) Tensor
             +sample(logits, filter_value) Tensor
         }
@@ -711,16 +722,16 @@ classDiagram
         class ChatCompletionRequest {
             +str model
             +List[ChatMessage] messages
-            +float temperature
-            +float top_p
-            +int top_k
-            +int max_tokens
-            +bool stream
+            +Optional[float] temperature
+            +Optional[float] top_p
+            +Optional[int] top_k
+            +Optional[int] max_tokens
+            +Optional[bool] stream
             +Optional[Union[str, List[str]]] stop
             +Optional[int] n
             +Optional[float] presence_penalty
             +Optional[float] frequency_penalty
-            +Optional[Dict] logit_bias
+            +Optional[Dict[int, float]] logit_bias
             +Optional[str] user
         }
 
@@ -872,7 +883,6 @@ classDiagram
     InferenceScheduler *-- KVCache
     InferenceScheduler *-- Executor
     InferenceScheduler *-- TaskManager
-    SamplingPipeline *-- BaseSamplingStrategy
     AutoRegressiveLM *-- DecoderBlock
     AutoRegressiveLM *-- RotaryEmbedding
     AutoRegressiveLM *-- Embedding
@@ -880,9 +890,10 @@ classDiagram
     EmbeddingEncoder *-- RotaryEmbedding
     EmbeddingEncoder *-- Embedding
     DecoderBlock *-- RMSNorm
-    BaseDataset o-- BaseStorage
     ChatCompletionRequest *-- ChatMessage
     MessagesRequest *-- AnthropicMessage
+    AutoTokenizer *-- ChatTemplate
+    BaseFactory *-- Registry
 
     %% --- Aggregation (weak ownership) ---
     AutoModel o-- BaseModelConfig
@@ -890,9 +901,9 @@ classDiagram
     TrainContext o-- BaseStrategy
     TrainContext o-- BaseScheduler
     TrainContext o-- Checkpoint
-    AutoTokenizer o-- ChatTemplate
     KvcacheView o-- Storage
-    BaseFactory o-- Registry
+    SamplingPipeline o-- BaseSamplingStrategy
+    BaseDataset o-- BaseStorage
 
     %% --- Dependency (uses temporarily) ---
     TrainConfig ..> BaseStrategy : selects
