@@ -193,6 +193,10 @@ class TaskManager:
         with self._lock:
             return list(self.active_tasks)
 
+    def get_waiting_tasks(self) -> List[Task]:
+        with self._lock:
+            return list(self.waiting_queue)
+
     def clear_queues(self) -> None:
         with self._lock:
             self.waiting_queue.clear()
