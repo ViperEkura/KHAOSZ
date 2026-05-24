@@ -72,17 +72,18 @@ on_train_begin
   on_epoch_begin
     for batch in dataloader:
       on_batch_begin
-      loss = strategy(batch)
-      (loss / grad_accum_steps).backward()
-      iteration += 1
+      with executor.accumulate(model):
+        loss = strategy(batch)
+        (loss / grad_accum_steps).backward()
+        iteration += 1
       on_batch_end
 
-      if iteration % grad_accum_steps == 0:
-        on_step_begin
+      if executor.sync_gradients:
+        on_optimizer_step
         optimizer.step()
         optimizer.zero_grad()
-        on_step_end
-        scheduler.step()
+
+      scheduler.step()  # called every iteration
     on_epoch_end
 on_train_end
 ```
@@ -92,12 +93,11 @@ on_train_end
 | Hook | Fires | Default callback |
 |------|-------|-----------------|
 | `on_train_begin` | Before training starts | `GradientCheckpointingCallback` |
-| `on_step_begin` | Every accumulation window | `GradientClippingCallback` |
+| `on_optimizer_step` | Every accumulation window | `GradientClippingCallback`, `ValidationCallback` |
 | `on_batch_end` | Every batch | `CheckpointCallback`, `MetricLoggerCallback`, `ProgressBarCallback` |
-| `on_step_end` | Every accumulation window | `ValidationCallback` |
 | `on_train_end` | Training ends | `CheckpointCallback`, `MetricLoggerCallback` (final save) |
 
-Default callbacks: `gradient_checkpointing` (activation checkpointing, optional), `progress_bar` (tqdm), `checkpoint` (safetensors, rank-0), `metric_logger` (JSONL, rank-0), `gradient_clipping`, `validation` (periodic validation on val_dataset).
+Default callbacks (in order): `gradient_checkpointing` (activation checkpointing, optional), `checkpoint` (safetensors, rank-0), `metric_logger` (JSONL, rank-0), `progress_bar` (tqdm), `gradient_clipping`, `validation` (periodic validation on val_dataset).
 
 ## Strategies
 
@@ -171,7 +171,7 @@ Callback wraps each `DecoderBlock.forward` with `torch.utils.checkpoint.checkpoi
 
 ```
 Checkpoint(state_dict, epoch, iteration, extra, meta)
-  ├── save(save_dir)    rank-0 only: meta.json (includes training config) + state_dict.safetensors + optional extra.pt
+  ├── save(save_dir)    rank-0 only: meta.json (includes training config) + state_dict.safetensors + optional optimizer.pt / scheduler.pt
   └── load(save_dir)    broadcasts metadata from rank-0
 ```
 
@@ -190,7 +190,8 @@ context = (
 ```
 
 - Loads checkpoint weights if provided
-- Wraps model with `parallel_wrapper` if `nprocs > 1`
+- Creates executor via `ExecutorFactory.create(parallel_mode, **executor_kwargs)`
+- Calls `executor.prepare(model, optimizer, dataloader, scheduler)` for model distribution (e.g. DDP) + gradient accumulation wrappers
 - Creates `ResumableDistributedSampler` for shuffle+resume
 - Builds strategy via `StrategyFactory.create(train_type, ...)`
 
@@ -222,4 +223,4 @@ nohup python scripts/tools/train.py \
 
 Full parameter reference at [params.md](params.md).
 
-> Document Update Time: 2026-05-17
+> Document Update Time: 2026-05-24

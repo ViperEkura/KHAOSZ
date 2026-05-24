@@ -53,7 +53,9 @@
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `--nprocs` | Number of GPUs / processes | 1 |
+| `--parallel_mode` | Parallel strategy (`none` or `ddp`) | none |
 | `--device_type` | Device type | cuda |
+| `--start_method` | Multiprocessing start method (`spawn`, `fork`, `forkserver`) | spawn |
 
 ### Strategy-specific
 
@@ -94,4 +96,4 @@ nohup python scripts/tools/train.py \
 
 ---
 
-> Document Update Time: 2026-05-17
+> Document Update Time: 2026-05-24

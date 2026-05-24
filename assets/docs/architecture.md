@@ -88,12 +88,12 @@ classDiagram
             +str backend
             +str master_addr
             +str master_port
-            +Callable parallel_wrapper
-            +Callable state_dict_fn
             +str start_method
             +str device_type
             +Optional[Dataset] val_dataset
             +int val_step
+            +str parallel_mode
+            +dict executor_kwargs
             +dict extra_kwargs
             +validate()
         }
@@ -257,11 +257,13 @@ classDiagram
             +int qk_rope_head_dim
             +int n_rep
             +int layer_id
+            +bool use_qk_norm
             +bool use_gated_attention
             +Linear q_proj, kv_a_proj, kv_b_proj
             +Linear o_proj
             +Linear gate  # only if use_gated_attention
             +RMSNorm kv_norm
+            +RMSNorm q_norm, k_norm  # only if use_qk_norm
             +forward(x, rotary_emb, attn_mask, paged_cache) Tensor
         }
 
@@ -364,10 +366,11 @@ classDiagram
             +nn.Module model
             +BaseStrategy strategy
             +DataLoader dataloader
-            +Optimizer optimizer
-            +LRScheduler scheduler
+            +OptimizerProtocol optimizer
+            +SchedulerProtocol scheduler
             +Checkpoint checkpoint
             +TrainConfig config
+            +BaseExecutor executor
             +int epoch
             +int iteration
             +float loss
@@ -802,6 +805,24 @@ classDiagram
         }
     }
 
+    namespace protocols {
+        class OptimizerProtocol {
+            <<protocol>>
+            +step(closure)
+            +zero_grad()
+            +state_dict() dict
+            +load_state_dict(d)
+        }
+
+        class SchedulerProtocol {
+            <<protocol>>
+            +step()
+            +state_dict() dict
+            +load_state_dict(d)
+            +get_last_lr()
+        }
+    }
+
     namespace parallel {
         class Functions {
             <<module>>
@@ -811,6 +832,54 @@ classDiagram
             +get_world_size() int
             +get_rank() int
             +only_on_rank(rank, sync) decorator
+        }
+
+        class GradientState {
+            +int num_steps
+            +sync_gradients (property) bool
+        }
+
+        class AccumOptimizer {
+            +Optimizer optimizer
+            +GradientState gradient_state
+            +step(closure)
+            +zero_grad()
+            +state_dict() dict
+            +load_state_dict(d)
+        }
+
+        class AccumScheduler {
+            +LRScheduler scheduler
+            +GradientState gradient_state
+            +step()
+            +state_dict() dict
+            +load_state_dict(d)
+            +get_last_lr()
+        }
+
+        class BaseExecutor {
+            +GradientState gradient_state
+            +prepare(model, optimizer, dataloader, scheduler) tuple
+            +accumulate(model) context manager
+            +backward(loss)
+            +unwrap_model(model) nn.Module
+            +sync_gradients (property) bool
+            +grad_accum_steps (property) int
+        }
+
+        class NoneExecutor {
+        }
+
+        class DDPExecutor {
+            +_prepare_model(model) nn.Module
+            +_no_sync(model) context manager
+            +unwrap_model(model) nn.Module
+        }
+
+        class ExecutorFactory {
+            +Registry _registry
+            +register(name) decorator
+            +create(parallel_mode, **kwargs) BaseExecutor
         }
 
         class ParallelModel {
@@ -868,8 +937,10 @@ classDiagram
     BaseFactory <|-- SchedulerFactory
     BaseFactory <|-- CallbackFactory
     BaseFactory <|-- StorageFactory
+    BaseFactory <|-- ExecutorFactory
     BaseFactory <|-- ConfigFactory
-    TrainCallback <|-- ValidationCallback
+    BaseExecutor <|-- NoneExecutor
+    BaseExecutor <|-- DDPExecutor
     ProtocolHandler <|-- OpenAIHandler
     ProtocolHandler <|-- AnthropicHandler
 
@@ -894,6 +965,9 @@ classDiagram
     MessagesRequest *-- AnthropicMessage
     AutoTokenizer *-- ChatTemplate
     BaseFactory *-- Registry
+    BaseExecutor *-- GradientState
+    AccumOptimizer o-- GradientState
+    AccumScheduler o-- GradientState
 
     %% --- Aggregation (weak ownership) ---
     AutoModel o-- BaseModelConfig
@@ -901,6 +975,7 @@ classDiagram
     TrainContext o-- BaseStrategy
     TrainContext o-- BaseScheduler
     TrainContext o-- Checkpoint
+    TrainContext o-- BaseExecutor
     KvcacheView o-- Storage
     SamplingPipeline o-- BaseSamplingStrategy
     BaseDataset o-- BaseStorage
@@ -921,6 +996,9 @@ classDiagram
     StorageFactory ..> JSONStorage : creates
     ConfigFactory ..> AutoRegressiveLMConfig : creates
     ConfigFactory ..> EncoderConfig : creates
+    ExecutorFactory ..> NoneExecutor : creates
+    ExecutorFactory ..> DDPExecutor : creates
+    TrainContextBuilder ..> ExecutorFactory : creates
     Trainer ..> TrainContextBuilder : uses
     TrainContextBuilder ..> TrainContext : creates
     Trainer ..> Functions : spawns
@@ -963,15 +1041,16 @@ classDiagram
 | **astrai.model** | AutoModel, AutoRegressiveLM, EmbeddingEncoder, DecoderBlock, GQA, MLA, MLP, DeepSeekMoE, AttnFactory, FFNFactory, RMSNorm, Linear, RotaryEmbedding, Embedding | Neural network model |
 | **astrai.tokenize** | AutoTokenizer, ChatTemplate | Tokenizer and chat template |
 | **astrai.trainer** | Trainer, TrainContext, TrainContextBuilder, BaseStrategy–GRPOStrategy, StrategyFactory, BaseScheduler–SGDRScheduler, SchedulerFactory, TrainCallback(Protocol)–ValidationCallback, CallbackFactory, Muon | Training workflow |
-| **astrai.inference** | InferenceEngine, InferenceScheduler, Executor, KVCache–KvcacheView, Allocator–Storage, Task, TaskManager, TaskStatus, GenerationRequest, BaseSamplingStrategy–SamplingPipeline, ProtocolHandler–AnthropicHandler, ChatMessage–MessagesRequest, app | Inference service |
-| **astrai.parallel** | spawn_parallel_fn, setup_parallel, get_rank/get_world_size/get_current_device, only_on_rank, ParallelModel, RowParallelLinear, ColumnParallelLinear | Distributed parallel |
+| **astrai.inference** | InferenceEngine, InferenceScheduler, Executor, KVCache–KvcacheView, Allocator–Storage, Task, TaskManager, TaskStatus, GenerationRequest, GenerateResult, BaseSamplingStrategy–SamplingPipeline, ProtocolHandler–AnthropicHandler, StopChecker, StreamContext, ChatMessage–MessagesRequest, app | Inference service |
+| **astrai.parallel** | spawn_parallel_fn, setup_parallel, get_rank/get_world_size/get_current_device, only_on_rank, BaseExecutor, ExecutorFactory, NoneExecutor, DDPExecutor, GradientState, AccumOptimizer, AccumScheduler, ParallelModel, RowParallelLinear, ColumnParallelLinear | Distributed parallel & gradient accumulation |
 | **astrai.factory** | Registry, BaseFactory[T] | Component registration |
+| **astrai.protocols** | OptimizerProtocol, SchedulerProtocol | Structural subtyping for optimizer/scheduler wrappers |
 
 ## Design Patterns
 
 | Pattern | Classes | Purpose |
 |---------|---------|---------|
-| **Factory** | `AttnFactory`, `FFNFactory`, `StrategyFactory`, `DatasetFactory`, `SchedulerFactory`, `CallbackFactory`, `StorageFactory`, `ConfigFactory` | Decorator-based component creation |
+| **Factory** | `AttnFactory`, `FFNFactory`, `StrategyFactory`, `DatasetFactory`, `SchedulerFactory`, `CallbackFactory`, `StorageFactory`, `ConfigFactory`, `ExecutorFactory` | Decorator-based component creation |
 | **Registry** | `BaseFactory`, `Registry` | Component registration with category/priority |
 | **Strategy** | `SEQStrategy`, `SFTStrategy`, `DPOStrategy`, `GRPOStrategy` | Training strategy switching |
 | **Strategy (Sampling)** | `TemperatureStrategy`, `TopKStrategy`, `TopPStrategy`, `SamplingPipeline` | Composable logit transformations |
@@ -980,20 +1059,23 @@ classDiagram
 | **Observer** | `TrainCallback`, callback implementations | Training process monitoring |
 | **Context** | `TrainContext` | Unified training state bag |
 | **Object Pool** | `Allocator`, `PagePool` | Page-based KV cache with LRU eviction |
+| **Executor** | `BaseExecutor`, `NoneExecutor`, `DDPExecutor` | Gradient accumulation & model distribution |
 | **Storage** | `BaseStorage`, `H5Storage`, `JSONStorage` | Format-agnostic data access |
 | **Producer-Consumer** | `InferenceScheduler`, `Task`, queues | Continuous batching |
 | **AutoModel Registry** | `AutoModel`, `AutoRegressiveLM`, `EmbeddingEncoder` | Model-type dynamic loading |
 
 ## Core Relationships
 
-1. **Config → Training**: `TrainConfig` holds model, dataset, optimizer_fn, scheduler_fn
-2. **Training Flow**: `Trainer` → `TrainContextBuilder` → `TrainContext`, uses `BaseStrategy` for loss
+1. **Config → Training**: `TrainConfig` holds model, dataset, optimizer_fn, scheduler_fn, `parallel_mode`, `executor_kwargs`
+2. **Training Flow**: `Trainer` → `TrainContextBuilder` → `TrainContext`, uses `BaseStrategy` for loss, `BaseExecutor` for gradient accumulation + model distribution
 3. **Strategy Selection**: `StrategyFactory` creates strategy by `train_type`
-4. **Inference Flow**: `InferenceEngine` → `InferenceScheduler` → `AutoRegressiveLM`, backed by `KVCache` + `SamplingPipeline`
-5. **Distributed**: `spawn_parallel_fn` + `setup_parallel` for multi-process DDP
-6. **Dataset Loading**: `DatasetFactory` creates datasets, `BaseStorage` (H5Storage/JSONStorage) loads via `BaseSegmentFetcher` + `MultiSegmentFetcher`
-7. **Checkpoint**: `Checkpoint` saves/loads safetensors + metadata (rank-0 only)
-8. **Scheduler**: `SchedulerFactory` creates `CosineScheduler`/`SGDRScheduler`
-9. **AutoModel**: `from_pretrained()` loads `config.json` + `model.safetensors`, `_disable_random_init` replaces `nn.init.*` with no-ops
+4. **Executor Selection**: `ExecutorFactory.create(parallel_mode, **executor_kwargs)` → `NoneExecutor` (single) / `DDPExecutor` (distributed)
+5. **Inference Flow**: `InferenceEngine` → `InferenceScheduler` → `AutoRegressiveLM`, backed by `KVCache` + `SamplingPipeline`
+6. **Distributed**: `spawn_parallel_fn` + `setup_parallel` for multi-process DDP
+7. **Dataset Loading**: `DatasetFactory` creates datasets, `BaseStorage` (H5Storage/JSONStorage) loads via `BaseSegmentFetcher` + `MultiSegmentFetcher`
+8. **Checkpoint**: `Checkpoint` saves/loads safetensors + metadata (rank-0 only), extra state saved as `{key}.pt`
+9. **Scheduler**: `SchedulerFactory` creates `CosineScheduler`/`SGDRScheduler`
+10. **AutoModel**: `from_pretrained()` loads `config.json` + `model.safetensors`, `_disable_random_init` replaces `nn.init.*` with no-ops
+11. **Protocols**: `OptimizerProtocol` / `SchedulerProtocol` — structural subtyping for `AccumOptimizer` / `AccumScheduler` wrappers
 
-> Document Update Time: 2026-05-17
+> Document Update Time: 2026-05-24
