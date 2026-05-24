@@ -1,3 +1,9 @@
+from astrai.parallel.backend import (
+    AccumOptimizer,
+    AccumScheduler,
+    BackendFactory,
+    BaseTrainingBackend,
+)
 from astrai.parallel.module import ColumnParallelLinear, RowParallelLinear
 from astrai.parallel.setup import (
     get_current_device,
@@ -17,4 +23,8 @@ __all__ = [
     "spawn_parallel_fn",
     "RowParallelLinear",
     "ColumnParallelLinear",
+    "BackendFactory",
+    "BaseTrainingBackend",
+    "AccumOptimizer",
+    "AccumScheduler",
 ]
