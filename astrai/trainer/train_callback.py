@@ -51,17 +51,14 @@ class TrainCallback(Protocol):
     def on_epoch_end(self, context: TrainContext):
         """Called at the end of each epoch."""
 
-    def on_step_begin(self, context: TrainContext):
-        """Called at the beginning of each step."""
-
-    def on_step_end(self, context: TrainContext):
-        """Called at the end of each step."""
-
     def on_batch_begin(self, context: TrainContext):
         """Called at the beginning of each batch."""
 
     def on_batch_end(self, context: TrainContext):
         """Called at the end of each batch."""
+
+    def on_optimizer_step(self, context: TrainContext):
+        """Called on every optimizer step (sync step only)."""
 
     def on_error(self, context: TrainContext):
         """Called when an error occurs during training."""
@@ -88,7 +85,7 @@ class GradientClippingCallback(TrainCallback):
     def __init__(self, max_grad_norm: float):
         self.max_grad_norm = max_grad_norm
 
-    def on_step_begin(self, context: TrainContext):
+    def on_optimizer_step(self, context: TrainContext):
         clip_grad_norm_(context.model.parameters(), self.max_grad_norm)
 
 
@@ -344,7 +341,7 @@ class ValidationCallback(TrainCallback):
             f"Epoch {context.epoch + 1}, Step {step_count}, Val Loss: {avg_loss:.4f}"
         )
 
-    def on_step_end(self, context: TrainContext):
+    def on_optimizer_step(self, context: TrainContext):
         if context.val_dataloader is None:
             return
         cfg = context.config

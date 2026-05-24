@@ -1,8 +1,7 @@
-"""Unified training backend — parallel strategy + gradient accumulation."""
+"""Unified training executor — parallel strategy + gradient accumulation."""
 
 import contextlib
 import logging
-from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from typing import Optional, Tuple
 
@@ -19,17 +18,32 @@ from astrai.parallel.setup import get_rank, get_world_size
 logger = logging.getLogger(__name__)
 
 
+class GradientState:
+    def __init__(self, grad_accum_steps: int = 1):
+        self.num_steps = max(grad_accum_steps, 1)
+        self._step: int = 0
+        self._sync_gradients: bool = True
+
+    @property
+    def sync_gradients(self) -> bool:
+        return self._sync_gradients
+
+    def _do_sync(self):
+        self._step += 1
+        self._sync_gradients = self._step % self.num_steps == 0
+
+
 class AccumOptimizer:
-    def __init__(self, optimizer: Optimizer, backend: "BaseTrainingBackend"):
+    def __init__(self, optimizer: Optimizer, gradient_state: GradientState):
         self.optimizer = optimizer
-        self._backend = backend
+        self.gradient_state = gradient_state
 
     def step(self, closure=None):
-        if self._backend._sync_gradients:
+        if self.gradient_state.sync_gradients:
             self.optimizer.step(closure)
 
     def zero_grad(self):
-        if self._backend._sync_gradients:
+        if self.gradient_state.sync_gradients:
             self.optimizer.zero_grad()
 
     @property
@@ -44,12 +58,12 @@ class AccumOptimizer:
 
 
 class AccumScheduler:
-    def __init__(self, scheduler: LRScheduler, backend: "BaseTrainingBackend"):
+    def __init__(self, scheduler: LRScheduler, gradient_state: GradientState):
         self.scheduler = scheduler
-        self._backend = backend
+        self.gradient_state = gradient_state
 
     def step(self):
-        if self._backend._sync_gradients:
+        if self.gradient_state.sync_gradients:
             self.scheduler.step()
 
     def state_dict(self):
@@ -62,11 +76,9 @@ class AccumScheduler:
         return self.scheduler.get_last_lr()
 
 
-class BaseTrainingBackend(ABC):
+class BaseExecutor:
     def __init__(self, grad_accum_steps: int = 1):
-        self.grad_accum_steps = max(grad_accum_steps, 1)
-        self._step: int = 0
-        self._sync_gradients: bool = True
+        self.gradient_state = GradientState(grad_accum_steps)
 
     def prepare(
         self,
@@ -79,23 +91,21 @@ class BaseTrainingBackend(ABC):
     ]:
         model = self._prepare_model(model)
         if optimizer is not None:
-            optimizer = AccumOptimizer(optimizer, self)
+            optimizer = AccumOptimizer(optimizer, self.gradient_state)
         if scheduler is not None:
-            scheduler = AccumScheduler(scheduler, self)
+            scheduler = AccumScheduler(scheduler, self.gradient_state)
         return model, optimizer, dataloader, scheduler
 
-    @abstractmethod
     def _prepare_model(self, model: nn.Module) -> nn.Module:
-        pass
+        return model
 
     def _no_sync(self, model: nn.Module):
         return contextlib.nullcontext()
 
     @contextmanager
     def accumulate(self, model: nn.Module):
-        self._step += 1
-        self._sync_gradients = self._step % self.grad_accum_steps == 0
-        if not self._sync_gradients:
+        self.gradient_state._do_sync()
+        if not self.gradient_state.sync_gradients:
             with self._no_sync(model):
                 yield
         else:
@@ -111,19 +121,26 @@ class BaseTrainingBackend(ABC):
     def use_distributed(self) -> bool:
         return get_world_size() > 1
 
+    @property
+    def sync_gradients(self) -> bool:
+        return self.gradient_state.sync_gradients
 
-class BackendFactory(BaseFactory[BaseTrainingBackend]):
+    @property
+    def grad_accum_steps(self) -> int:
+        return self.gradient_state.num_steps
+
+
+class ExecutorFactory(BaseFactory[BaseExecutor]):
     pass
 
 
-@BackendFactory.register("single")
-class SingleDeviceBackend(BaseTrainingBackend):
-    def _prepare_model(self, model: nn.Module) -> nn.Module:
-        return model
+@ExecutorFactory.register("none")
+class NoneExecutor(BaseExecutor):
+    pass
 
 
-@BackendFactory.register("ddp")
-class DDPTrainingBackend(BaseTrainingBackend):
+@ExecutorFactory.register("ddp")
+class DDPExecutor(BaseExecutor):
     def __init__(
         self,
         grad_accum_steps: int = 1,

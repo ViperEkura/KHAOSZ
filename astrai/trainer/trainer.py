@@ -34,7 +34,6 @@ class Trainer:
                 "checkpoint",
                 cfg.ckpt_dir,
                 cfg.ckpt_interval,
-                state_dict_fn=cfg.state_dict_fn,
             ),
             CallbackFactory.create(
                 "metric_logger",
@@ -56,32 +55,34 @@ class Trainer:
                 method(context)
 
     def _trainer_loop(self, checkpoint: Optional[Checkpoint] = None):
-        cfg = self.train_config
-        context = TrainContextBuilder(cfg).with_checkpoint(checkpoint).build()
+        context = (
+            TrainContextBuilder(self.train_config).with_checkpoint(checkpoint).build()
+        )
+        executor = context.executor
         self._call_callbacks("on_train_begin", context)
 
         try:
             context.model.train()
-            grad_accum_steps = cfg.grad_accum_steps
 
-            for epoch in range(context.epoch, cfg.n_epoch):
+            for epoch in range(context.epoch, context.config.n_epoch):
                 context.epoch = epoch
                 self._call_callbacks("on_epoch_begin", context)
 
                 for batch in context.dataloader:
                     self._call_callbacks("on_batch_begin", context)
-                    loss = context.strategy(batch)
-                    context.loss = loss.item()
-                    stand_loss = loss / grad_accum_steps
-                    stand_loss.backward()
-                    context.iteration += 1
-                    self._call_callbacks("on_batch_end", context)
 
-                    if context.iteration % grad_accum_steps == 0:
-                        self._call_callbacks("on_step_begin", context)
-                        context.optimizer.step()
-                        context.optimizer.zero_grad()
-                        self._call_callbacks("on_step_end", context)
+                    with executor.accumulate(context.model):
+                        loss = context.strategy(batch)
+                        context.loss = loss.item()
+                        stand_loss = loss / executor.grad_accum_steps
+                        executor.backward(stand_loss)
+                        context.iteration += 1
+                        self._call_callbacks("on_batch_end", context)
+
+                        if executor.sync_gradients:
+                            self._call_callbacks("on_optimizer_step", context)
+                            context.optimizer.step()
+                            context.optimizer.zero_grad()
 
                         if context.scheduler:
                             context.scheduler.step()

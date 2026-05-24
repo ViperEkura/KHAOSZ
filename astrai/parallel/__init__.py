@@ -1,8 +1,10 @@
-from astrai.parallel.backend import (
+from astrai.parallel.executor import (
     AccumOptimizer,
     AccumScheduler,
-    BackendFactory,
-    BaseTrainingBackend,
+    BaseExecutor,
+    ExecutorFactory,
+    GradientState,
+    NoneExecutor,
 )
 from astrai.parallel.module import ColumnParallelLinear, RowParallelLinear
 from astrai.parallel.setup import (
@@ -23,8 +25,10 @@ __all__ = [
     "spawn_parallel_fn",
     "RowParallelLinear",
     "ColumnParallelLinear",
-    "BackendFactory",
-    "BaseTrainingBackend",
+    "ExecutorFactory",
+    "BaseExecutor",
+    "GradientState",
     "AccumOptimizer",
     "AccumScheduler",
+    "NoneExecutor",
 ]

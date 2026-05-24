@@ -4,14 +4,11 @@ from functools import partial
 
 import safetensors.torch as st
 import torch
-import torch.nn as nn
 import torch.optim as optim
-from torch.nn.parallel import DistributedDataParallel as DDP
 
 from astrai.config import AutoRegressiveLMConfig, TrainConfig
 from astrai.dataset import DatasetFactory
 from astrai.model import AutoRegressiveLM
-from astrai.parallel import get_rank
 from astrai.trainer import SchedulerFactory, Trainer
 
 
@@ -147,6 +144,13 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--nprocs", type=int, default=1, help="Number of GPUs to use.")
     parser.add_argument(
+        "--parallel_mode",
+        type=str,
+        default="none",
+        choices=["none", "ddp"],
+        help="Parallel training strategy.",
+    )
+    parser.add_argument(
         "--device_type", type=str, default="cuda", help="Device type to use."
     )
     parser.add_argument(
@@ -162,21 +166,7 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def ddp_wrap(model: nn.Module):
-    local_rank = get_rank()
-    ddp_model = DDP(
-        model,
-        device_ids=[local_rank],
-        output_device=local_rank,
-        static_graph=True,
-        find_unused_parameters=False,
-        gradient_as_bucket_view=True,
-        broadcast_buffers=False,
-    )
-    return ddp_model
-
-
-def create_optimizer(model: nn.Module, **kwargs) -> optim.Optimizer:
+def create_optimizer(model, **kwargs) -> optim.Optimizer:
     return optim.AdamW(model.parameters(), fused=True, **kwargs)
 
 
@@ -184,12 +174,6 @@ def create_scheduler(
     optimizer: optim.Optimizer, **kwargs
 ) -> optim.lr_scheduler.LRScheduler:
     return SchedulerFactory.create(optimizer, **kwargs)
-
-
-def prepare_checkpoint(model: nn.Module) -> dict:
-    if isinstance(model, DDP):
-        return model.module.state_dict()
-    return model.state_dict()
 
 
 def compute_total_steps(
@@ -238,6 +222,7 @@ def train(
     window_size: int,
     stride: int,
     nprocs: int,
+    parallel_mode: str,
     device_type: str,
     start_method: str,
 ):
@@ -269,6 +254,13 @@ def train(
         "kl_coef": grpo_kl_coef,
         "group_size": group_size,
         "sync_interval": grpo_sync_interval,
+    }
+
+    executor_kwargs = {
+        "static_graph": True,
+        "find_unused_parameters": False,
+        "gradient_as_bucket_view": True,
+        "broadcast_buffers": False,
     }
 
     dataset = DatasetFactory.load(
@@ -319,10 +311,10 @@ def train(
         num_workers=num_workers,
         pin_memory=pin_memory,
         nprocs=nprocs,
-        parallel_wrapper=ddp_wrap,
-        state_dict_fn=prepare_checkpoint,
+        parallel_mode=parallel_mode,
         device_type=device_type,
         start_method=start_method,
+        executor_kwargs=executor_kwargs,
         extra_kwargs=strategy_kwargs,
     )
 

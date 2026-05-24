@@ -95,11 +95,9 @@ class TrainConfig(BaseConfig):
     master_port: str = field(
         default="29500", metadata={"help": "Master port for distributed training."}
     )
-    parallel_wrapper: Optional[Callable] = field(
-        default=None, metadata={"help": "Parallel function for training."}
-    )
-    state_dict_fn: Optional[Callable] = field(
-        default=None, metadata={"help": "Parallel function for state  dict saving."}
+    parallel_mode: str = field(
+        default="none",
+        metadata={"help": "Parallel strategy: none, ddp."},
     )
     start_method: str = field(
         default="spawn",
@@ -118,6 +116,10 @@ class TrainConfig(BaseConfig):
         metadata={"help": "Number of optimizer steps between validation runs."},
     )
 
+    executor_kwargs: dict = field(
+        default_factory=dict,
+        metadata={"help": "Extra kwargs passed to ExecutorFactory.create()."},
+    )
     extra_kwargs: dict = field(
         default_factory=dict, metadata={"help": "Other arguments."}
     )
