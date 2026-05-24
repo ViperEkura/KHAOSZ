@@ -1,3 +1,5 @@
+import os
+
 import pytest
 import torch
 from torch.utils.data import Dataset
@@ -73,6 +75,7 @@ def create_train_config(
         optimizer_fn=optimizer_fn,
         scheduler_fn=scheduler_fn,
         ckpt_dir=test_dir,
+        log_dir=os.path.join(test_dir, "logs"),
         n_epoch=n_epoch,
         batch_per_device=batch_per_device,
         ckpt_interval=ckpt_interval,

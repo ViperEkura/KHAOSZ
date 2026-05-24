@@ -27,6 +27,7 @@ def test_early_stopping_simulation(base_test_env, early_stopping_dataset):
         model=base_test_env["model"],
         dataset=early_stopping_dataset,
         ckpt_dir=base_test_env["test_dir"],
+        log_dir=os.path.join(base_test_env["test_dir"], "logs"),
         n_epoch=2,
         batch_per_device=2,
         ckpt_interval=1,

@@ -1,3 +1,5 @@
+import os
+
 import torch
 
 from astrai.config.train_config import TrainConfig
@@ -110,6 +112,7 @@ def test_gradient_checkpointing_trainer_integration(base_test_env, random_datase
         optimizer_fn=optimizer_fn,
         scheduler_fn=scheduler_fn,
         ckpt_dir=base_test_env["test_dir"],
+        log_dir=os.path.join(base_test_env["test_dir"], "logs"),
         n_epoch=1,
         batch_per_device=2,
         ckpt_interval=3,
@@ -143,6 +146,7 @@ def test_callback_integration(base_test_env, random_dataset):
         optimizer_fn=optimizer_fn,
         scheduler_fn=scheduler_fn,
         ckpt_dir=base_test_env["test_dir"],
+        log_dir=os.path.join(base_test_env["test_dir"], "logs"),
         n_epoch=1,
         batch_per_device=2,
         ckpt_interval=3,
