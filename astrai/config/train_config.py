@@ -7,6 +7,7 @@ from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import Dataset
 
 from astrai.config.base import BaseConfig
+from astrai.model.components.lora import LoRAConfig
 
 
 def required(**kw):
@@ -54,6 +55,12 @@ class TrainConfig(BaseConfig):
     )
     ckpt_interval: int = field(
         default=5000, metadata={"help": "Number of iterations between checkpoints."}
+    )
+
+    # lora setting
+    lora: Optional[LoRAConfig] = field(
+        default=None,
+        metadata={"help": "LoRA config. None means full fine-tuning."},
     )
 
     # metric setting

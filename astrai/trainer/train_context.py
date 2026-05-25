@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 
 from astrai.config.train_config import TrainConfig
 from astrai.dataset import ResumableDistributedSampler
+from astrai.model.components.lora import inject_lora
 from astrai.parallel.executor import BaseExecutor, ExecutorFactory
 from astrai.parallel.setup import get_current_device, get_rank, get_world_size
 from astrai.protocols import OptimizerProtocol, SchedulerProtocol
@@ -75,6 +76,14 @@ class TrainContextBuilder:
         else:
             context.checkpoint = Checkpoint(
                 state_dict=context.model.state_dict(),
+            )
+
+        if cfg.lora is not None:
+            inject_lora(
+                context.model,
+                r=cfg.lora.r,
+                alpha=cfg.lora.alpha,
+                target_modules=set(cfg.lora.target_modules),
             )
 
         context.optimizer = cfg.optimizer_fn(context.model)
