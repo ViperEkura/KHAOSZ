@@ -1,12 +1,6 @@
-"""Inference API: protocol handlers and FastAPI server."""
+"""Inference API: protocol handler, stop checker, and FastAPI server."""
 
-from astrai.inference.api.protocol import (
-    AnthropicHandler,
-    OpenAIHandler,
-    ProtocolHandler,
-    StopChecker,
-    StreamContext,
-)
+from astrai.inference.api.protocol import GenContext, ProtocolHandler, StopChecker
 from astrai.inference.api.server import (
     AnthropicMessage,
     ChatCompletionRequest,
@@ -17,11 +11,9 @@ from astrai.inference.api.server import (
 )
 
 __all__ = [
-    "AnthropicHandler",
-    "OpenAIHandler",
     "ProtocolHandler",
     "StopChecker",
-    "StreamContext",
+    "GenContext",
     "AnthropicMessage",
     "ChatCompletionRequest",
     "ChatMessage",

@@ -13,17 +13,6 @@ from astrai.inference.core.task import STOP
 from astrai.tokenize import AutoTokenizer
 
 
-def _validate_sampling_params(
-    top_k: int, top_p: float, temperature: float, max_tokens: Optional[int] = None
-):
-    if not (isinstance(top_k, int) and top_k >= 0):
-        raise ValueError("top_k must be a non-negative integer")
-    if not (0.0 <= top_p <= 1.0):
-        raise ValueError("top_p must be a float between 0.0 and 1.0")
-    if not (isinstance(temperature, (int, float)) and temperature >= 0):
-        raise ValueError("temperature must be a non-negative number")
-
-
 class GenerateResult:
     """Thread-safe token accumulator for streaming and non-streaming modes."""
 
@@ -86,7 +75,12 @@ class GenerationRequest:
         max_tokens: Optional[int] = None,
         stream: bool = False,
     ):
-        _validate_sampling_params(top_k, top_p, temperature, max_tokens)
+        if not (isinstance(top_k, int) and top_k >= 0):
+            raise ValueError("top_k must be a non-negative integer")
+        if not (0.0 <= top_p <= 1.0):
+            raise ValueError("top_p must be a float between 0.0 and 1.0")
+        if not (isinstance(temperature, (int, float)) and temperature >= 0):
+            raise ValueError("temperature must be a non-negative number")
 
         self.messages = messages
         self.top_k = top_k
@@ -137,7 +131,6 @@ class InferenceEngine:
         top_p: float = 1.0,
         top_k: int = 50,
     ) -> Union[Generator, str, List[str]]:
-        _validate_sampling_params(top_k, top_p, temperature, max_tokens)
         is_batch = isinstance(prompt, list)
         prompts = prompt if is_batch else [prompt]
 
@@ -158,7 +151,6 @@ class InferenceEngine:
         top_p: float = 1.0,
         top_k: int = 50,
     ) -> AsyncGenerator[str, None]:
-        _validate_sampling_params(top_k, top_p, temperature, max_tokens)
         sync_gen = self._generate_streaming(
             [prompt], False, max_tokens, temperature, top_p, top_k
         )

@@ -108,7 +108,10 @@ class InferenceScheduler:
                     continue
 
                 to_prefill = [
-                    t for t in self._task_mgr.get_active_tasks() if t.output_tokens == 0
+                    t
+                    for t in self._task_mgr.get_active_tasks()
+                    if t.output_tokens == 0
+                    and self._page_cache.task_cached(t.task_id) < len(t.prompt_ids)
                 ]
                 if to_prefill:
                     for t in to_prefill:

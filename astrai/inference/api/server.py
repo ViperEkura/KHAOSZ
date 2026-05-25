@@ -15,7 +15,9 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from astrai.inference.api.protocol import AnthropicHandler, OpenAIHandler
+from astrai.inference.api.anthropic import AnthropicResponseBuilder
+from astrai.inference.api.openai import OpenAIResponseBuilder
+from astrai.inference.api.protocol import ProtocolHandler
 from astrai.inference.engine import InferenceEngine
 from astrai.model import AutoModel
 from astrai.tokenize import AutoTokenizer
@@ -133,14 +135,14 @@ async def get_stats():
 @app.post("/v1/chat/completions")
 async def chat_completion(request: ChatCompletionRequest):
     engine = _get_engine()
-    handler = OpenAIHandler(request, engine)
+    handler = ProtocolHandler(request, engine, OpenAIResponseBuilder())
     return await handler.handle()
 
 
 @app.post("/v1/messages")
 async def create_message(request: MessagesRequest):
     engine = _get_engine()
-    handler = AnthropicHandler(request, engine)
+    handler = ProtocolHandler(request, engine, AnthropicResponseBuilder())
     return await handler.handle()
 
 
