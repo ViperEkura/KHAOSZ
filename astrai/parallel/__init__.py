@@ -2,7 +2,9 @@ from astrai.parallel.executor import (
     AccumOptimizer,
     AccumScheduler,
     BaseExecutor,
+    DDPExecutor,
     ExecutorFactory,
+    FSDPExecutor,
     GradientState,
     NoneExecutor,
 )
@@ -31,4 +33,6 @@ __all__ = [
     "AccumOptimizer",
     "AccumScheduler",
     "NoneExecutor",
+    "DDPExecutor",
+    "FSDPExecutor",
 ]

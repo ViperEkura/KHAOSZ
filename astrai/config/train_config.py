@@ -97,7 +97,7 @@ class TrainConfig(BaseConfig):
     )
     parallel_mode: str = field(
         default="none",
-        metadata={"help": "Parallel strategy: none, ddp."},
+        metadata={"help": "Parallel strategy: none, ddp, fsdp."},
     )
     start_method: str = field(
         default="spawn",

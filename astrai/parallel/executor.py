@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
@@ -197,4 +198,34 @@ class DDPExecutor(BaseExecutor):
     def unwrap_model(self, model: nn.Module) -> nn.Module:
         if isinstance(model, DDP):
             return model.module
+        return model
+
+
+@ExecutorFactory.register("fsdp")
+class FSDPExecutor(BaseExecutor):
+    def __init__(self, grad_accum_steps: int = 1, **fsdp_kwargs):
+        super().__init__(grad_accum_steps=grad_accum_steps)
+        self._fsdp_kwargs = fsdp_kwargs
+        self._original_model: Optional[nn.Module] = None
+
+    def _prepare_model(self, model: nn.Module) -> nn.Module:
+        if not self.use_distributed:
+            logger.warning("FSDP backend selected but world_size=1, model not wrapped")
+            return model
+        self._original_model = model
+        device_id = torch.device("cuda", get_rank())
+        model = FSDP(model, device_id=device_id, **self._fsdp_kwargs)
+        logger.info("Model wrapped with FSDP (world_size=%d)", get_world_size())
+        return model
+
+    def _no_sync(self, model: nn.Module):
+        if isinstance(model, FSDP):
+            return model.no_sync()
+        return contextlib.nullcontext()
+
+    def unwrap_model(self, model: nn.Module) -> nn.Module:
+        if self._original_model is not None:
+            return self._original_model
+        if isinstance(model, FSDP):
+            return model._fsdp_wrapped_module
         return model

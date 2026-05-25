@@ -8,15 +8,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from astrai.factory import BaseFactory
 
 
 def unwrap_model(model: nn.Module) -> nn.Module:
-    """Unwrap DDP wrapper if present to get the original model."""
     if isinstance(model, DDP):
         return model.module
+    if isinstance(model, FSDP):
+        return model._fsdp_wrapped_module
     return model
 
 
