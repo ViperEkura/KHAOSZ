@@ -20,7 +20,9 @@ class EmbeddingEncoder(AutoModel):
         self.config = config
         rope_dim = config.dim // config.n_heads
         rope_base = config.rope_theta if config.rope_theta is not None else 10000
-        self.rotary_embedding = RotaryEmbedding(rope_dim, config.max_len, rope_base)
+        self.rotary_embedding = RotaryEmbedding(
+            rope_dim, config.max_len, rope_base, rope_scaling=config.rope_scaling
+        )
         self.embed_tokens = Embedding(config.vocab_size, config.dim)
 
         self.layers = nn.ModuleList(

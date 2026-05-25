@@ -49,6 +49,7 @@ class AutoRegressiveLMConfig(BaseModelConfig):
 
     max_len: Optional[int] = None
     rope_theta: Optional[float] = None
+    rope_scaling: Optional[dict] = None
 
     attn_type: str = "gqa"
     n_heads: Optional[int] = None
@@ -80,6 +81,7 @@ class EncoderConfig(BaseModelConfig):
 
     max_len: Optional[int] = None
     rope_theta: Optional[float] = None
+    rope_scaling: Optional[dict] = None
 
     n_heads: Optional[int] = None
     n_kv_heads: Optional[int] = None

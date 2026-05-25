@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
@@ -19,6 +19,10 @@ def get_rotary_emb(
     return torch.complex(cos, sin)
 
 
+def ntk_base(base: float, dim: int, factor: float) -> float:
+    return base * (factor ** (dim / (dim - 2)))
+
+
 def apply_rotary_emb(x: torch.Tensor, freqs_cis: Tensor) -> Tensor:
     dtype = x.dtype
     x_ = x.float().reshape(*x.shape[:-1], -1, 2)
@@ -30,11 +34,25 @@ def apply_rotary_emb(x: torch.Tensor, freqs_cis: Tensor) -> Tensor:
 
 
 class RotaryEmbedding(nn.Module):
-    def __init__(self, dim: int, max_len: int, base: float = 10000):
+    def __init__(
+        self,
+        dim: int,
+        max_len: int,
+        base: float = 10000,
+        rope_scaling: Optional[Dict] = None,
+    ):
         super().__init__()
         self.dim = dim
         self.max_len = max_len
         self.base = base
+        self.rope_scaling = rope_scaling
+
+        if rope_scaling is not None:
+            scaling_type = rope_scaling.get("type", "ntk")
+            factor = rope_scaling.get("factor", 1.0)
+            if scaling_type == "ntk":
+                self.base = ntk_base(base, dim, factor)
+
         self._set_rotary_buffer(self.max_len)
 
     def _set_rotary_buffer(self, max_len: int):
