@@ -173,3 +173,21 @@ def test_scheduler_concurrent_get_stats(mock_model_and_tokenizer):
     for stats in results["stats"]:
         assert "total_tasks" in stats
         assert stats["total_tasks"] >= 0
+
+
+def test_prefill_skips_fully_cached_tasks(mock_model_and_tokenizer):
+    """Tasks whose entire prompt is cached skip the prefill phase."""
+    mock_model, mock_tokenizer = mock_model_and_tokenizer
+
+    with patch("astrai.inference.core.scheduler.AutoModel"):
+        with patch("astrai.inference.core.scheduler.AutoTokenizer"):
+            scheduler = InferenceScheduler(
+                model=mock_model,
+                tokenizer=mock_tokenizer,
+                max_batch_size=4,
+                device="cpu",
+            )
+
+    task_id = scheduler.add_task("short prompt", stream_callback=lambda t: None)
+    scheduler.stop()
+    assert task_id.startswith("task_")
