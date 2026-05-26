@@ -84,8 +84,8 @@ class Trainer:
                             context.optimizer.step()
                             context.optimizer.zero_grad()
 
-                        if context.scheduler:
-                            context.scheduler.step()
+                            if context.scheduler:
+                                context.scheduler.step()
 
                 self._call_callbacks("on_epoch_end", context)
 
