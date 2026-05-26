@@ -5,9 +5,8 @@ protocol-specific formatting to a ResponseBuilder.
 """
 
 import json
-import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 
 from fastapi.responses import StreamingResponse

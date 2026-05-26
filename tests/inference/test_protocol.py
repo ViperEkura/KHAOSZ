@@ -121,7 +121,6 @@ class TestOpenAIResponseBuilder:
         assert p["choices"][0]["finish_reason"] is None
 
     def test_format_chunk(self, builder):
-        ctx = _make_ctx()
         event = builder.format_chunk("hello")
         payload = json.loads(event.split("data: ", 1)[1])
         assert payload["choices"][0]["delta"]["content"] == "hello"

@@ -1,7 +1,7 @@
 """OpenAI chat completion response builder."""
 
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from pydantic import BaseModel
 

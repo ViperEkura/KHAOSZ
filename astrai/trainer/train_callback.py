@@ -210,7 +210,7 @@ class ProgressBarCallback(TrainCallback):
     """
 
     def __init__(
-        self, num_epoch: int, log_interval: int = 100, file: IO[str] = sys.stdout
+        self, num_epoch: int, log_interval: int = 100, file: Optional[IO[str]] = None
     ):
         self.num_epoch = num_epoch
         self.log_interval = log_interval
@@ -223,7 +223,7 @@ class ProgressBarCallback(TrainCallback):
             context.dataloader,
             desc=f"Epoch {context.epoch + 1}/{self.num_epoch}",
             dynamic_ncols=True,
-            file=self.file,
+            file=self.file or sys.stdout,
         )
 
     @only_on_rank(0)
