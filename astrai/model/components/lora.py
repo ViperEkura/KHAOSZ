@@ -1,15 +1,19 @@
-import json
 import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional, Set
 
-import safetensors.torch as st
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from astrai.model.components.linear import Linear
+from astrai.serialization import (
+    load_json,
+    load_safetensors,
+    save_json,
+    save_safetensors,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -128,16 +132,14 @@ def save_lora(model: nn.Module, save_dir: str, config: LoRAConfig):
 
     path = Path(save_dir)
     path.mkdir(parents=True, exist_ok=True)
-    st.save_file(lora_sd, str(path / "adapter_model.safetensors"))
-    with open(path / "adapter_config.json", "w") as f:
-        json.dump(asdict(config), f, indent=2)
+    save_safetensors(lora_sd, path / "adapter_model.safetensors")
+    save_json(asdict(config), path / "adapter_config.json")
     logger.info("LoRA adapter saved to %s (%d keys)", save_dir, len(lora_sd))
 
 
 def load_lora(model: nn.Module, load_dir: str) -> LoRAConfig:
     path = Path(load_dir)
-    with open(path / "adapter_config.json") as f:
-        raw = json.load(f)
+    raw = load_json(path / "adapter_config.json")
     config = LoRAConfig(
         r=raw["r"], alpha=raw["alpha"], target_modules=tuple(raw["target_modules"])
     )
@@ -157,7 +159,7 @@ def load_lora(model: nn.Module, load_dir: str) -> LoRAConfig:
             target_modules=set(config.target_modules),
         )
 
-    weights = st.load_file(str(path / "adapter_model.safetensors"))
+    weights = load_safetensors(path / "adapter_model.safetensors")
     try:
         missing, unexpected = model.load_state_dict(weights, strict=False)
     except RuntimeError as e:

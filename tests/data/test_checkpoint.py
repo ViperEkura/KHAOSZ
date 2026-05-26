@@ -1,3 +1,4 @@
+import os
 import tempfile
 
 import torch
@@ -36,7 +37,6 @@ def test_single_process():
 
 
 def test_checkpoint_with_extra():
-    """Verify extra keys are saved as individual .pt files and loaded back."""
     model = torch.nn.Linear(10, 5)
     optimizer = AdamW(model.parameters(), lr=1e-3)
     optimizer.step()
@@ -51,8 +51,6 @@ def test_checkpoint_with_extra():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         checkpoint.save(tmpdir)
-
-        import os
 
         assert os.path.exists(os.path.join(tmpdir, "optimizer.pt"))
         assert os.path.exists(os.path.join(tmpdir, "scheduler.pt"))

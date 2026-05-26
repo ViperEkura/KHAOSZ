@@ -2,16 +2,15 @@
 AutoModel base class for model loading and saving.
 """
 
-import json
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Self, Union
 
-import safetensors.torch as st
 import torch.nn as nn
 
 from astrai.config.model_config import BaseModelConfig, ConfigFactory
 from astrai.factory import BaseFactory
+from astrai.serialization import load_model_config, load_model_weights, save_model
 
 
 @contextmanager
@@ -60,25 +59,22 @@ class AutoModel(BaseFactory["AutoModel"], nn.Module):
 
         model_path = Path(path)
 
-        # Load config
         config_path = model_path / "config.json"
-        if config_path.exists():
-            with open(config_path, "r") as f:
-                raw = json.load(f)
-            config = ConfigFactory.load(raw)
-            model_type = config.model_type or "autoregressive_lm"
-        else:
+        if not config_path.exists():
             raise FileNotFoundError(f"Config file not found: {config_path}")
+
+        raw = load_model_config(str(model_path))
+        config = ConfigFactory.load(raw)
+        model_type = config.model_type or "autoregressive_lm"
 
         actual_cls = AutoModel.get_component_class(model_type)
 
         with _disable_random_init(enable=disable_random_init):
             model = actual_cls(config)
 
-        # Load weights
         weights_path = model_path / "model.safetensors"
         if weights_path.exists():
-            state_dict = st.load_file(str(weights_path))
+            state_dict = load_model_weights(str(model_path))
             model.load_state_dict(state_dict, strict=strict)
 
         return model
@@ -87,14 +83,11 @@ class AutoModel(BaseFactory["AutoModel"], nn.Module):
         self,
         save_directory: Union[str, Path],
     ) -> None:
-        save_path = Path(save_directory)
-        save_path.mkdir(parents=True, exist_ok=True)
-
-        # Save config
-        self.config.to_file(str(save_path / "config.json"))
-
-        # Save weights
-        st.save_file(self.state_dict(), str(save_path / "model.safetensors"))
+        save_model(
+            config=self.config.to_dict(),
+            state_dict=self.state_dict(),
+            save_directory=str(save_directory),
+        )
 
     def to(self, *args, **kwargs) -> Self:
         """Move model to device/dtype."""
