@@ -43,6 +43,7 @@ class ResumableDistributedSampler(Sampler[int]):
         offset = 0 if drop_last else self.num_replicas - 1
         self.num_samples_per_replica = (self.num_samples + offset) // self.num_replicas
         self.total_size = self.num_samples_per_replica * self.num_replicas
+        self.iter = self.iter % self.num_samples_per_replica
 
         self._indices = None
 
@@ -74,5 +75,10 @@ class ResumableDistributedSampler(Sampler[int]):
         self.epoch += 1
         self._indices = None
 
+    @property
+    def _remaining(self):
+        remaining = self.num_samples_per_replica - self.iter
+        return max(remaining, 0)
+
     def __len__(self):
-        return self.num_samples_per_replica
+        return self._remaining

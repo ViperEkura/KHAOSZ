@@ -2,13 +2,13 @@ import argparse
 import os
 from functools import partial
 
-import safetensors.torch as st
 import torch
 import torch.optim as optim
 
 from astrai.config import AutoRegressiveLMConfig, TrainConfig
 from astrai.dataset import DatasetFactory
 from astrai.model import AutoRegressiveLM
+from astrai.serialization import Checkpoint
 from astrai.trainer import SchedulerFactory, Trainer
 
 
@@ -236,16 +236,14 @@ def train(
     if window_size is None:
         window_size = config.max_len
 
-    # Create bare AutoRegressiveLM (for training, no tokenizer needed)
-    model = AutoRegressiveLM(config)
+    # Create model and load full checkpoint (state_dict + optimizer + scheduler + meta)
+    checkpoint = Checkpoint.load(param_path)
+    model = AutoRegressiveLM(config).to(dtype=torch.bfloat16)
+    model.load_state_dict(checkpoint.state_dict, strict=False)
 
-    # Load weights if available
-    weights_path = os.path.join(param_path, "model.safetensors")
-    if os.path.exists(weights_path):
-        state_dict = st.load_file(weights_path)
-        model.load_state_dict(state_dict, strict=False)
-
-    model = model.to(dtype=torch.bfloat16)
+    # Strip state_dict to avoid pickling ~7GB through mp.spawn pipe
+    # (model weights already loaded into model above)
+    checkpoint.state_dict = {}
 
     strategy_kwargs = {
         "beta": dpo_beta,
@@ -319,7 +317,7 @@ def train(
     )
 
     trainer = Trainer(train_config)
-    trainer.train()
+    trainer.train(checkpoint=checkpoint)
 
 
 if __name__ == "__main__":

@@ -71,7 +71,8 @@ class TrainContextBuilder:
         if self._checkpoint is not None:
             context.epoch = max(self._checkpoint.epoch, cfg.start_epoch)
             context.iteration = max(self._checkpoint.iteration, cfg.start_batch)
-            context.model.load_state_dict(self._checkpoint.state_dict)
+            if self._checkpoint.state_dict:
+                context.model.load_state_dict(self._checkpoint.state_dict)
             context.checkpoint = self._checkpoint
         else:
             context.checkpoint = Checkpoint(
