@@ -255,8 +255,6 @@ def train(
     }
 
     executor_kwargs = {
-        "static_graph": True,
-        "find_unused_parameters": False,
         "gradient_as_bucket_view": True,
         "broadcast_buffers": False,
     }
