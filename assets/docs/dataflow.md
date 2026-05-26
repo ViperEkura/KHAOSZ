@@ -33,14 +33,14 @@ Both support shared memory via `.share_memory_()`.
 ## Dataset Architecture
 
 ```
-DatasetFactory.load(train_type, path, window_size, stride)
+DatasetFactory.load(train_type, path, window_size, stride, storage_type, tokenizer)
   → StorageFactory.create(detect_format(path))
     → MultiSegmentFetcher(BaseSegmentFetcher per key)
       → BaseDataset.__getitem__(idx)
         → sliding window [begin, end) via get_index(idx)
 ```
 
-`window_size` = max input length, `stride` = step between consecutive samples.
+`window_size` = max input length, `stride` = step between consecutive samples (defaults to `window_size`).
 
 ## Sampler
 

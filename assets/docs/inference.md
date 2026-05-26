@@ -46,20 +46,22 @@ BaseSamplingStrategy → TemperatureStrategy → TopKStrategy → TopPStrategy
 `SamplingPipeline` composes them: Temperature → Top-K → Top-P → softmax → multinomial.  
 `sample()` is a convenience shortcut for one-shot usage.
 
-## Protocol Handlers (Template Method)
+## Protocol Handlers (Strategy Pattern)
 
 ```python
-class ProtocolHandler(ABC):
-    def handle(self):
-        ctx = StreamContext(...)
+class ProtocolHandler:  # concrete orchestrator
+    def handle(self, request):
+        prompt, ctx, stops = builder.prepare(request, engine)
         agen = engine.generate_async(prompt, ...)
-        if stream: self._handle_stream(agen, ctx)
-        else:      self._handle_non_stream(agen, ctx)
+        if stream: self._handle_stream(agen, ctx, stops)
+        else:      self._handle_non_stream(agen, ctx, stops)
 ```
 
-Subclass hooks: `build_prompt()`, `create_response_id()`, `format_stream_start/token/end()`, `format_non_stream_response()`.
+`ResponseBuilder` (ABC): `prepare()`, `format_stream_start()`, `format_chunk()`, `format_stream_end()`, `format_response()`.
 
-`OpenAIHandler` → `/v1/chat/completions`, `AnthropicHandler` → `/v1/messages`.
+`OpenAIResponseBuilder` → `/v1/chat/completions`, `AnthropicResponseBuilder` → `/v1/messages`.
+
+Adding a protocol = one builder file, no handler subclassing needed.
 
 ## Engine & GenerateResult
 
@@ -116,7 +118,7 @@ Supports `stop_sequences` and streaming via `event: content_block_delta`.
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `messages` | List[dict] | required | Chat messages (role, content) |
-| `temperature` | float | 1.0 | Sampling temperature (0.0–2.0) |
+| `temperature` | float | 1.0 | Sampling temperature (>= 0.0) |
 | `top_p` | float | 1.0 | Nucleus threshold |
 | `top_k` | int | 50 | Top-k count |
 | `max_tokens` | int | None | Max generation length |

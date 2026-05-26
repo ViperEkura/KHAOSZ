@@ -53,7 +53,7 @@
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `--nprocs` | Number of GPUs / processes | 1 |
-| `--parallel_mode` | Parallel strategy (`none` or `ddp`) | none |
+| `--parallel_mode` | Parallel strategy (`none`, `ddp`, or `fsdp`) | none |
 | `--device_type` | Device type | cuda |
 | `--start_method` | Multiprocessing start method (`spawn`, `fork`, `forkserver`) | spawn |
 

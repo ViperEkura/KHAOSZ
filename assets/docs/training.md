@@ -82,8 +82,7 @@ on_train_begin
         on_optimizer_step
         optimizer.step()
         optimizer.zero_grad()
-
-      scheduler.step()  # called every iteration
+        scheduler.step()
     on_epoch_end
 on_train_end
 ```
@@ -190,7 +189,7 @@ context = (
 ```
 
 - Loads checkpoint weights if provided
-- Creates executor via `ExecutorFactory.create(parallel_mode, **executor_kwargs)`
+- Creates executor via `ExecutorFactory.create(cfg.parallel_mode, grad_accum_steps=cfg.grad_accum_steps, **cfg.executor_kwargs)`
 - Calls `executor.prepare(model, optimizer, dataloader, scheduler)` for model distribution (e.g. DDP) + gradient accumulation wrappers
 - Creates `ResumableDistributedSampler` for shuffle+resume
 - Builds strategy via `StrategyFactory.create(train_type, ...)`
