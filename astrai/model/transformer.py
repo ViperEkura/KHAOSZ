@@ -1,4 +1,4 @@
-from typing import Any, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional
 
 import torch
 import torch.nn as nn
@@ -136,7 +136,7 @@ class AutoRegressiveLM(AutoModel):
         input_mask: Optional[Tensor] = None,
         paged_cache: Optional[KvcacheView] = None,
         position_ids: Optional[Tensor] = None,
-    ) -> Tensor:
+    ) -> Dict[str, Tensor]:
         assert input_ids.ndim == 2
 
         x = self.embed_tokens(input_ids)

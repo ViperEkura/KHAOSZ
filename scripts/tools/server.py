@@ -18,7 +18,7 @@ def main():
         "--reload", action="store_true", help="Enable auto-reload for development"
     )
     parser.add_argument(
-        "--param-path",
+        "--param_path",
         type=Path,
         default=None,
         help="Path to model parameters (default: project_root/params)",

@@ -68,9 +68,6 @@ class EmbeddingEncoder(AutoModel):
 
         x = self.embed_tokens(input_ids)
 
-        if position_ids is None:
-            position_ids = torch.arange(S, device=x.device).unsqueeze(0).expand(B, -1)
-
         rotary_emb = self.rotary_embedding(x, position_ids)
         attn_mask = process_attention_mask(x, position_ids, input_mask, is_causal=False)
 

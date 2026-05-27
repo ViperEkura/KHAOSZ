@@ -10,11 +10,11 @@ from astrai.tokenize import AutoTokenizer
 
 
 def process_file(
-    model_dir: str, input_file: str, output_file: str, batch_size: int, text_key: str
+    param_path: str, input_file: str, output_file: str, batch_size: int, text_key: str
 ):
     # Load model and tokenizer
-    model = AutoModel.from_pretrained(model_dir)
-    tokenizer = AutoTokenizer.from_pretrained(model_dir)
+    model = AutoModel.from_pretrained(param_path)
+    tokenizer = AutoTokenizer.from_pretrained(param_path)
     model.to(device="cuda", dtype=torch.bfloat16)
 
     with open(input_file, "r", encoding="utf-8") as f:
@@ -88,7 +88,7 @@ def process_file(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run perplexity with a Khaosz model.")
     parser.add_argument(
-        "--model_dir", type=str, required=True, help="Path to the model directory."
+        "--param_path", type=str, required=True, help="Path to the model directory."
     )
     parser.add_argument(
         "--input_file", type=str, required=True, help="Path to the input file."

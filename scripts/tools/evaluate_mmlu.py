@@ -197,7 +197,7 @@ def evaluate_subject(
 def main():
     parser = argparse.ArgumentParser(description="MMLU evaluation")
     parser.add_argument(
-        "--model_dir", type=str, default="./params", help="Model directory"
+        "--param_path", type=str, default="./params", help="Model directory"
     )
     parser.add_argument(
         "--data_dir", type=str, default="./mmlu_data", help="MMLU data directory"
@@ -228,8 +228,8 @@ def main():
     if args.download or not os.path.exists(args.data_dir):
         download_mmlu(args.data_dir)
 
-    model = AutoModel.from_pretrained(args.model_dir)
-    tokenizer = AutoTokenizer.from_pretrained(args.model_dir)
+    model = AutoModel.from_pretrained(args.param_path)
+    tokenizer = AutoTokenizer.from_pretrained(args.param_path)
     device = args.device
     dtype = getattr(torch, args.dtype)
     model.to(device=device, dtype=dtype)
