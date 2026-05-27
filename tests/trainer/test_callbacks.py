@@ -106,7 +106,7 @@ def test_gradient_checkpointing_trainer_integration(base_test_env, random_datase
         )
 
     train_config = TrainConfig(
-        model=base_test_env["model"],
+        model_fn=lambda: base_test_env["model"],
         strategy="seq",
         dataset=random_dataset,
         optimizer_fn=optimizer_fn,
@@ -140,7 +140,7 @@ def test_callback_integration(base_test_env, random_dataset):
         )
 
     train_config = TrainConfig(
-        model=base_test_env["model"],
+        model_fn=lambda: base_test_env["model"],
         strategy="seq",
         dataset=random_dataset,
         optimizer_fn=optimizer_fn,

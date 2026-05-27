@@ -3,7 +3,6 @@ from typing import List, Optional
 
 from astrai.config import TrainConfig
 from astrai.parallel.setup import spawn_parallel_fn
-from astrai.serialization import Checkpoint
 from astrai.trainer.train_callback import (
     CallbackFactory,
     TrainCallback,
@@ -54,9 +53,9 @@ class Trainer:
             if method:
                 method(context)
 
-    def _trainer_loop(self, checkpoint: Optional[Checkpoint] = None):
+    def _trainer_loop(self, resume_dir: Optional[str] = None):
         context = (
-            TrainContextBuilder(self.train_config).with_checkpoint(checkpoint).build()
+            TrainContextBuilder(self.train_config).with_resume_dir(resume_dir).build()
         )
         executor = context.executor
         self._call_callbacks("on_train_begin", context)
@@ -90,13 +89,13 @@ class Trainer:
                 self._call_callbacks("on_epoch_end", context)
 
         except Exception as e:
-            logger.error(f"Training failed: {str(e)}", exc_info=True)
+            logger.error("Training failed: %s", str(e), exc_info=True)
             self._call_callbacks("on_error", context)
             raise
         finally:
             self._call_callbacks("on_train_end", context)
 
-    def train(self, checkpoint: Optional[Checkpoint] = None):
+    def train(self, resume_dir: Optional[str] = None):
         cfg = self.train_config
         spawn_parallel_fn(
             self._trainer_loop,
@@ -106,5 +105,5 @@ class Trainer:
             master_port=cfg.master_port,
             device_type=cfg.device_type,
             start_method=cfg.start_method,
-            checkpoint=checkpoint,
+            resume_dir=resume_dir,
         )

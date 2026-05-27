@@ -27,7 +27,7 @@ class TrainerDataset(Dataset):
 
 
 def create_train_config(
-    model: torch.nn.Module,
+    model_fn,
     dataset: Dataset,
     test_dir: str,
     device: str,
@@ -43,7 +43,7 @@ def create_train_config(
     """Factory function to create common TrainConfig for tests.
 
     Args:
-        model: The model to train
+        model_fn: Model factory (callable returning nn.Module)
         dataset: Training dataset
         test_dir: Checkpoint directory
         device: Device type ("cuda" or "cpu")
@@ -70,7 +70,7 @@ def create_train_config(
 
     return TrainConfig(
         strategy=strategy,
-        model=model,
+        model_fn=model_fn,
         dataset=dataset,
         optimizer_fn=optimizer_fn,
         scheduler_fn=scheduler_fn,

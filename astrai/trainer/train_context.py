@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional, Self
 
 import torch.nn as nn
@@ -10,7 +11,7 @@ from astrai.model.components.lora import inject_lora
 from astrai.parallel.executor import BaseExecutor, ExecutorFactory
 from astrai.parallel.setup import get_current_device, get_rank, get_world_size
 from astrai.protocols import OptimizerProtocol, SchedulerProtocol
-from astrai.serialization import Checkpoint
+from astrai.serialization import Checkpoint, load_model_weights
 from astrai.trainer.strategy import BaseStrategy, StrategyFactory
 
 
@@ -42,10 +43,10 @@ class TrainContextBuilder:
         config: TrainConfig,
     ):
         self.config = config
-        self._checkpoint: Optional[Checkpoint] = None
+        self._resume_dir: Optional[str] = None
 
-    def with_checkpoint(self, checkpoint: Optional[Checkpoint]) -> Self:
-        self._checkpoint = checkpoint
+    def with_resume_dir(self, resume_dir: Optional[str]) -> Self:
+        self._resume_dir = resume_dir
         return self
 
     def build(self) -> TrainContext:
@@ -58,36 +59,40 @@ class TrainContextBuilder:
             **cfg.executor_kwargs,
         )
 
+        model = cfg.model_fn()
+        model = model.to(device=device)
+
         context = TrainContext(
-            model=cfg.model,
+            model=model,
             world_size=get_world_size(),
             rank=get_rank(),
             config=cfg,
             executor=executor,
         )
 
-        context.model = context.model.to(device=device)
-
-        if self._checkpoint is not None:
-            context.epoch = max(self._checkpoint.epoch, cfg.start_epoch)
-            context.iteration = max(self._checkpoint.iteration, cfg.start_batch)
-            if self._checkpoint.state_dict:
-                context.model.load_state_dict(self._checkpoint.state_dict)
-            context.checkpoint = self._checkpoint
-        else:
-            context.checkpoint = Checkpoint(
-                state_dict=context.model.state_dict(),
-            )
+        if self._resume_dir is not None:
+            resume_path = Path(self._resume_dir)
+            if (resume_path / "meta.json").exists():
+                checkpoint = Checkpoint.load(self._resume_dir)
+                state_dict = checkpoint.state_dict
+            else:
+                checkpoint = None
+                state_dict = load_model_weights(self._resume_dir)
+            model.load_state_dict(state_dict, strict=False)
+            if checkpoint is not None:
+                context.epoch = max(checkpoint.epoch, cfg.start_epoch)
+                context.iteration = max(checkpoint.iteration, cfg.start_batch)
+            context.checkpoint = checkpoint
 
         if cfg.lora is not None:
             inject_lora(
-                context.model,
+                model,
                 r=cfg.lora.r,
                 alpha=cfg.lora.alpha,
                 target_modules=set(cfg.lora.target_modules),
             )
 
-        context.optimizer = cfg.optimizer_fn(context.model)
+        context.optimizer = cfg.optimizer_fn(model)
         context.scheduler = cfg.scheduler_fn(context.optimizer)
 
         sampler_offset = context.iteration * cfg.batch_per_device
@@ -125,12 +130,20 @@ class TrainContextBuilder:
 
         context.model, context.optimizer, context.dataloader, context.scheduler = (
             executor.prepare(
-                context.model,
+                model,
                 context.optimizer,
                 context.dataloader,
                 context.scheduler,
             )
         )
+
+        if context.checkpoint and context.checkpoint.extra:
+            extra = context.checkpoint.extra
+            for name in ("optimizer", "scheduler"):
+                if name in extra:
+                    obj = getattr(context, name, None)
+                    if obj is not None:
+                        obj.load_state_dict(extra[name])
 
         context.strategy = StrategyFactory.create(
             model=context.model,

@@ -17,8 +17,8 @@ def required(**kw):
 @dataclass
 class TrainConfig(BaseConfig):
     # basic setting
-    model: nn.Module = field(
-        default=None, metadata=required(help="Model for training.")
+    model_fn: Callable[[], nn.Module] = field(
+        default=None, metadata=required(help="Model factory for training.")
     )
     strategy: str = field(default=None, metadata=required(help="Training strategy."))
     dataset: Dataset = field(

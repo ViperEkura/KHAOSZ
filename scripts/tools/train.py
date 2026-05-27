@@ -8,7 +8,6 @@ import torch.optim as optim
 from astrai.config import AutoRegressiveLMConfig, TrainConfig
 from astrai.dataset import DatasetFactory
 from astrai.model import AutoRegressiveLM
-from astrai.serialization import Checkpoint
 from astrai.trainer import SchedulerFactory, Trainer
 
 
@@ -166,6 +165,10 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def create_model(config):
+    return AutoRegressiveLM(config).to(dtype=torch.bfloat16)
+
+
 def create_optimizer(model, **kwargs) -> optim.Optimizer:
     return optim.AdamW(model.parameters(), fused=True, **kwargs)
 
@@ -238,15 +241,6 @@ def train(
     if window_size is None:
         window_size = config.max_len
 
-    # Create model and load full checkpoint (state_dict + optimizer + scheduler + meta)
-    checkpoint = Checkpoint.load(param_path)
-    model = AutoRegressiveLM(config).to(dtype=torch.bfloat16)
-    model.load_state_dict(checkpoint.state_dict, strict=False)
-
-    # Strip state_dict to avoid pickling ~7GB through mp.spawn pipe
-    # (model weights already loaded into model above)
-    checkpoint.state_dict = {}
-
     strategy_kwargs = {
         "beta": dpo_beta,
         "label_smoothing": label_smoothing,
@@ -261,6 +255,7 @@ def train(
         "broadcast_buffers": False,
     }
 
+    model_fn = partial(create_model, config)
     dataset = DatasetFactory.load(
         train_type=train_type,
         load_path=data_root_path,
@@ -292,7 +287,7 @@ def train(
     )
 
     train_config = TrainConfig(
-        model=model,
+        model_fn=model_fn,
         strategy=train_type,
         dataset=dataset,
         optimizer_fn=optimizer_fn,
@@ -317,7 +312,7 @@ def train(
     )
 
     trainer = Trainer(train_config)
-    trainer.train(checkpoint=checkpoint)
+    trainer.train(resume_dir=param_path)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ def test_different_batch_sizes(base_test_env, random_dataset, train_config_facto
 
     for batch_per_device in batch_sizes:
         train_config = train_config_factory(
-            model=base_test_env["model"],
+            model_fn=lambda: base_test_env["model"],
             dataset=random_dataset,
             test_dir=base_test_env["test_dir"],
             device=base_test_env["device"],
@@ -25,7 +25,7 @@ def test_gradient_accumulation(base_test_env, random_dataset, train_config_facto
 
     for grad_accum_steps in grad_accum_steps_list:
         train_config = train_config_factory(
-            model=base_test_env["model"],
+            model_fn=lambda: base_test_env["model"],
             dataset=random_dataset,
             test_dir=base_test_env["test_dir"],
             device=base_test_env["device"],
@@ -50,7 +50,7 @@ def test_memory_efficient_training(base_test_env, random_dataset, train_config_f
 
     for config in small_batch_configs:
         train_config = train_config_factory(
-            model=base_test_env["model"],
+            model_fn=lambda: base_test_env["model"],
             dataset=random_dataset,
             test_dir=base_test_env["test_dir"],
             device=base_test_env["device"],
