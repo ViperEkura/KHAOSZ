@@ -79,17 +79,6 @@ def load_model_weights(save_directory: str) -> dict:
     return load_safetensors(Path(save_directory) / _WEIGHTS_FILE)
 
 
-def _get_meta(save_path: Path) -> dict:
-    meta = {}
-    if get_rank() == 0:
-        meta = load_json(save_path / _META_FILE)
-    if dist.is_initialized():
-        meta_list = [meta]
-        dist.broadcast_object_list(meta_list, src=0)
-        meta = meta_list[0]
-    return meta
-
-
 def _load_state_dict(save_path: Path, broadcast: bool = False) -> dict:
     if not broadcast or not dist.is_initialized():
         return load_safetensors(save_path / _WEIGHTS_FILE)
@@ -128,6 +117,7 @@ class Checkpoint:
     iteration: int = 0
     extra: Dict[str, Any] = field(default_factory=dict)
     meta: Dict[str, Any] = field(default_factory=dict)
+    config: Dict[str, Any] = field(default_factory=dict)
 
     def save(self, save_dir: str):
         save_path = Path(save_dir)
@@ -143,6 +133,7 @@ class Checkpoint:
             **self.meta,
         }
         save_json(meta, save_path / _META_FILE)
+        save_json(self.config, save_path / _CONFIG_FILE)
         save_safetensors(self.state_dict, save_path / _WEIGHTS_FILE)
         for key, value in self.extra.items():
             save_torch(value, save_path / f"{key}.pt")
@@ -151,8 +142,10 @@ class Checkpoint:
     def load(cls, save_dir: str, broadcast: bool = False) -> "Checkpoint":
         save_path = Path(save_dir)
 
-        meta = _get_meta(save_path)
+        meta = load_json(save_path / _META_FILE)
         state_dict = _load_state_dict(save_path, broadcast=broadcast)
+        config_path = save_path / _CONFIG_FILE
+        config = load_json(config_path)
 
         extra = {}
         for f in sorted(save_path.iterdir()):
@@ -164,4 +157,5 @@ class Checkpoint:
             epoch=meta.get("epoch", 0),
             iteration=meta.get("iteration", 0),
             extra=extra,
+            config=config,
         )

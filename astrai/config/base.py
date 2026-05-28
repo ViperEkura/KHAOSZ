@@ -13,12 +13,21 @@ class BaseConfig:
                 d[fld.name] = v
             elif v is None:
                 d[fld.name] = None
-            elif isinstance(v, (dict, list)):
+            elif isinstance(v, (dict, list, tuple)):
                 try:
-                    json.dumps(v)
-                    d[fld.name] = v
+                    val = list(v) if isinstance(v, tuple) else v
+                    json.dumps(val)
+                    d[fld.name] = val
                 except (TypeError, ValueError):
                     pass
+            elif isinstance(v, BaseConfig):
+                d[fld.name] = v.to_dict()
+            elif hasattr(v, "__dataclass_fields__"):
+                sub = {}
+                for f in fields(v):
+                    a = getattr(v, f.name)
+                    sub[f.name] = list(a) if isinstance(a, tuple) else a
+                d[fld.name] = sub
         return d
 
     @classmethod

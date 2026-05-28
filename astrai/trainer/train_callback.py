@@ -160,7 +160,7 @@ class CheckpointCallback(TrainCallback):
                 epoch=context.epoch,
                 iteration=context.iteration,
                 extra=extra,
-                meta=context.config.to_dict(),
+                config=context.model_config,
             )
             context.checkpoint.save(save_path)
 

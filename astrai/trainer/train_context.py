@@ -11,7 +11,7 @@ from astrai.model.components.lora import inject_lora
 from astrai.parallel.executor import BaseExecutor, ExecutorFactory
 from astrai.parallel.setup import get_current_device, get_rank, get_world_size
 from astrai.protocols import OptimizerProtocol, SchedulerProtocol
-from astrai.serialization import Checkpoint, load_model_weights
+from astrai.serialization import Checkpoint, load_json, load_model_weights
 from astrai.trainer.strategy import BaseStrategy, StrategyFactory
 
 
@@ -24,6 +24,7 @@ class TrainContext:
     scheduler: SchedulerProtocol = field(default=None)
     checkpoint: Checkpoint = field(default=None)
     config: TrainConfig = field(default=None)
+    model_config: dict = field(default_factory=dict)
     executor: BaseExecutor = field(default=None)
 
     epoch: int = field(default=0)
@@ -62,11 +63,21 @@ class TrainContextBuilder:
         model = cfg.model_fn()
         model = model.to(device=device)
 
+        model_config = {}
+        if self._resume_dir:
+            config_path = Path(self._resume_dir) / "config.json"
+            if config_path.exists():
+                model_config = load_json(config_path)
+
+        if not model_config and hasattr(model, "config"):
+            model_config = model.config.to_dict()
+
         context = TrainContext(
             model=model,
             world_size=get_world_size(),
             rank=get_rank(),
             config=cfg,
+            model_config=model_config,
             executor=executor,
         )
 
@@ -75,6 +86,8 @@ class TrainContextBuilder:
             if (resume_path / "meta.json").exists():
                 checkpoint = Checkpoint.load(self._resume_dir)
                 state_dict = checkpoint.state_dict
+                if checkpoint.config:
+                    context.model_config = checkpoint.config
             else:
                 checkpoint = None
                 state_dict = load_model_weights(self._resume_dir)
