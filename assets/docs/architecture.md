@@ -107,7 +107,7 @@ classDiagram
         class BaseDataset {
             +int window_size
             +int stride
-            +Optional[BaseStorage] storage
+            +Optional[Store] storage
             +load(load_path, storage_type, tokenizer)
             +__getitem__(index)
             +__len__()
@@ -129,38 +129,29 @@ classDiagram
             +__getitem__(index) Dict
         }
 
-        class BaseSegmentFetcher {
-            +List[Tensor] segments
-            +List[int] cum_lengths
-            +int total_length
-            +fetch_data(begin_idx, end_idx) Tensor
-        }
-
-        class BaseStorage {
-            +MultiSegmentFetcher _fetcher
+        class Store {
+            +Dict[str, List[Tensor]] _data
+            +Dict[str, List[int]] _cum
+            +int _length
             +keys (property)
-            +load(load_path, tokenizer)
+            +load(path, tokenizer)
             +fetch(begin, end, keys)
             +__len__()
+            -_fetch_key(key, begin, end) Tensor
+            -_normalize(raw)
         }
 
-        class H5Storage {
-            +load(load_path, tokenizer)
-            +fetch(begin, end, keys) Dict
-            +keys() List
+        class H5Store {
+            +load(path, tokenizer)
         }
 
-        class JSONStorage {
-            +load(load_path, tokenizer)
-            +fetch(begin, end, keys) Dict
-            +keys() List
+        class JSONStore {
+            +load(path, tokenizer)
         }
 
-        class MultiSegmentFetcher {
-            +Dict multi_fetchers
-            +List multi_keys
-            +key_fetch(begin_idx, end_idx, keys) Dict
-            +fetch_data(begin_idx, end_idx) Dict
+        class MmapStore {
+            +List _mmap_refs
+            +load(path, tokenizer)
         }
 
         class ResumableDistributedSampler {
@@ -168,10 +159,10 @@ classDiagram
             +int iter
         }
 
-        class StorageFactory {
+        class StoreFactory {
             +Registry _registry
             +register(name) decorator
-            +create(storage_type) BaseStorage
+            +create(storage_type) Store
         }
 
         class DatasetFactory {
@@ -925,8 +916,9 @@ classDiagram
     BaseDataset <|-- SFTDataset
     BaseDataset <|-- DPODataset
     BaseDataset <|-- GRPODataset
-    BaseStorage <|-- H5Storage
-    BaseStorage <|-- JSONStorage
+    Store <|-- H5Store
+    Store <|-- JSONStore
+    Store <|-- MmapStore
     BaseSamplingStrategy <|-- TemperatureStrategy
     BaseSamplingStrategy <|-- TopKStrategy
     BaseSamplingStrategy <|-- TopPStrategy
@@ -946,7 +938,7 @@ classDiagram
     BaseFactory <|-- StrategyFactory
     BaseFactory <|-- SchedulerFactory
     BaseFactory <|-- CallbackFactory
-    BaseFactory <|-- StorageFactory
+    BaseFactory <|-- StoreFactory
     BaseFactory <|-- ExecutorFactory
     BaseFactory <|-- ConfigFactory
     BaseExecutor <|-- NoneExecutor
@@ -989,7 +981,7 @@ classDiagram
     TrainContext o-- BaseExecutor
     KvcacheView o-- Storage
     SamplingPipeline o-- BaseSamplingStrategy
-    BaseDataset o-- BaseStorage
+    BaseDataset o-- Store
 
     %% --- Dependency (uses temporarily) ---
     TrainConfig ..> BaseStrategy : selects
@@ -1003,8 +995,9 @@ classDiagram
     FFNFactory ..> DeepSeekMoE : creates
     DecoderBlock ..> AttnFactory : uses
     DecoderBlock ..> FFNFactory : uses
-    StorageFactory ..> H5Storage : creates
-    StorageFactory ..> JSONStorage : creates
+    StoreFactory ..> H5Store : creates
+    StoreFactory ..> JSONStore : creates
+    StoreFactory ..> MmapStore : creates
     ConfigFactory ..> AutoRegressiveLMConfig : creates
     ConfigFactory ..> EncoderConfig : creates
     ExecutorFactory ..> NoneExecutor : creates
@@ -1037,7 +1030,6 @@ classDiagram
     Executor --> AutoModel
     Executor --> AutoTokenizer
     TaskManager --> AutoTokenizer
-    MultiSegmentFetcher --> BaseSegmentFetcher
 
 ```
 
@@ -1047,7 +1039,7 @@ classDiagram
 | Module | Components | Description |
 |--------|------------|-------------|
 | **astrai.config** | BaseConfig, BaseModelConfig, AutoRegressiveLMConfig, EncoderConfig, ConfigFactory, TrainConfig | Configuration management (to_dict/from_dict, to_file/from_file) |
-| **astrai.dataset** | BaseDataset–GRPODataset, BaseStorage–JSONStorage, StorageFactory, BaseSegmentFetcher, MultiSegmentFetcher, ResumableDistributedSampler, DatasetFactory | Dataset loading and management |
+| **astrai.dataset** | BaseDataset–GRPODataset, Store–MmapStore, StoreFactory, ResumableDistributedSampler, DatasetFactory | Dataset loading and management |
 | **astrai.serialization** | Checkpoint | Model serialization |
 | **astrai.model** | AutoModel, AutoRegressiveLM, EmbeddingEncoder, DecoderBlock, GQA, MLA, MLP, DeepSeekMoE, AttnFactory, FFNFactory, RMSNorm, Linear, RotaryEmbedding, Embedding | Neural network model |
 | **astrai.tokenize** | AutoTokenizer, ChatTemplate | Tokenizer and chat template |
@@ -1061,7 +1053,7 @@ classDiagram
 
 | Pattern | Classes | Purpose |
 |---------|---------|---------|
-| **Factory** | `AttnFactory`, `FFNFactory`, `StrategyFactory`, `DatasetFactory`, `SchedulerFactory`, `CallbackFactory`, `StorageFactory`, `ConfigFactory`, `ExecutorFactory` | Decorator-based component creation |
+| **Factory** | `AttnFactory`, `FFNFactory`, `StrategyFactory`, `DatasetFactory`, `SchedulerFactory`, `CallbackFactory`, `StoreFactory`, `ConfigFactory`, `ExecutorFactory` | Decorator-based component creation |
 | **Registry** | `BaseFactory`, `Registry` | Component registration with category/priority |
 | **Strategy** | `SEQStrategy`, `SFTStrategy`, `DPOStrategy`, `GRPOStrategy` | Training strategy switching |
 | **Strategy (Sampling)** | `TemperatureStrategy`, `TopKStrategy`, `TopPStrategy`, `SamplingPipeline` | Composable logit transformations |
@@ -1071,7 +1063,7 @@ classDiagram
 | **Context** | `TrainContext` | Unified training state bag |
 | **Object Pool** | `Allocator`, `PagePool` | Page-based KV cache with LRU eviction |
 | **Executor** | `BaseExecutor`, `NoneExecutor`, `DDPExecutor` | Gradient accumulation & model distribution |
-| **Storage** | `BaseStorage`, `H5Storage`, `JSONStorage` | Format-agnostic data access |
+| **Storage** | `Store`, `H5Store`, `JSONStore`, `MmapStore` | Format-agnostic data access with multi-segment support |
 | **Producer-Consumer** | `InferenceScheduler`, `Task`, queues | Continuous batching |
 | **AutoModel Registry** | `AutoModel`, `AutoRegressiveLM`, `EmbeddingEncoder` | Model-type dynamic loading |
 
@@ -1083,7 +1075,7 @@ classDiagram
 4. **Executor Selection**: `ExecutorFactory.create(cfg.parallel_mode, grad_accum_steps=cfg.grad_accum_steps, **cfg.executor_kwargs)` → `NoneExecutor` / `DDPExecutor` / `FSDPExecutor`
 5. **Inference Flow**: `InferenceEngine` → `InferenceScheduler` → `AutoRegressiveLM`, backed by `KVCache` + `SamplingPipeline`
 6. **Distributed**: `spawn_parallel_fn` + `setup_parallel` for multi-process DDP
-7. **Dataset Loading**: `DatasetFactory` creates datasets, `BaseStorage` (H5Storage/JSONStorage) loads via `BaseSegmentFetcher` + `MultiSegmentFetcher`
+7. **Dataset Loading**: `DatasetFactory` creates datasets, `Store` (H5Store/JSONStore/MmapStore) loads data with explicit `_length` and multi-segment `_data`
 8. **Checkpoint**: `Checkpoint` saves/loads safetensors + metadata (rank-0 only), extra state saved as `{key}.pt`
 9. **Scheduler**: `SchedulerFactory` creates `CosineScheduler`/`SGDRScheduler`
 10. **AutoModel**: `from_pretrained()` loads `config.json` + `model.safetensors`, `_disable_random_init` replaces `nn.init.*` with no-ops

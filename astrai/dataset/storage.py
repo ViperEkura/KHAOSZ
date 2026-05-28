@@ -1,36 +1,20 @@
 """Storage backends for different data formats.
 
-Design
-------
-
-Three-layer architecture:
-
-1. **I/O layer** — ``save_*`` / ``load_*`` functions that read/write raw files
-   (HDF5, JSON, binary) and return ``Dict[str, List[Tensor]]`` (multi-segment).
-   These are format-specific, low-level helpers — no abstraction, no state.
-
-2. **Store (ABC)** — the central abstraction. Each concrete ``Store`` calls the
-   I/O layer during ``load()``, then **normalizes** multi-segment data into a
-   single contiguous tensor per key via ``_normalize()``.  After that, ``fetch()``
-   is just a vanilla slice — no ``bisect``, no segment bookkeeping.
-
-   Data format inside a ``Store``::
-
-       self._data  = {"sequence": Tensor, "loss_mask": Tensor, ...}
-       self._length = N   # min first-dim size across keys, O(1)
-
-3. **Dataset layer** — ``BaseDataset`` owns a ``Store`` and only calls
-   ``store.fetch(begin, end, key)``.  It never knows whether the data came
-   from HDF5, JSON, or mmap.
+Layers:
+  - I/O layer:       save_* / load_* functions, read/write raw files (HDF5/JSON/bin)
+                     return Dict[str, List[Tensor]] — format-specific, no state
+  - Store (ABC):     central abstraction, normalizes multi-segment into
+                     Dict[str, List[Tensor]] per key via _normalize(),
+                     fetch() uses bisect across segments — no forced concat
+  - Dataset layer:   BaseDataset owns a Store, only calls store.fetch(begin, end, key)
 
 Key properties:
-
-- **Explicit length**: ``_length`` is set during ``load()`` and exposed via
-  ``__len__`` (O(1)).  No hidden computation inside a fetcher.
-- **Zero-copy mmap**: ``MmapStore`` wraps ``np.memmap(mode="r")`` tensors.
-  Multiple DataLoader workers share the same OS page-cache pages.
-- **Lazy concat**: ``H5Store`` / ``JSONStore`` concatenate segments at load
-  time, so fetch-time logic is trivial.
+  - Multi-segment:   segments kept as-is, no forced concatenation — safe for
+                     datasets larger than RAM
+  - Explicit length: _length = min(total elements across keys), set at load,
+                     __len__ returns O(1)
+  - Zero-copy mmap:  MmapStore wraps np.memmap(mode="r"), all DataLoader
+                     workers share OS page-cache pages
 """
 
 import bisect

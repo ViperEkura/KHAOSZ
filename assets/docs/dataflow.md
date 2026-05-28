@@ -5,21 +5,22 @@ This document describes the data pipeline: from raw text to model input tensors.
 ## Overview
 
 ```
-Raw Text → AutoTokenizer → Token IDs → .h5/.json → Dataset → Sampler → DataLoader → Training/Inference
+Raw Text → AutoTokenizer → Token IDs → .h5/.json/.bin → Dataset → Sampler → DataLoader → Training/Inference
 ```
 
 ## Data Preparation
 
-Raw text is tokenized via `AutoTokenizer.encode()` and saved as HDF5 (`.h5`) or JSON (`.json`/`.jsonl`) files with keyed tensor groups.
+Raw text is tokenized via `AutoTokenizer.encode()` and saved as HDF5 (`.h5`), JSON (`.json`/`.jsonl`), or binary (`.bin` + `meta.json`) files with keyed tensor groups.
 
 Storage format is auto-detected by `detect_format()`; backends are dispatched via registry:
 
 ```
-StorageFactory.create("h5")   → H5Storage
-StorageFactory.create("json") → JSONStorage
+StoreFactory.create("h5")   → H5Store
+StoreFactory.create("json") → JSONStore
+StoreFactory.create("bin")  → MmapStore
 ```
 
-Both support shared memory via `.share_memory_()`.
+H5 and JSON backends support shared memory via `.share_memory_()`. Bin (mmap) uses OS page-cache sharing natively.
 
 ## Data Keys by Training Type
 
@@ -34,8 +35,8 @@ Both support shared memory via `.share_memory_()`.
 
 ```
 DatasetFactory.load(train_type, path, window_size, stride, storage_type, tokenizer)
-  → StorageFactory.create(detect_format(path))
-    → MultiSegmentFetcher(BaseSegmentFetcher per key)
+  → StoreFactory.create(detect_format(path))
+    → Store._data[Dict[str, List[Tensor]]] + _cum[Dict[str, List[int]]]
       → BaseDataset.__getitem__(idx)
         → sliding window [begin, end) via get_index(idx)
 ```
