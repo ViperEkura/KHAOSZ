@@ -48,7 +48,7 @@ class GenerateResult:
     def wait(self, timeout: Optional[float] = None) -> bool:
         return self._event.wait(timeout=timeout)
 
-    def wait_completion(self, timeout: float = 300.0) -> None:
+    def wait_completion(self, timeout: float = 300.0):
         with self._cond:
             if not self._cond.wait_for(
                 lambda: self._completed >= self._total, timeout=timeout
@@ -281,7 +281,7 @@ class InferenceEngine:
     def get_stats(self) -> Dict[str, Any]:
         return self.scheduler.get_stats()
 
-    def shutdown(self) -> None:
+    def shutdown(self):
         self.scheduler.stop()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

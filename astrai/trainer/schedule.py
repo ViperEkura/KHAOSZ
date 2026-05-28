@@ -42,7 +42,7 @@ class SchedulerFactory(BaseFactory["BaseScheduler"]):
     """
 
     @classmethod
-    def _validate_component(cls, scheduler_cls: Type[BaseScheduler]) -> None:
+    def _validate_component(cls, scheduler_cls: Type[BaseScheduler]):
         """Validate that the scheduler class inherits from BaseScheduler."""
         if not issubclass(scheduler_cls, BaseScheduler):
             raise TypeError(f"{scheduler_cls.__name__} must inherit from BaseScheduler")

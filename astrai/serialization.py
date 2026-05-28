@@ -16,7 +16,7 @@ _CONFIG_FILE = "config.json"
 _WEIGHTS_FILE = "model.safetensors"
 
 
-def save_safetensors(state_dict: dict, path: str | Path) -> None:
+def save_safetensors(state_dict: dict, path: str | Path):
     st.save_file(state_dict, str(path))
 
 
@@ -24,7 +24,7 @@ def load_safetensors(path: str | Path) -> dict:
     return st.load_file(str(path))
 
 
-def save_json(data: dict, path: str | Path) -> None:
+def save_json(data: dict, path: str | Path):
     with open(str(path), "w") as f:
         json.dump(data, f, indent=2)
 
@@ -34,7 +34,7 @@ def load_json(path: str | Path) -> dict:
         return json.load(f)
 
 
-def save_torch(obj: Any, path: str | Path) -> None:
+def save_torch(obj: Any, path: str | Path):
     torch.save(obj, str(path))
 
 
@@ -64,7 +64,7 @@ def load_torch(path: str | Path, broadcast: bool = False) -> Any:
     return torch.load(buf, map_location="cpu", weights_only=False)
 
 
-def save_model(config: dict, state_dict: dict, save_directory: str) -> None:
+def save_model(config: dict, state_dict: dict, save_directory: str):
     save_path = Path(save_directory)
     save_path.mkdir(parents=True, exist_ok=True)
     save_json(config, save_path / _CONFIG_FILE)
@@ -129,7 +129,7 @@ class Checkpoint:
     extra: Dict[str, Any] = field(default_factory=dict)
     meta: Dict[str, Any] = field(default_factory=dict)
 
-    def save(self, save_dir: str) -> None:
+    def save(self, save_dir: str):
         save_path = Path(save_dir)
         save_path.mkdir(parents=True, exist_ok=True)
 

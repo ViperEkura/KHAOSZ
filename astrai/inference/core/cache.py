@@ -42,7 +42,7 @@ class Allocator:
                 return idx
             return -1
 
-    def free(self, idx: int, keep_cached: bool = False) -> None:
+    def free(self, idx: int, keep_cached: bool = False):
         with self._lock:
             self._refs[idx] -= 1
             if self._refs[idx] == 0:
@@ -51,7 +51,7 @@ class Allocator:
                 else:
                     self._free_mask |= 1 << idx
 
-    def inc_ref(self, idx: int) -> None:
+    def inc_ref(self, idx: int):
         with self._lock:
             self._refs[idx] += 1
             self._lru.pop(idx, None)
@@ -60,7 +60,7 @@ class Allocator:
         with self._lock:
             return self._refs[idx]
 
-    def touch(self, idx: int) -> None:
+    def touch(self, idx: int):
         with self._lock:
             self._lru.move_to_end(idx)
 
@@ -74,7 +74,7 @@ class PrefixCache:
         self._hash_to_page: Dict[int, int] = {}
         self._lock = threading.Lock()
 
-    def evict(self, idx: int) -> None:
+    def evict(self, idx: int):
         with self._lock:
             h = self._page_to_hash.pop(idx, None)
             if h is not None:
@@ -96,9 +96,7 @@ class PrefixCache:
                 hits.append(p)
             return hits
 
-    def record(
-        self, page_idx: int, token_ids: List[int], logical_page_idx: int
-    ) -> None:
+    def record(self, page_idx: int, token_ids: List[int], logical_page_idx: int):
         with self._lock:
             h = page_hash(token_ids, logical_page_idx, self._page_size)
             old_h = self._page_to_hash.pop(page_idx, None)
@@ -127,13 +125,13 @@ class PagePool:
     def alloc(self) -> int:
         return self._alloc.alloc()
 
-    def free(self, idx: int) -> None:
+    def free(self, idx: int):
         keep = self._prefix.has_page(idx)
         self._alloc.free(idx, keep_cached=keep)
         if not keep:
             self._prefix.evict(idx)
 
-    def inc_ref(self, idx: int) -> None:
+    def inc_ref(self, idx: int):
         self._alloc.inc_ref(idx)
 
     def lookup(self, token_ids: List[int]) -> List[int]:
@@ -142,9 +140,7 @@ class PagePool:
             self._alloc.touch(p)
         return hits
 
-    def record(
-        self, page_idx: int, token_ids: List[int], logical_page_idx: int
-    ) -> None:
+    def record(self, page_idx: int, token_ids: List[int], logical_page_idx: int):
         self._prefix.record(page_idx, token_ids, logical_page_idx)
 
 
@@ -157,7 +153,7 @@ class TaskTable:
         self._cached: Dict[str, int] = {}
         self._lock = threading.Lock()
 
-    def set(self, task_id: str, page_table: List[int], cached: int) -> None:
+    def set(self, task_id: str, page_table: List[int], cached: int):
         with self._lock:
             self._pages[task_id] = page_table
             self._cached[task_id] = cached
@@ -220,7 +216,7 @@ class Storage:
         start_pos: int,
         k: Tensor,
         v: Tensor,
-    ) -> None:
+    ):
         seq_len = k.size(1)
         if seq_len == 0:
             return
@@ -286,7 +282,7 @@ class KvcacheView:
         self._page_table = page_table
         self._total_len = total_len
 
-    def write(self, layer_id: int, k: Tensor, v: Tensor) -> None:
+    def write(self, layer_id: int, k: Tensor, v: Tensor):
         start_pos = self._total_len - k.size(1)
         self._storage.write(layer_id, self._page_table, start_pos, k, v)
 
@@ -339,7 +335,7 @@ class KVCache:
         self._table.set(task_id, hits + new_pages, cached)
         return True
 
-    def task_free(self, task_id: str) -> None:
+    def task_free(self, task_id: str):
         page_table, _ = self._table.pop(task_id)
         for idx in page_table:
             self._pool.free(idx)
@@ -359,7 +355,7 @@ class KVCache:
 
     def task_record_hashes(
         self, task_id: str, prompt_ids: List[int], start_logical_page: int = 0
-    ) -> None:
+    ):
         page_table = self._table.get(task_id)
         full_pages = len(prompt_ids) // self.page_size
         for i in range(start_logical_page, full_pages):

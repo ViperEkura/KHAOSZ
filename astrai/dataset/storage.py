@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Union
 
 import h5py
+import numpy as np
 import torch
 from torch import Tensor
 
@@ -104,6 +105,38 @@ def load_json(
     return tensor_group
 
 
+def save_bin(file_path: str, tensor_group: Dict[str, List[Tensor]]):
+    os.makedirs(file_path, exist_ok=True)
+    meta = {}
+    for key, tensors in tensor_group.items():
+        cat = torch.cat(tensors, dim=0)
+        meta[key] = {"shape": list(cat.shape), "dtype": str(cat.dtype).split(".")[-1]}
+        np.asarray(cat.cpu().numpy()).tofile(os.path.join(file_path, f"{key}.bin"))
+    save_json(meta, os.path.join(file_path, "meta.json"))
+
+
+def load_bin(file_path: str) -> Dict[str, List[Tensor]]:
+    meta = load_json(os.path.join(file_path, "meta.json"))
+    segments: Dict[str, List[Tensor]] = {}
+    for key, info in meta.items():
+        arr = np.memmap(
+            os.path.join(file_path, f"{key}.bin"),
+            dtype=info["dtype"],
+            mode="r",
+            shape=tuple(info["shape"]),
+        )
+        segments[key] = [torch.from_numpy(arr)]
+    return segments
+
+
+def json_to_bin(json_path: str, bin_path: str, tokenizer=None):
+    segments = load_json(json_path, share_memory=False, tokenizer=tokenizer)
+    merged = {}
+    for key, tensors in segments.items():
+        merged[key] = [torch.cat(tensors, dim=0)]
+    save_bin(bin_path, merged)
+
+
 def detect_format(load_path: str) -> str:
     """Auto-detect storage format from files in the directory.
 
@@ -128,6 +161,9 @@ def detect_format(load_path: str) -> str:
     h5_files = list(root.rglob("*.h5")) + list(root.rglob("*.hdf5"))
     if h5_files:
         return "h5"
+    bin_files = list(root.rglob("*.bin"))
+    if bin_files and (root / "meta.json").exists():
+        return "bin"
     json_files = list(root.rglob("*.json")) + list(root.rglob("*.jsonl"))
     if json_files:
         return "json"
@@ -227,7 +263,7 @@ class BaseStorage(ABC):
         self._fetcher: Optional[MultiSegmentFetcher] = None
 
     @abstractmethod
-    def load(self, load_path: str, tokenizer=None) -> None:
+    def load(self, load_path: str, tokenizer=None):
         """Load data from the given path into internal fetcher."""
         raise NotImplementedError
 
@@ -272,7 +308,7 @@ class StorageFactory(BaseFactory["BaseStorage"]):
     """
 
     @classmethod
-    def _validate_component(cls, storage_cls: type) -> None:
+    def _validate_component(cls, storage_cls: type):
         if not issubclass(storage_cls, BaseStorage):
             raise TypeError(f"{storage_cls.__name__} must inherit from BaseStorage")
 
@@ -281,7 +317,7 @@ class StorageFactory(BaseFactory["BaseStorage"]):
 class H5Storage(BaseStorage):
     """HDF5-based storage backend (pre-tokenized data)."""
 
-    def load(self, load_path: str, tokenizer=None) -> None:
+    def load(self, load_path: str, tokenizer=None):
         segments = load_h5(load_path)
         self._fetcher = MultiSegmentFetcher(segments)
 
@@ -296,6 +332,26 @@ class JSONStorage(BaseStorage):
       callable (str -> List[int]) at load time.
     """
 
-    def load(self, load_path: str, tokenizer=None) -> None:
+    def load(self, load_path: str, tokenizer=None):
         segments = load_json(load_path, tokenizer=tokenizer)
+        self._fetcher = MultiSegmentFetcher(segments)
+
+
+@StorageFactory.register("bin")
+class MmapStorage(BaseStorage):
+    """Memory-mapped binary storage backend.
+
+    Each key is stored as a concatenated raw binary file (.bin) with
+    metadata in meta.json.  Loading mmaps the files so each process
+    shares the same physical pages via the OS page cache — no per-process
+    memory duplication.
+    """
+
+    def load(self, load_path: str, tokenizer=None):
+        self._mmap_refs = []
+        raw = load_bin(load_path)
+        segments = {}
+        for key, tensors in raw.items():
+            self._mmap_refs.extend(tensors)
+            segments[key] = tensors
         self._fetcher = MultiSegmentFetcher(segments)

@@ -172,12 +172,12 @@ class TaskManager:
                 to_add.append(self.waiting_queue.popleft())
         return to_add
 
-    def activate(self, task: Task) -> None:
+    def activate(self, task: Task):
         task.status = TaskStatus.RUNNING
         with self._lock:
             self.active_tasks.append(task)
 
-    def return_to_waiting(self, tasks: List[Task]) -> None:
+    def return_to_waiting(self, tasks: List[Task]):
         with self._lock:
             for task in reversed(tasks):
                 self.waiting_queue.appendleft(task)
@@ -185,7 +185,7 @@ class TaskManager:
     def has_work(self) -> bool:
         return bool(self.active_tasks or self.waiting_queue)
 
-    def wait_for_tasks(self, timeout: float = 1.0) -> None:
+    def wait_for_tasks(self, timeout: float = 1.0):
         self._task_event.clear()
         self._task_event.wait(timeout=timeout)
 
@@ -197,10 +197,10 @@ class TaskManager:
         with self._lock:
             return list(self.waiting_queue)
 
-    def clear_queues(self) -> None:
+    def clear_queues(self):
         with self._lock:
             self.waiting_queue.clear()
             self.active_tasks.clear()
 
-    def wake(self) -> None:
+    def wake(self):
         self._task_event.set()

@@ -148,7 +148,7 @@ class DatasetFactory(BaseFactory["BaseDataset"]):
     """
 
     @classmethod
-    def _validate_component(cls, dataset_cls: type) -> None:
+    def _validate_component(cls, dataset_cls: type):
         """Validate that the dataset class inherits from BaseDataset."""
         if not issubclass(dataset_cls, BaseDataset):
             raise TypeError(f"{dataset_cls.__name__} must inherit from BaseDataset")

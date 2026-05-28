@@ -203,9 +203,45 @@ class DDPExecutor(BaseExecutor):
 
 @ExecutorFactory.register("fsdp")
 class FSDPExecutor(BaseExecutor):
-    def __init__(self, grad_accum_steps: int = 1, **fsdp_kwargs):
+    def __init__(
+        self,
+        grad_accum_steps: int = 1,
+        process_group=None,
+        sharding_strategy=None,
+        cpu_offload=None,
+        auto_wrap_policy=None,
+        backward_prefetch=None,
+        mixed_precision=None,
+        ignored_modules=None,
+        param_init_fn=None,
+        sync_module_states: bool = False,
+        forward_prefetch: bool = False,
+        limit_all_gathers: bool = True,
+        use_orig_params: bool = False,
+        ignored_states=None,
+        device_mesh=None,
+    ):
         super().__init__(grad_accum_steps=grad_accum_steps)
-        self._fsdp_kwargs = fsdp_kwargs
+        self._fsdp_kwargs = {
+            k: v
+            for k, v in dict(
+                process_group=process_group,
+                sharding_strategy=sharding_strategy,
+                cpu_offload=cpu_offload,
+                auto_wrap_policy=auto_wrap_policy,
+                backward_prefetch=backward_prefetch,
+                mixed_precision=mixed_precision,
+                ignored_modules=ignored_modules,
+                param_init_fn=param_init_fn,
+                sync_module_states=sync_module_states,
+                forward_prefetch=forward_prefetch,
+                limit_all_gathers=limit_all_gathers,
+                use_orig_params=use_orig_params,
+                ignored_states=ignored_states,
+                device_mesh=device_mesh,
+            ).items()
+            if v is not None
+        }
         self._original_model: Optional[nn.Module] = None
 
     def _prepare_model(self, model: nn.Module) -> nn.Module:

@@ -83,7 +83,7 @@ class AutoModel(BaseFactory["AutoModel"], nn.Module):
     def save_pretrained(
         self,
         save_directory: Union[str, Path],
-    ) -> None:
+    ):
         save_model(
             config=self.config.to_dict(),
             state_dict=self.state_dict(),

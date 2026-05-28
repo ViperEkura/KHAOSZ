@@ -125,7 +125,7 @@ class StrategyFactory(BaseFactory["BaseStrategy"]):
     """
 
     @classmethod
-    def _validate_component(cls, strategy_cls: type) -> None:
+    def _validate_component(cls, strategy_cls: type):
         """Validate that the strategy class inherits from BaseStrategy."""
         if not issubclass(strategy_cls, BaseStrategy):
             raise TypeError(f"{strategy_cls.__name__} must inherit from BaseStrategy")

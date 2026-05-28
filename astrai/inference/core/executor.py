@@ -29,9 +29,7 @@ class Executor:
         self.device = device or next(model.parameters()).device
         self.dtype = dtype or next(model.parameters()).dtype
 
-    def execute_prefill(
-        self, tasks: List[Task], prompt_len: int, start_pos: int = 0
-    ) -> None:
+    def execute_prefill(self, tasks: List[Task], prompt_len: int, start_pos: int = 0):
         if start_pos >= prompt_len:
             return
 

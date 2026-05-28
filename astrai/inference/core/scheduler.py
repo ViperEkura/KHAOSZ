@@ -75,14 +75,14 @@ class InferenceScheduler:
     def add_task(self, prompt: str, **kwargs) -> str:
         return self._task_mgr.add_task(prompt, **kwargs)
 
-    def remove_task(self, task_id: str) -> None:
+    def remove_task(self, task_id: str):
         for task in self._task_mgr.remove_task(task_id):
             self._page_cache.task_free(task.task_id)
 
     def get_stats(self) -> Dict[str, Any]:
         return self._task_mgr.get_stats()
 
-    def _run_generation_loop(self) -> None:
+    def _run_generation_loop(self):
         stop_ids = self._task_mgr.tokenizer.stop_ids
         try:
             while self._running:
@@ -186,14 +186,14 @@ class InferenceScheduler:
             self._task_mgr.clear_queues()
             raise
 
-    def start(self) -> None:
+    def start(self):
         if not self._running:
             self._running = True
             t = threading.Thread(target=self._run_generation_loop, daemon=True)
             t.start()
             self._loop_thread = t
 
-    def stop(self) -> None:
+    def stop(self):
         self._running = False
         self._task_mgr.wake()
         if hasattr(self, "_loop_thread"):

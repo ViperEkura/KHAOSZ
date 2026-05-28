@@ -23,7 +23,7 @@ class Registry:
         component_cls: Type,
         category: Optional[str] = None,
         priority: int = 0,
-    ) -> None:
+    ):
         """Register a component class with optional category and priority."""
         if name in self._entries:
             raise ValueError(f"Component '{name}' is already registered")
@@ -158,7 +158,7 @@ class BaseFactory(ABC, Generic[T]):
         return component_cls(*args, **kwargs)
 
     @classmethod
-    def _validate_component(cls, component_cls: Type[T]) -> None:
+    def _validate_component(cls, component_cls: Type[T]):
         """Validate that the component class is valid for this factory.
 
         Override this method in subclasses to add custom validation.
