@@ -8,8 +8,8 @@ from torch import Tensor
 from torch.utils.data import Dataset
 
 from astrai.dataset.storage import (
-    BaseStorage,
-    StorageFactory,
+    Store,
+    StoreFactory,
     detect_format,
 )
 from astrai.factory import BaseFactory
@@ -26,7 +26,7 @@ class BaseDataset(Dataset, ABC):
         super().__init__()
         self.window_size = window_size
         self.stride = stride
-        self.storage: Optional[BaseStorage] = None
+        self.storage: Optional[Store] = None
 
     @property
     def required_keys(self) -> List[str]:
@@ -65,7 +65,7 @@ class BaseDataset(Dataset, ABC):
         """
         if storage_type is None:
             storage_type = detect_format(load_path)
-        self.storage = StorageFactory.create(storage_type)
+        self.storage = StoreFactory.create(storage_type)
         self._load_path = load_path
         self.storage.load(load_path, tokenizer=tokenizer)
         self._validate_keys()

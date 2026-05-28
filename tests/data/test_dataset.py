@@ -7,10 +7,8 @@ import torch
 
 from astrai.dataset.dataset import DatasetFactory, SEQDataset
 from astrai.dataset.storage import (
-    BaseSegmentFetcher,
-    H5Storage,
-    MultiSegmentFetcher,
-    StorageFactory,
+    H5Store,
+    StoreFactory,
     detect_format,
     load_json,
     save_h5,
@@ -318,37 +316,48 @@ def test_unloaded_dataset_len():
     assert len(dataset) == 0
 
 
-def test_base_segment_fetcher_empty():
-    """BaseSegmentFetcher with empty segments list"""
-    fetcher = BaseSegmentFetcher([])
-    assert len(fetcher) == 0
-    with pytest.raises(ValueError, match="out of bounds"):
-        fetcher.fetch_data(0, 1)
+def test_store_unloaded_len():
+    """Unloaded Store has __len__ == 0"""
+    store = H5Store()
+    assert len(store) == 0
+    assert store.keys == []
 
 
-def test_base_segment_fetcher_begin_equals_end(base_test_env):
-    """fetch_data with begin == end returns empty tensor"""
+def test_store_fetch_begin_equals_end(base_test_env):
+    """Store.fetch with begin == end returns empty tensor"""
     test_dir = base_test_env["test_dir"]
     dummy = {"sequence": [torch.randint(0, 1000, (100,), dtype=torch.int64)]}
     save_h5(test_dir, "empty_fetch", dummy)
 
     dataset = DatasetFactory.load("seq", test_dir, window_size=32)
-    fetcher = dataset.storage._fetcher.multi_fetchers["sequence"]
-    result = fetcher.fetch_data(10, 10)
+    result = dataset.storage.fetch(10, 10, "sequence")
     assert result.numel() == 0
 
 
-def test_multi_segment_fetcher_empty_dict():
-    """MultiSegmentFetcher with empty dict has __len__ == 0"""
-    fetcher = MultiSegmentFetcher({})
-    assert len(fetcher) == 0
+def test_store_empty_data_len(base_test_env):
+    """Store loaded with empty data has __len__ == 0"""
+    import os
+
+    test_dir = base_test_env["test_dir"]
+    data_dir = os.path.join(test_dir, "empty_store")
+    os.makedirs(data_dir, exist_ok=True)
+
+    with open(os.path.join(data_dir, "data.json"), "w") as f:
+        json.dump({"sequence": [[1, 2, 3]]}, f)
+
+    store = StoreFactory.create("json")
+    store.load(data_dir)
+    assert len(store) > 0
+
+    empty_store = H5Store()
+    assert len(empty_store) == 0
 
 
-def test_storage_fetch_before_load():
-    """BaseStorage.fetch before load raises RuntimeError"""
-    storage = H5Storage()
+def test_store_fetch_before_load():
+    """Store.fetch before load raises RuntimeError"""
+    store = H5Store()
     with pytest.raises(RuntimeError, match="not loaded"):
-        storage.fetch(0, 10, "sequence")
+        store.fetch(0, 10, "sequence")
 
 
 def test_detect_format_nonexistent_path():
@@ -367,10 +376,10 @@ def test_detect_format_unsupported_file(base_test_env):
         detect_format(path)
 
 
-def test_create_storage_invalid_type():
-    """StorageFactory.create raises ValueError for unknown type"""
+def test_create_store_invalid_type():
+    """StoreFactory.create raises ValueError for unknown type"""
     with pytest.raises(ValueError, match="Unknown component"):
-        StorageFactory.create("parquet")
+        StoreFactory.create("parquet")
 
 
 def test_json_pretokenized_without_tokenizer(base_test_env):
@@ -407,14 +416,23 @@ def test_load_json_skips_config_file(base_test_env):
     assert len(result["sequence"]) == 1
 
 
-def test_base_segment_fetcher_multi_segment():
-    """fetch_data across multiple segment boundaries"""
+def test_store_multi_segment_concat(base_test_env):
+    """Multi-segment H5 data is concatenated into single tensor at load time"""
+    import os
+
+    test_dir = base_test_env["test_dir"]
+    data_dir = os.path.join(test_dir, "multi_seg")
+    os.makedirs(data_dir, exist_ok=True)
+
     segs = [
         torch.tensor([1, 2, 3]),
         torch.tensor([4, 5, 6, 7]),
         torch.tensor([8, 9]),
     ]
-    fetcher = BaseSegmentFetcher(segs)
-    assert len(fetcher) == 9
-    result = fetcher.fetch_data(2, 7)
+    save_h5(data_dir, "data", {"sequence": segs})
+
+    store = StoreFactory.create("h5")
+    store.load(data_dir)
+    assert len(store) == 9
+    result = store.fetch(2, 7, "sequence")
     assert result.tolist() == [3, 4, 5, 6, 7]
