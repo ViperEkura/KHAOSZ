@@ -65,7 +65,7 @@ classDiagram
         }
 
         class TrainConfig {
-            +nn.Module model
+            +Callable[[], nn.Module] model_fn
             +str strategy
             +Dataset dataset
             +Callable optimizer_fn
@@ -108,7 +108,7 @@ classDiagram
             +int window_size
             +int stride
             +Optional[Store] storage
-            +load(load_path, storage_type, tokenizer)
+            +load(load_path, storage_type)
             +__getitem__(index)
             +__len__()
         }
@@ -134,7 +134,7 @@ classDiagram
             +Dict[str, List[int]] _cum
             +int _length
             +keys (property)
-            +load(path, tokenizer)
+            +load(path)
             +fetch(begin, end, keys)
             +__len__()
             -_fetch_key(key, begin, end) Tensor
@@ -142,16 +142,12 @@ classDiagram
         }
 
         class H5Store {
-            +load(path, tokenizer)
-        }
-
-        class JSONStore {
-            +load(path, tokenizer)
+            +load(path)
         }
 
         class MmapStore {
             +List _mmap_refs
-            +load(path, tokenizer)
+            +load(path)
         }
 
         class ResumableDistributedSampler {
@@ -169,7 +165,7 @@ classDiagram
             +Registry _registry
             +register(name) decorator
             +create(train_type, window_size, stride) BaseDataset
-            +load(train_type, load_path, window_size, stride, storage_type, tokenizer) BaseDataset
+            +load(train_type, load_path, window_size, stride, storage_type) BaseDataset
         }
     }
 
@@ -180,8 +176,9 @@ classDiagram
             +int iteration
             +dict extra
             +dict meta
+            +dict config
             +save(save_dir)
-            +load(save_dir) Checkpoint
+            +load(save_dir, broadcast) Checkpoint
         }
     }
 
@@ -189,8 +186,8 @@ classDiagram
         class AutoModel {
             +BaseModelConfig config
             +Registry _registry
-            +register(model_type) decorator
-            +get_component_class(model_type) Type
+            +register(name) decorator
+            +get_component_class(name) Type
             +from_pretrained(path, disable_random_init, strict) nn.Module
             +save_pretrained(save_directory)
             +to(*args, **kwargs) Self
@@ -204,7 +201,7 @@ classDiagram
             +RMSNorm norm
             +Linear lm_head
             +forward(input_ids, input_mask, paged_cache, position_ids) Dict[str, Tensor]
-            +load_state_dict(state_dict)
+            +load_state_dict(state_dict, strict, assign)
             +state_dict()
         }
 
@@ -229,6 +226,7 @@ classDiagram
         }
 
         class GQA {
+            +int dim
             +int n_heads
             +int n_kv_heads
             +int head_dim
@@ -243,6 +241,7 @@ classDiagram
         }
 
         class MLA {
+            +int dim
             +int n_heads
             +int n_kv_heads
             +int head_dim
@@ -303,6 +302,7 @@ classDiagram
             +int dim
             +int max_len
             +float base
+            +Optional[Dict] rope_scaling
             +forward(x, position_ids=None) Tensor
         }
 
@@ -315,10 +315,10 @@ classDiagram
     namespace tokenize {
         class AutoTokenizer {
             +vocab_size int
-            +encode(tokens, out_ids, add_special_tokens) List[int]
+            +encode(tokens, out_ids, is_pretokenized, add_special_tokens) List[int]
             +decode(tokens, skip_special_tokens) str
             +__getattr__(name) Any (bos_id, eos_id, pad_id, stop_ids)
-            +apply_chat_template(messages, tokenize) Union[str, List[int]]
+            +apply_chat_template(messages, system_prompt, tokenize, add_generation_prompt) Union[str, List[int]]
             +set_chat_template(template)
             +load(path)
             +from_pretrained(path) AutoTokenizer
@@ -326,7 +326,7 @@ classDiagram
         }
 
         class ChatTemplate {
-            +String template_str
+            +str template_str
             +render(messages, system_prompt, **extra_variables) str
             +from_string(template) ChatTemplate
         }
@@ -364,6 +364,7 @@ classDiagram
             +SchedulerProtocol scheduler
             +Checkpoint checkpoint
             +TrainConfig config
+            +dict model_config
             +BaseExecutor executor
             +int epoch
             +int iteration
@@ -377,7 +378,7 @@ classDiagram
 
         class TrainContextBuilder {
             +TrainConfig config
-            +with_checkpoint(checkpoint) TrainContextBuilder
+            +with_resume_dir(resume_dir) TrainContextBuilder
             +build() TrainContext
         }
 
@@ -472,16 +473,12 @@ classDiagram
             +str save_dir
             +int interval
             +bool weight_only
-            +Callable state_dict_fn
             +Callable save_extra_fn
-            +Callable load_extra_fn
             +_save_checkpoint(context)
-            +on_train_begin(context)
             +on_batch_end(context)
             +on_train_end(context)
             +on_error(context)
             +save_extra(context)$
-            +load_extra(extra, context)$
         }
 
         class ProgressBarCallback {
@@ -518,7 +515,12 @@ classDiagram
             +float lr
             +float momentum
             +float weight_decay
+            +bool nesterov
             +int ns_steps
+            +float adamw_lr
+            +tuple adamw_betas
+            +float adamw_eps
+            +float adamw_wd
             +step(closure) Optional[float]
         }
     }
@@ -539,6 +541,8 @@ classDiagram
             +AutoModel model
             +AutoTokenizer tokenizer
             +KVCache page_cache
+            +Optional[str] device
+            +Optional[torch.dtype] dtype
             +execute_prefill(tasks, prompt_len, start_pos)
             +execute_decode(tasks) List[int]
         }
@@ -550,7 +554,9 @@ classDiagram
             +bool _running
             +Thread _loop_thread
             +int max_seq_len
-            +add_task(prompt, max_tokens, temperature, top_p, top_k, stream_callback) str
+            +str device
+            +torch.dtype dtype
+            +add_task(prompt, **kwargs) str
             +remove_task(task_id)
             +start()
             +stop()
@@ -653,15 +659,19 @@ classDiagram
 
         class TaskManager {
             +AutoTokenizer tokenizer
+            +int max_batch_size
+            +int max_seq_len
+            +int max_prompt_len
             +Deque waiting_queue
             +List active_tasks
-            +add_task(prompt, **kwargs) str
+            +add_task(prompt, max_tokens, temperature, top_p, top_k, stream_callback) str
             +remove_task(task_id) List[Task]
             +remove_finished_tasks(stop_ids) List[Task]
             +pull_candidates(n) List[Task]
             +activate(task)
             +return_to_waiting(tasks)
             +get_active_tasks() List[Task]
+            +get_stats() Dict
         }
 
         class GenerationRequest {
@@ -917,7 +927,6 @@ classDiagram
     BaseDataset <|-- DPODataset
     BaseDataset <|-- GRPODataset
     Store <|-- H5Store
-    Store <|-- JSONStore
     Store <|-- MmapStore
     BaseSamplingStrategy <|-- TemperatureStrategy
     BaseSamplingStrategy <|-- TopKStrategy
@@ -996,7 +1005,6 @@ classDiagram
     DecoderBlock ..> AttnFactory : uses
     DecoderBlock ..> FFNFactory : uses
     StoreFactory ..> H5Store : creates
-    StoreFactory ..> JSONStore : creates
     StoreFactory ..> MmapStore : creates
     ConfigFactory ..> AutoRegressiveLMConfig : creates
     ConfigFactory ..> EncoderConfig : creates
@@ -1063,7 +1071,7 @@ classDiagram
 | **Context** | `TrainContext` | Unified training state bag |
 | **Object Pool** | `Allocator`, `PagePool` | Page-based KV cache with LRU eviction |
 | **Executor** | `BaseExecutor`, `NoneExecutor`, `DDPExecutor` | Gradient accumulation & model distribution |
-| **Storage** | `Store`, `H5Store`, `JSONStore`, `MmapStore` | Format-agnostic data access with multi-segment support |
+| **Storage** | `Store`, `H5Store`, `MmapStore` | Format-agnostic data access with multi-segment support |
 | **Producer-Consumer** | `InferenceScheduler`, `Task`, queues | Continuous batching |
 | **AutoModel Registry** | `AutoModel`, `AutoRegressiveLM`, `EmbeddingEncoder` | Model-type dynamic loading |
 
@@ -1075,10 +1083,10 @@ classDiagram
 4. **Executor Selection**: `ExecutorFactory.create(cfg.parallel_mode, grad_accum_steps=cfg.grad_accum_steps, **cfg.executor_kwargs)` → `NoneExecutor` / `DDPExecutor` / `FSDPExecutor`
 5. **Inference Flow**: `InferenceEngine` → `InferenceScheduler` → `AutoRegressiveLM`, backed by `KVCache` + `SamplingPipeline`
 6. **Distributed**: `spawn_parallel_fn` + `setup_parallel` for multi-process DDP
-7. **Dataset Loading**: `DatasetFactory` creates datasets, `Store` (H5Store/JSONStore/MmapStore) loads data with explicit `_length` and multi-segment `_data`
+7. **Dataset Loading**: `DatasetFactory` creates datasets, `Store` (H5Store/MmapStore) loads data with explicit `_length` and multi-segment `_data`
 8. **Checkpoint**: `Checkpoint` saves/loads safetensors + metadata (rank-0 only), extra state saved as `{key}.pt`
 9. **Scheduler**: `SchedulerFactory` creates `CosineScheduler`/`SGDRScheduler`
 10. **AutoModel**: `from_pretrained()` loads `config.json` + `model.safetensors`, `_disable_random_init` replaces `nn.init.*` with no-ops
 11. **Protocols**: `OptimizerProtocol` / `SchedulerProtocol` — structural subtyping for `AccumOptimizer` / `AccumScheduler` wrappers
 
-> Document Update Time: 2026-05-24
+> Document Update Time: 2026-05-28

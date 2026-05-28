@@ -5,22 +5,21 @@ This document describes the data pipeline: from raw text to model input tensors.
 ## Overview
 
 ```
-Raw Text → AutoTokenizer → Token IDs → .h5/.json/.bin → Dataset → Sampler → DataLoader → Training/Inference
+Raw Text → AutoTokenizer → Token IDs → .h5/.bin → Dataset → Sampler → DataLoader → Training/Inference
 ```
 
 ## Data Preparation
 
-Raw text is tokenized via `AutoTokenizer.encode()` and saved as HDF5 (`.h5`), JSON (`.json`/`.jsonl`), or binary (`.bin` + `meta.json`) files with keyed tensor groups.
+Raw text is tokenized via `AutoTokenizer.encode()` and saved as HDF5 (`.h5`) or binary (`.bin` + `meta.json`) files with keyed tensor groups.
 
 Storage format is auto-detected by `detect_format()`; backends are dispatched via registry:
 
 ```
-StoreFactory.create("h5")   → H5Store
-StoreFactory.create("json") → JSONStore
-StoreFactory.create("bin")  → MmapStore
+StoreFactory.create("h5")  → H5Store
+StoreFactory.create("bin") → MmapStore
 ```
 
-H5 and JSON backends support shared memory via `.share_memory_()`. Bin (mmap) uses OS page-cache sharing natively.
+H5 backend supports shared memory via `.share_memory_()`. Bin (mmap) uses OS page-cache sharing natively.
 
 ## Data Keys by Training Type
 
@@ -34,7 +33,7 @@ H5 and JSON backends support shared memory via `.share_memory_()`. Bin (mmap) us
 ## Dataset Architecture
 
 ```
-DatasetFactory.load(train_type, path, window_size, stride, storage_type, tokenizer)
+DatasetFactory.load(train_type, load_path, window_size, stride, storage_type)
   → StoreFactory.create(detect_format(path))
     → Store._data[Dict[str, List[Tensor]]] + _cum[Dict[str, List[int]]]
       → BaseDataset.__getitem__(idx)
@@ -55,4 +54,4 @@ DatasetFactory.load(train_type, path, window_size, stride, storage_type, tokeniz
 
 Standard PyTorch `DataLoader` with configurable `batch_size`, `num_workers`, `pin_memory`, `prefetch_factor`. Sampler produces indices; dataloader fetches tensor batches via `__getitem__`.
 
-> Document Update Time: 2026-05-17
+> Document Update Time: 2026-05-28

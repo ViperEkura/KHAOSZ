@@ -74,15 +74,17 @@ on_train_begin
       on_batch_begin
       with executor.accumulate(model):
         loss = strategy(batch)
-        (loss / grad_accum_steps).backward()
+        stand_loss = loss / executor.grad_accum_steps
+        executor.backward(stand_loss)
         iteration += 1
-      on_batch_end
+        on_batch_end
 
-      if executor.sync_gradients:
-        on_optimizer_step
-        optimizer.step()
-        optimizer.zero_grad()
-        scheduler.step()
+        if executor.sync_gradients:
+          on_optimizer_step
+          optimizer.step()
+          optimizer.zero_grad()
+          if scheduler:
+            scheduler.step()
     on_epoch_end
 on_train_end
 ```
@@ -169,20 +171,20 @@ Callback wraps each `DecoderBlock.forward` with `torch.utils.checkpoint.checkpoi
 ## Checkpoint
 
 ```
-Checkpoint(state_dict, epoch, iteration, extra, meta)
-  ├── save(save_dir)    rank-0 only: meta.json (includes training config) + state_dict.safetensors + optional optimizer.pt / scheduler.pt
+Checkpoint(state_dict, epoch, iteration, extra, meta, config)
+  ├── save(save_dir)    rank-0 only: meta.json (epoch/iteration/timestamp) + config.json (model config) + state_dict.safetensors + optional {key}.pt (optimizer.pt, scheduler.pt)
   └── load(save_dir)    broadcasts metadata from rank-0
 ```
 
 Optimizer/scheduler state persisted by default via `Checkpoint.extra`.  
-Training config (`TrainConfig.to_dict()`) saved into `meta.json` during training via `CheckpointCallback`.
+Model config (`context.model_config`) saved into `config.json` during training via `CheckpointCallback`.
 
 ## TrainContextBuilder (Builder Pattern)
 
 ```python
 context = (
     TrainContextBuilder(config)
-        .with_checkpoint(checkpoint)
+        .with_resume_dir(resume_dir)
         .build()
 )
 # Returns TrainContext with model, strategy, optimizer, scheduler, dataloader, checkpoint
@@ -222,4 +224,4 @@ nohup python scripts/tools/train.py \
 
 Full parameter reference at [params.md](params.md).
 
-> Document Update Time: 2026-05-24
+> Document Update Time: 2026-05-28

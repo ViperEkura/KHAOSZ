@@ -16,12 +16,12 @@ Six classes working together:
 
 ```
 KVCache (facade)
-  ├── Allocator        bitmask-based page allocator + ref-count + LRU eviction
-  ├── PrefixCache      hash-based prefix matching (page_hash via rolling hash)
-  ├── PagePool         orchestrates Allocator + PrefixCache
+  ├── PagePool         orchestrates page allocation + prefix matching
+  │     ├── Allocator   bitmask-based page allocator + ref-count + LRU eviction (inside PagePool)
+  │     └── PrefixCache hash-based prefix matching (page_hash via polynomial hash) (inside PagePool)
   ├── TaskTable        maps task_id → page_table + cached token count
   ├── Storage          k_cache / v_cache tensors (n_layers × n_pages × page_size × n_kv_heads × head_dim)
-  └── KvcacheView      bundles Storage + page_table + total_len for attention layers
+  └── KvcacheView      bundles Storage + page_table + total_len for attention layers (returned by bind())
 ```
 
 `KVCache.bind(page_table, total_len)` returns a `KvcacheView` used by attention layers via `write()` / `gather()`.
@@ -40,7 +40,10 @@ KVCache (facade)
 ## Sampling (Strategy Pattern)
 
 ```
-BaseSamplingStrategy → TemperatureStrategy → TopKStrategy → TopPStrategy
+BaseSamplingStrategy (ABC)
+  ├── TemperatureStrategy
+  ├── TopKStrategy
+  └── TopPStrategy
 ```
 
 `SamplingPipeline` composes them: Temperature → Top-K → Top-P → softmax → multinomial.  
@@ -50,11 +53,12 @@ BaseSamplingStrategy → TemperatureStrategy → TopKStrategy → TopPStrategy
 
 ```python
 class ProtocolHandler:  # concrete orchestrator
-    def handle(self, request):
+    def __init__(self, request, engine, builder): ...
+    async def handle(self):
         prompt, ctx, stops = builder.prepare(request, engine)
         agen = engine.generate_async(prompt, ...)
         if stream: self._handle_stream(agen, ctx, stops)
-        else:      self._handle_non_stream(agen, ctx, stops)
+        else:      return await self._handle_non_stream(agen, ctx, stops)
 ```
 
 `ResponseBuilder` (ABC): `prepare()`, `format_stream_start()`, `format_chunk()`, `format_stream_end()`, `format_response()`.
@@ -96,12 +100,14 @@ Response:
 {
   "id": "chatcmpl-abc123",
   "object": "chat.completion",
-  "choices": [{"message": {"role": "assistant", "content": "Hello!"}, "finish_reason": "stop"}],
+  "created": 1717000000,
+  "model": "astrai",
+  "choices": [{"index": 0, "message": {"role": "assistant", "content": "Hello!"}, "finish_reason": "stop"}],
   "usage": {"prompt_tokens": 5, "completion_tokens": 10, "total_tokens": 15}
 }
 ```
 
-Streaming SSE: `data: {"choices":[{"delta":{"role":"assistant"}}]}` → token chunks → `data: [DONE]`
+Streaming SSE: `object: "chat.completion.chunk"` — starts with role delta, then token chunks, ends with finish chunk + usage stats, then `data: [DONE]`.
 
 ### Anthropic
 
@@ -121,7 +127,7 @@ Supports `stop_sequences` and streaming via `event: content_block_delta`.
 | `temperature` | float | 1.0 | Sampling temperature (>= 0.0) |
 | `top_p` | float | 1.0 | Nucleus threshold |
 | `top_k` | int | 50 | Top-k count |
-| `max_tokens` | int | None | Max generation length |
+| `max_tokens` | Optional[int] | None | Max generation length |
 | `stream` | bool | False | Stream output |
 
 ## Engine API
@@ -139,4 +145,4 @@ engine.generate(["A", "B"], stream=True)        # -> Generator[Tuple[int, str]]
 await engine.generate_async("Hello", ...)       # -> AsyncGenerator[str]
 ```
 
-> Document Update Time: 2026-05-17
+> Document Update Time: 2026-05-28
