@@ -70,7 +70,7 @@ def load_h5(file_path: str, share_memory=True) -> Dict[str, List[Tensor]]:
 
 def save_json(file_path: str, file_name: str, tensor_group: Dict[str, List[Tensor]]):
     os.makedirs(file_path, exist_ok=True)
-    full_file_path = os.path.join(file_path, f"{file_name}.json")
+    full_file_path = os.path.join(file_path, f"{file_name}.jsonl")
     json_data = {}
     for key, tensors in tensor_group.items():
         json_data[key] = [tensor.tolist() for tensor in tensors]
@@ -83,38 +83,42 @@ def load_json(
     share_memory: bool = True,
     tokenizer: Optional[Callable[[str], List[int]]] = None,
 ) -> Dict[str, List[Tensor]]:
-    """Load tensor data from JSON files.
+    """Load tensor data from JSONL files (one JSON object per line).
 
     Supports two modes:
-    - Pre-tokenized: JSON values are List[List[int]] (token IDs), loaded as-is.
-    - Raw text: JSON values are List[str], tokenized via ``tokenizer`` callable
-      at load time. A ``tokenizer`` receives a str and returns List[int].
+    - Pre-tokenized: values are List[List[int]] (token IDs), loaded as-is.
+    - Raw text: values are List[str], tokenized via ``tokenizer`` callable
+      at load time.  A ``tokenizer`` receives a str and returns List[int].
 
     Non-data JSON files (e.g. config.json) with scalar/object values are
-    silently skipped.
+    silently skipped.  Empty lines are ignored.
     """
     tensor_group: Dict[str, List[Tensor]] = {}
     root_path = Path(file_path)
-    json_files = list(root_path.rglob("*.json")) + list(root_path.rglob("*.jsonl"))
-    for json_file in json_files:
-        with open(json_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if not isinstance(data, dict):
-            continue
-        for key, sequences in data.items():
-            if not isinstance(sequences, list):
-                continue
-            tensors = []
-            for seq in sequences:
-                if tokenizer is not None and isinstance(seq, str):
-                    seq = tokenizer(seq)
-                tensor = torch.tensor(seq, dtype=torch.long)
-                if share_memory:
-                    tensor = tensor.share_memory_()
-                tensors.append(tensor)
-            if tensor_group.get(key) is None:
-                tensor_group[key] = []
-            tensor_group[key].extend(tensors)
+    jsonl_files = sorted(root_path.rglob("*.jsonl"))
+    for jsonl_file in jsonl_files:
+        with open(jsonl_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                data = json.loads(line)
+                if not isinstance(data, dict):
+                    continue
+                for key, sequences in data.items():
+                    if not isinstance(sequences, list):
+                        continue
+                    tensors = []
+                    for seq in sequences:
+                        if tokenizer is not None and isinstance(seq, str):
+                            seq = tokenizer(seq)
+                        tensor = torch.tensor(seq, dtype=torch.long)
+                        if share_memory:
+                            tensor = tensor.share_memory_()
+                        tensors.append(tensor)
+                    if tensor_group.get(key) is None:
+                        tensor_group[key] = []
+                    tensor_group[key].extend(tensors)
     return tensor_group
 
 
@@ -125,17 +129,19 @@ def save_bin(file_path: str, tensor_group: Dict[str, List[Tensor]]):
         cat = torch.cat(tensors, dim=0)
         meta[key] = {"shape": list(cat.shape), "dtype": str(cat.dtype).split(".")[-1]}
         np.asarray(cat.cpu().numpy()).tofile(os.path.join(file_path, f"{key}.bin"))
-    save_json(meta, os.path.join(file_path, "meta.json"))
+    with open(os.path.join(file_path, "meta.json"), "w") as f:
+        json.dump(meta, f)
 
 
 def load_bin(file_path: str) -> Dict[str, List[Tensor]]:
-    meta = load_json(os.path.join(file_path, "meta.json"))
+    with open(os.path.join(file_path, "meta.json"), "r") as f:
+        meta = json.load(f)
     segments: Dict[str, List[Tensor]] = {}
     for key, info in meta.items():
         arr = np.memmap(
             os.path.join(file_path, f"{key}.bin"),
             dtype=info["dtype"],
-            mode="r",
+            mode="r+",
             shape=tuple(info["shape"]),
         )
         segments[key] = [torch.from_numpy(arr)]
@@ -167,7 +173,7 @@ def detect_format(load_path: str) -> str:
         suffix = root.suffix.lower()
         if suffix in (".h5", ".hdf5"):
             return "h5"
-        if suffix in (".json", ".jsonl"):
+        if suffix in (".jsonl"):
             return "json"
         raise ValueError(f"Unsupported file format: {suffix}")
 
@@ -177,8 +183,8 @@ def detect_format(load_path: str) -> str:
     bin_files = list(root.rglob("*.bin"))
     if bin_files and (root / "meta.json").exists():
         return "bin"
-    json_files = list(root.rglob("*.json")) + list(root.rglob("*.jsonl"))
-    if json_files:
+    jsonl_files = list(root.rglob("*.jsonl"))
+    if jsonl_files:
         return "json"
     raise FileNotFoundError(f"No supported data files found at {load_path}")
 
@@ -257,7 +263,11 @@ class Store(ABC):
                 total += t.shape[0]
                 cum.append(total)
             self._cum[key] = cum
-        self._length = min(cum[-1] for cum in self._cum.values()) if self._cum else 0
+        self._length = (
+            min((cum[-1] if cum else 0) for cum in self._cum.values())
+            if self._cum
+            else 0
+        )
 
 
 class StoreFactory(BaseFactory["Store"]):

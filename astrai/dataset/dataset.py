@@ -306,9 +306,11 @@ class GRPODataset(BaseDataset):
     def __getitem__(self, index: int) -> Dict[str, Tensor]:
         begin_idx, end_idx = self.get_index(index)
 
-        prompts = self._fetch_data(begin_idx, end_idx, "prompts")
-        responses = self._fetch_data(begin_idx, end_idx, "responses")
-        masks = self._fetch_data(begin_idx, end_idx, "masks")
+        prompts = self._fetch_data(begin_idx, end_idx, "prompts").to(dtype=torch.long)
+        responses = self._fetch_data(begin_idx, end_idx, "responses").to(
+            dtype=torch.long
+        )
+        masks = self._fetch_data(begin_idx, end_idx, "masks").to(dtype=torch.bool)
         rewards = self._fetch_data(begin_idx, end_idx, "rewards")
 
         return {
