@@ -1,20 +1,20 @@
 """Storage backends for different data formats.
 
 Layers:
-  - I/O layer:       save_* / load_* functions, read/write raw files (HDF5/JSON/bin)
-                     return Dict[str, List[Tensor]] — format-specific, no state
+  - I/O layer:       save_* / load_* functions, read/write raw files (HDF5/bin)
+                      return Dict[str, List[Tensor]] — format-specific, no state
   - Store (ABC):     central abstraction, normalizes multi-segment into
-                     Dict[str, List[Tensor]] per key via _normalize(),
-                     fetch() uses bisect across segments — no forced concat
+                      Dict[str, List[Tensor]] per key via _normalize(),
+                      fetch() uses bisect across segments — no forced concat
   - Dataset layer:   BaseDataset owns a Store, only calls store.fetch(begin, end, key)
 
 Key properties:
   - Multi-segment:   segments kept as-is, no forced concatenation — safe for
-                     datasets larger than RAM
+                      datasets larger than RAM
   - Explicit length: _length = min(total elements across keys), set at load,
-                     __len__ returns O(1)
+                      __len__ returns O(1)
   - Zero-copy mmap:  MmapStore wraps np.memmap(mode="r"), all DataLoader
-                     workers share OS page-cache pages
+                      workers share OS page-cache pages
 """
 
 import bisect
@@ -22,7 +22,7 @@ import json
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Union
+from typing import Dict, List, Union
 
 import h5py
 import numpy as np
@@ -68,60 +68,6 @@ def load_h5(file_path: str, share_memory=True) -> Dict[str, List[Tensor]]:
     return tensor_group
 
 
-def save_json(file_path: str, file_name: str, tensor_group: Dict[str, List[Tensor]]):
-    os.makedirs(file_path, exist_ok=True)
-    full_file_path = os.path.join(file_path, f"{file_name}.jsonl")
-    json_data = {}
-    for key, tensors in tensor_group.items():
-        json_data[key] = [tensor.tolist() for tensor in tensors]
-    with open(full_file_path, "w", encoding="utf-8") as f:
-        json.dump(json_data, f, ensure_ascii=False)
-
-
-def load_json(
-    file_path: str,
-    share_memory: bool = True,
-    tokenizer: Optional[Callable[[str], List[int]]] = None,
-) -> Dict[str, List[Tensor]]:
-    """Load tensor data from JSONL files (one JSON object per line).
-
-    Supports two modes:
-    - Pre-tokenized: values are List[List[int]] (token IDs), loaded as-is.
-    - Raw text: values are List[str], tokenized via ``tokenizer`` callable
-      at load time.  A ``tokenizer`` receives a str and returns List[int].
-
-    Non-data JSON files (e.g. config.json) with scalar/object values are
-    silently skipped.  Empty lines are ignored.
-    """
-    tensor_group: Dict[str, List[Tensor]] = {}
-    root_path = Path(file_path)
-    jsonl_files = sorted(root_path.rglob("*.jsonl"))
-    for jsonl_file in jsonl_files:
-        with open(jsonl_file, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                data = json.loads(line)
-                if not isinstance(data, dict):
-                    continue
-                for key, sequences in data.items():
-                    if not isinstance(sequences, list):
-                        continue
-                    tensors = []
-                    for seq in sequences:
-                        if tokenizer is not None and isinstance(seq, str):
-                            seq = tokenizer(seq)
-                        tensor = torch.tensor(seq, dtype=torch.long)
-                        if share_memory:
-                            tensor = tensor.share_memory_()
-                        tensors.append(tensor)
-                    if tensor_group.get(key) is None:
-                        tensor_group[key] = []
-                    tensor_group[key].extend(tensors)
-    return tensor_group
-
-
 def save_bin(file_path: str, tensor_group: Dict[str, List[Tensor]]):
     os.makedirs(file_path, exist_ok=True)
     meta = {}
@@ -148,14 +94,6 @@ def load_bin(file_path: str) -> Dict[str, List[Tensor]]:
     return segments
 
 
-def json_to_bin(json_path: str, bin_path: str, tokenizer=None):
-    segments = load_json(json_path, share_memory=False, tokenizer=tokenizer)
-    merged = {}
-    for key, tensors in segments.items():
-        merged[key] = [torch.cat(tensors, dim=0)]
-    save_bin(bin_path, merged)
-
-
 def detect_format(load_path: str) -> str:
     """Auto-detect storage format from files in the directory.
 
@@ -163,7 +101,7 @@ def detect_format(load_path: str) -> str:
         load_path: Directory or file path
 
     Returns:
-        Format string ("h5", "bin", or "json")
+        Format string ("h5" or "bin")
 
     Raises:
         FileNotFoundError: If no supported data files are found
@@ -173,8 +111,6 @@ def detect_format(load_path: str) -> str:
         suffix = root.suffix.lower()
         if suffix in (".h5", ".hdf5"):
             return "h5"
-        if suffix in (".jsonl"):
-            return "json"
         raise ValueError(f"Unsupported file format: {suffix}")
 
     h5_files = list(root.rglob("*.h5")) + list(root.rglob("*.hdf5"))
@@ -183,9 +119,6 @@ def detect_format(load_path: str) -> str:
     bin_files = list(root.rglob("*.bin"))
     if bin_files and (root / "meta.json").exists():
         return "bin"
-    jsonl_files = list(root.rglob("*.jsonl"))
-    if jsonl_files:
-        return "json"
     raise FileNotFoundError(f"No supported data files found at {load_path}")
 
 
@@ -206,7 +139,7 @@ class Store(ABC):
         self._length: int = 0
 
     @abstractmethod
-    def load(self, path: str, tokenizer=None) -> None:
+    def load(self, path: str) -> None:
         raise NotImplementedError
 
     @property
@@ -290,22 +223,8 @@ class StoreFactory(BaseFactory["Store"]):
 class H5Store(Store):
     """HDF5-based storage backend (pre-tokenized data)."""
 
-    def load(self, path: str, tokenizer=None):
+    def load(self, path: str):
         self._normalize(load_h5(path))
-
-
-@StoreFactory.register("json")
-class JSONStore(Store):
-    """JSON-based storage backend.
-
-    Supports two modes:
-    - Pre-tokenized: JSON values are List[List[int]], loaded as-is.
-    - Raw text: JSON values are List[str], tokenized via ``tokenizer``
-      callable (str -> List[int]) at load time.
-    """
-
-    def load(self, path: str, tokenizer=None):
-        self._normalize(load_json(path, tokenizer=tokenizer))
 
 
 @StoreFactory.register("bin")
@@ -323,7 +242,7 @@ class MmapStore(Store):
           <key>.bin          # raw numpy array, one per key
     """
 
-    def load(self, path: str, tokenizer=None):
+    def load(self, path: str):
         self._mmap_refs = []
         raw = load_bin(path)
         self._normalize(raw)

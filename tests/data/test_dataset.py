@@ -11,9 +11,7 @@ from astrai.dataset.storage import (
     MmapStore,
     StoreFactory,
     detect_format,
-    json_to_bin,
     load_bin,
-    load_json,
     save_bin,
     save_h5,
 )
@@ -159,111 +157,6 @@ def test_dataset_with_custom_stride(base_test_env):
     assert len(dataset) > len(default_stride_dataset)
 
 
-# ============== JSON Storage Tests (raw text + tokenizer) ==============
-
-
-def _make_tokenizer_fn(tokenizer):
-    """Wrap tokenizer.encode() as a str -> List[int] callable."""
-    return lambda text: tokenizer.encode(text, add_special_tokens=False)
-
-
-def test_seq_dataset_from_json_text(base_test_env):
-    """Test loading SEQ dataset from raw-text JSON with tokenizer"""
-    tokenizer = base_test_env["tokenizer"]
-    tokenizer_fn = _make_tokenizer_fn(tokenizer)
-    test_dir = base_test_env["test_dir"]
-    data_dir = os.path.join(test_dir, "json_text")
-    os.makedirs(data_dir, exist_ok=True)
-
-    texts = [
-        "hello world this is a test sentence for tokenizer",
-        "another sentence with different words and tokens",
-        "machine learning is fascinating and powerful",
-    ]
-
-    jsonl_path = os.path.join(data_dir, "seq_data.jsonl")
-    with open(jsonl_path, "w", encoding="utf-8") as f:
-        json.dump({"sequence": texts}, f, ensure_ascii=False)
-
-    dataset = DatasetFactory.load(
-        train_type="seq",
-        load_path=data_dir,
-        window_size=16,
-        tokenizer=tokenizer_fn,
-    )
-    assert dataset is not None
-    assert len(dataset) > 0
-    assert dataset.count > 0
-    assert "sequence" in dataset.keys
-
-    item = dataset[0]
-    assert "input_ids" in item
-    assert "target_ids" in item
-    assert item["input_ids"].shape[0] == 16
-
-
-def test_sft_dataset_from_json_text(base_test_env):
-    """Test loading SFT dataset from raw-text JSON with tokenizer"""
-    tokenizer = base_test_env["tokenizer"]
-    tokenizer_fn = _make_tokenizer_fn(tokenizer)
-    test_dir = base_test_env["test_dir"]
-    data_dir = os.path.join(test_dir, "json_sft")
-    os.makedirs(data_dir, exist_ok=True)
-
-    texts = [
-        "user asks a question about the weather",
-        "assistant provides a helpful response to the user",
-    ]
-
-    jsonl_path = os.path.join(data_dir, "sft_data.jsonl")
-    with open(jsonl_path, "w", encoding="utf-8") as f:
-        json.dump(
-            {"sequence": texts, "loss_mask": texts},
-            f,
-            ensure_ascii=False,
-        )
-
-    dataset = DatasetFactory.load(
-        train_type="sft",
-        load_path=data_dir,
-        window_size=16,
-        tokenizer=tokenizer_fn,
-    )
-    assert dataset is not None
-    assert len(dataset) > 0
-
-    item = dataset[0]
-    assert "loss_mask" in item
-
-
-def test_json_storage_explicit_tokenizer(base_test_env):
-    """Test explicit JSON storage with tokenizer"""
-    tokenizer = base_test_env["tokenizer"]
-    tokenizer_fn = _make_tokenizer_fn(tokenizer)
-    test_dir = base_test_env["test_dir"]
-    data_dir = os.path.join(test_dir, "json_explicit")
-    os.makedirs(data_dir, exist_ok=True)
-
-    texts = ["abcdefghijklmnopqrstuvwxyz" * 10]
-
-    json_path = os.path.join(data_dir, "data.jsonl")
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump({"sequence": texts}, f, ensure_ascii=False)
-
-    token_count = len(tokenizer_fn(texts[0]))
-
-    dataset = DatasetFactory.load(
-        train_type="seq",
-        load_path=data_dir,
-        window_size=32,
-        storage_type="json",
-        tokenizer=tokenizer_fn,
-    )
-    assert dataset is not None
-    assert len(dataset) > 0
-    assert dataset.count == token_count
-
-
 def test_dataset_count_property(base_test_env):
     """Test the count property returns correct raw token count"""
     test_dir = base_test_env["test_dir"]
@@ -338,25 +231,6 @@ def test_store_fetch_begin_equals_end(base_test_env):
     assert result.numel() == 0
 
 
-def test_store_empty_data_len(base_test_env):
-    """Store loaded with empty data has __len__ == 0"""
-    import os
-
-    test_dir = base_test_env["test_dir"]
-    data_dir = os.path.join(test_dir, "empty_store")
-    os.makedirs(data_dir, exist_ok=True)
-
-    with open(os.path.join(data_dir, "data.jsonl"), "w") as f:
-        json.dump({"sequence": [[1, 2, 3]]}, f)
-
-    store = StoreFactory.create("json")
-    store.load(data_dir)
-    assert len(store) > 0
-
-    empty_store = H5Store()
-    assert len(empty_store) == 0
-
-
 def test_store_fetch_before_load():
     """Store.fetch before load raises RuntimeError"""
     store = H5Store()
@@ -384,40 +258,6 @@ def test_create_store_invalid_type():
     """StoreFactory.create raises ValueError for unknown type"""
     with pytest.raises(ValueError, match="Unknown component"):
         StoreFactory.create("parquet")
-
-
-def test_json_pretokenized_without_tokenizer(base_test_env):
-    """Pre-tokenized JSON (List[List[int]]) loads without tokenizer"""
-    test_dir = base_test_env["test_dir"]
-    data_dir = os.path.join(test_dir, "json_pretok")
-    os.makedirs(data_dir, exist_ok=True)
-
-    json_path = os.path.join(data_dir, "data.jsonl")
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump({"sequence": [[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]]}, f)
-
-    dataset = DatasetFactory.load("seq", data_dir, window_size=4, storage_type="json")
-    assert len(dataset) > 0
-    assert dataset.count == 10
-
-    item = dataset[0]
-    assert item["input_ids"].tolist() == [1, 2, 3, 4]
-    assert item["target_ids"].tolist() == [2, 3, 4, 5]
-
-
-def test_load_json_skips_config_file(base_test_env):
-    """load_json skips scalar-value config files"""
-    test_dir = base_test_env["test_dir"]
-    with open(os.path.join(test_dir, "config.json"), "w") as f:
-        json.dump({"vocab_size": 1000, "dim": 16}, f)
-
-    with open(os.path.join(test_dir, "data.jsonl"), "w") as f:
-        json.dump({"sequence": [[1, 2, 3, 4, 5]]}, f)
-
-    result = load_json(test_dir)
-    assert "sequence" in result
-    assert "vocab_size" not in result
-    assert len(result["sequence"]) == 1
 
 
 def test_store_multi_segment_concat(base_test_env):
@@ -508,44 +348,6 @@ def test_normalize_mixed_empty_key():
     assert set(store.keys) == {"sequence", "loss_mask"}
 
 
-def test_load_jsonl_multiline(base_test_env):
-    """JSONL files are loaded line-by-line and accumulated"""
-    test_dir = base_test_env["test_dir"]
-    data_dir = os.path.join(test_dir, "jsonl_test")
-    os.makedirs(data_dir, exist_ok=True)
-
-    jsonl_path = os.path.join(data_dir, "data.jsonl")
-    with open(jsonl_path, "w", encoding="utf-8") as f:
-        f.write('{"sequence": [[1, 2, 3]]}\n')
-        f.write('{"sequence": [[4, 5, 6]]}\n')
-        f.write('{"sequence": [[7, 8, 9]]}\n')
-
-    store = StoreFactory.create("json")
-    store.load(data_dir)
-    assert len(store) == 9
-    assert store.fetch(0, 9, "sequence").tolist() == [1, 2, 3, 4, 5, 6, 7, 8, 9]
-
-
-def test_load_jsonl_with_text_and_tokenizer(base_test_env):
-    """JSONL with raw text + tokenizer works"""
-    tokenizer = base_test_env["tokenizer"]
-    tokenizer_fn = lambda text: tokenizer.encode(text, add_special_tokens=False)
-
-    test_dir = base_test_env["test_dir"]
-    data_dir = os.path.join(test_dir, "jsonl_text")
-    os.makedirs(data_dir, exist_ok=True)
-
-    jsonl_path = os.path.join(data_dir, "data.jsonl")
-    with open(jsonl_path, "w", encoding="utf-8") as f:
-        f.write('{"sequence": ["hello world how are you today this is a test"]}\n')
-
-    dataset = DatasetFactory.load(
-        "seq", data_dir, window_size=8, tokenizer=tokenizer_fn
-    )
-    assert len(dataset) > 0
-    assert dataset.count > 0
-
-
 def test_grpo_dataset_dtype(base_test_env):
     """GRPODataset returns correct dtypes"""
     test_dir = base_test_env["test_dir"]
@@ -598,15 +400,6 @@ def test_detect_format_bin_dir(base_test_env):
     assert detect_format(test_dir) == "bin"
 
 
-def test_detect_format_jsonl_file(base_test_env):
-    """detect_format returns 'json' for a single .jsonl file"""
-    test_dir = base_test_env["test_dir"]
-    path = os.path.join(test_dir, "data.jsonl")
-    with open(path, "w") as f:
-        f.write('{"sequence": [[1,2,3]]}\n')
-    assert detect_format(path) == "json"
-
-
 def test_store_fetch_multi_key(base_test_env):
     """Store.fetch with List[str] returns Dict[str, Tensor]"""
     test_dir = base_test_env["test_dir"]
@@ -630,9 +423,7 @@ def test_store_fetch_multi_key(base_test_env):
 def test_store_fetch_out_of_bounds(base_test_env):
     """Store.fetch raises ValueError for out-of-bounds indices"""
     test_dir = base_test_env["test_dir"]
-    save_h5(
-        test_dir, "bounds", {"sequence": [torch.randint(0, 100, (50,))]}
-    )
+    save_h5(test_dir, "bounds", {"sequence": [torch.randint(0, 100, (50,))]})
 
     store = StoreFactory.create("h5")
     store.load(test_dir)
@@ -644,61 +435,11 @@ def test_store_fetch_out_of_bounds(base_test_env):
         store.fetch(50, 50, "sequence")
 
 
-def test_json_to_bin_roundtrip(base_test_env):
-    """json_to_bin converts JSONL to bin and data is preserved"""
-    test_dir = base_test_env["test_dir"]
-    jsonl_dir = os.path.join(test_dir, "src")
-    os.makedirs(jsonl_dir, exist_ok=True)
-
-    with open(os.path.join(jsonl_dir, "data.jsonl"), "w") as f:
-        f.write('{"sequence": [[1, 2, 3, 4, 5]]}\n')
-
-    bin_dir = os.path.join(test_dir, "out")
-    json_to_bin(jsonl_dir, bin_dir)
-
-    store = StoreFactory.create("bin")
-    store.load(bin_dir)
-    assert len(store) == 5
-    assert store.fetch(0, 5, "sequence").tolist() == [1, 2, 3, 4, 5]
-
-
-def test_dpo_dataset_from_jsonl(base_test_env):
-    """DPO dataset loaded from pre-tokenized JSONL"""
-    test_dir = base_test_env["test_dir"]
-    data_dir = os.path.join(test_dir, "dpo_jsonl")
-    os.makedirs(data_dir, exist_ok=True)
-
-    with open(os.path.join(data_dir, "dpo.jsonl"), "w") as f:
-        f.write(
-            json.dumps(
-                {
-                    "chosen": [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10] * 10],
-                    "rejected": [[10, 9, 8, 7, 6, 5, 4, 3, 2, 1] * 10],
-                    "chosen_mask": [[1] * 100],
-                    "rejected_mask": [[1] * 100],
-                }
-            )
-            + "\n"
-        )
-
-    dataset = DatasetFactory.load("dpo", data_dir, window_size=32)
-    assert len(dataset) > 0
-    item = dataset[0]
-    assert item["chosen"].dtype == torch.long
-    assert item["rejected"].dtype == torch.long
-    assert item["chosen_mask"].dtype == torch.bool
-    assert item["rejected_mask"].dtype == torch.bool
-
-
 def test_dataset_load_explicit_storage_type(base_test_env):
     """DatasetFactory.load with explicit storage_type bypasses auto-detect"""
     test_dir = base_test_env["test_dir"]
-    save_h5(
-        test_dir, "explicit", {"sequence": [torch.randint(0, 100, (200,))]}
-    )
+    save_h5(test_dir, "explicit", {"sequence": [torch.randint(0, 100, (200,))]})
 
-    dataset = DatasetFactory.load(
-        "seq", test_dir, window_size=64, storage_type="h5"
-    )
+    dataset = DatasetFactory.load("seq", test_dir, window_size=64, storage_type="h5")
     assert len(dataset) > 0
     assert dataset.count == 200

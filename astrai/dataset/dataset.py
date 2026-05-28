@@ -48,17 +48,15 @@ class BaseDataset(Dataset, ABC):
                 f"Missing: {missing}"
             )
 
-    def load(self, load_path: str, storage_type: Optional[str] = None, tokenizer=None):
+    def load(self, load_path: str, storage_type: Optional[str] = None):
         """Load dataset from the given path.
 
         Auto-detects the storage format if not specified.
 
         Args:
             load_path: Path to the data directory or file
-            storage_type: Force a specific storage type ("h5", "json"),
+            storage_type: Force a specific storage type ("h5", "bin"),
                           or None for auto-detection
-            tokenizer: Callable str -> List[int], used to tokenize raw text
-                       in JSON files. Ignored for HDF5.
 
         Raises:
             KeyError: If the loaded storage is missing required keys.
@@ -67,17 +65,8 @@ class BaseDataset(Dataset, ABC):
             storage_type = detect_format(load_path)
         self.storage = StoreFactory.create(storage_type)
         self._load_path = load_path
-        self.storage.load(load_path, tokenizer=tokenizer)
+        self.storage.load(load_path)
         self._validate_keys()
-
-    def load_json(self, load_path: str, tokenizer=None):
-        """Load dataset from JSON files explicitly.
-
-        Args:
-            load_path: Path to the JSON data file or directory
-            tokenizer: Optional tokenizer callable for raw text JSON.
-        """
-        self.load(load_path, storage_type="json", tokenizer=tokenizer)
 
     @property
     def count(self) -> int:
@@ -175,7 +164,6 @@ class DatasetFactory(BaseFactory["BaseDataset"]):
         window_size: int,
         stride: Optional[int] = None,
         storage_type: Optional[str] = None,
-        tokenizer=None,
     ) -> "BaseDataset":
         """Create and load a dataset in one step.
 
@@ -184,8 +172,7 @@ class DatasetFactory(BaseFactory["BaseDataset"]):
             load_path: Path to the data file
             window_size: Window size for data sampling
             stride: Stride between consecutive samples (default: same as window_size)
-            storage_type: Storage type ("h5", "json") or None for auto-detection
-            tokenizer: Callable str -> List[int] for raw text JSON tokenization
+            storage_type: Storage type ("h5", "bin") or None for auto-detection
 
         Returns:
             Loaded dataset instance
@@ -194,7 +181,7 @@ class DatasetFactory(BaseFactory["BaseDataset"]):
             stride = window_size
 
         dataset = cls.create(train_type, window_size, stride)
-        dataset.load(load_path, storage_type=storage_type, tokenizer=tokenizer)
+        dataset.load(load_path, storage_type=storage_type)
 
         return dataset
 
