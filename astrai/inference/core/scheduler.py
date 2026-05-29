@@ -71,6 +71,7 @@ class InferenceScheduler:
         )
 
         self._running = False
+        self._fatal_error: Optional[Exception] = None
 
     def add_task(self, prompt: str, **kwargs) -> str:
         return self._task_mgr.add_task(prompt, **kwargs)
@@ -175,6 +176,8 @@ class InferenceScheduler:
                                     t.stream_callback(STOP)
 
         except Exception as e:
+            self._fatal_error = e
+            self._running = False
             logger.error(f"Scheduler loop crashed: {e}", exc_info=True)
             for task in self._task_mgr.get_active_tasks():
                 if task.stream_callback:
@@ -184,7 +187,6 @@ class InferenceScheduler:
                 if task.stream_callback:
                     task.stream_callback(STOP)
             self._task_mgr.clear_queues()
-            raise
 
     def start(self):
         if not self._running:
@@ -199,7 +201,12 @@ class InferenceScheduler:
         if hasattr(self, "_loop_thread"):
             self._loop_thread.join(timeout=2.0)
         for task in self._task_mgr.get_active_tasks():
+            if task.stream_callback:
+                task.stream_callback(STOP)
             self._page_cache.task_free(task.task_id)
+        for task in self._task_mgr.get_waiting_tasks():
+            if task.stream_callback:
+                task.stream_callback(STOP)
         self._task_mgr.clear_queues()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

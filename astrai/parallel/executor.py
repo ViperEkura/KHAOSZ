@@ -218,7 +218,6 @@ class FSDPExecutor(BaseExecutor):
         sync_module_states: bool = False,
         forward_prefetch: bool = False,
         limit_all_gathers: bool = True,
-        use_orig_params: bool = False,
         ignored_states=None,
         device_mesh=None,
     ):
@@ -237,7 +236,7 @@ class FSDPExecutor(BaseExecutor):
                 sync_module_states=sync_module_states,
                 forward_prefetch=forward_prefetch,
                 limit_all_gathers=limit_all_gathers,
-                use_orig_params=use_orig_params,
+                use_orig_params=True,
                 ignored_states=ignored_states,
                 device_mesh=device_mesh,
             ).items()

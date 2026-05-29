@@ -219,7 +219,7 @@ class DPOStrategy(BaseStrategy):
         super().__init__(model, device, **kwargs)
         self.ref_model = create_ref_model(
             self.model_fn, self.executor.unwrap_model(model)
-        )
+        ).to(device=self.device)
         self.beta = beta
         self.reduction = reduction
 
@@ -275,7 +275,7 @@ class GRPOStrategy(BaseStrategy):
         super().__init__(model, device, **kwargs)
         self.ref_model = create_ref_model(
             self.model_fn, self.executor.unwrap_model(model)
-        )
+        ).to(device=self.device)
         self.clip_eps = clip_eps
         self.kl_coef = kl_coef
         self.group_size = group_size

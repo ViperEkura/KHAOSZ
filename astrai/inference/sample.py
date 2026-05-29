@@ -44,10 +44,12 @@ class TemperatureStrategy(BaseSamplingStrategy):
     def apply(self, logits, filter_value=-float("inf")):
         t = self.temperature
         if isinstance(t, Tensor):
+            t = t.to(logits.device, non_blocking=True).view(-1, 1)
+            t = torch.clamp(t, min=1e-8)
             if (t != 1.0).any():
-                logits = logits / t.to(logits.device, non_blocking=True).view(-1, 1)
+                logits = logits / t
         elif t != 1.0:
-            logits = logits / t
+            logits = logits / max(t, 1e-8)
         return logits
 
 
