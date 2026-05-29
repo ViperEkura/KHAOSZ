@@ -146,8 +146,7 @@ class CheckpointCallback(TrainCallback):
         self.last_ckpt_iter = 0
 
     def _save_checkpoint(self, context: TrainContext):
-        unwrapped = context.executor.unwrap_model(context.model)
-        state_dict = unwrapped.state_dict()
+        state_dict = context.executor.unwrap_model(context.model)
         self.last_ckpt_iter = context.iteration
 
         if get_rank() == 0:

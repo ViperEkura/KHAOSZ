@@ -186,7 +186,10 @@ class TaskManager:
         return bool(self.active_tasks or self.waiting_queue)
 
     def wait_for_tasks(self, timeout: float = 1.0):
-        self._task_event.clear()
+        with self._lock:
+            if self.waiting_queue or self.active_tasks:
+                return
+            self._task_event.clear()
         self._task_event.wait(timeout=timeout)
 
     def get_active_tasks(self) -> List[Task]:

@@ -138,13 +138,13 @@ class ProtocolHandler:
             yielded = ""
             matched = None
             async for token in agen:
-                ctx.completion_tokens += 1
                 body += token
 
                 matched = checker.check(body)
                 if matched:
                     break
 
+                ctx.completion_tokens += 1
                 yield self.builder.format_chunk(token)
                 yielded += token
 
@@ -168,13 +168,14 @@ class ProtocolHandler:
         matched = None
 
         async for token in agen:
-            ctx.completion_tokens += 1
             chunks.append(token)
             body += token
 
             matched = checker.check(body)
             if matched:
                 break
+
+            ctx.completion_tokens += 1
 
         content = "".join(chunks)
         stop = StopInfo(matched=matched, body=body)

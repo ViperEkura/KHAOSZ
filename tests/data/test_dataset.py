@@ -1,4 +1,3 @@
-import json
 import os
 
 import numpy as np
@@ -8,7 +7,6 @@ import torch
 from astrai.dataset.dataset import DatasetFactory, SEQDataset
 from astrai.dataset.storage import (
     H5Store,
-    MmapStore,
     StoreFactory,
     detect_format,
     load_bin,

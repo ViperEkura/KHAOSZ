@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
+from torch.distributed.fsdp import FullStateDictConfig, StateDictType
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
@@ -115,8 +116,8 @@ class BaseExecutor:
     def backward(self, loss: torch.Tensor):
         loss.backward()
 
-    def unwrap_model(self, model: nn.Module) -> nn.Module:
-        return model
+    def unwrap_model(self, model: nn.Module):
+        return model.state_dict()
 
     @property
     def use_distributed(self) -> bool:
@@ -195,10 +196,10 @@ class DDPExecutor(BaseExecutor):
             return model.no_sync()
         return contextlib.nullcontext()
 
-    def unwrap_model(self, model: nn.Module) -> nn.Module:
+    def unwrap_model(self, model: nn.Module):
         if isinstance(model, DDP):
-            return model.module
-        return model
+            return model.module.state_dict()
+        return model.state_dict()
 
 
 @ExecutorFactory.register("fsdp")
@@ -259,9 +260,13 @@ class FSDPExecutor(BaseExecutor):
             return model.no_sync()
         return contextlib.nullcontext()
 
-    def unwrap_model(self, model: nn.Module) -> nn.Module:
-        if self._original_model is not None:
-            return self._original_model
-        if isinstance(model, FSDP):
-            return model._fsdp_wrapped_module
-        return model
+    def unwrap_model(self, model: nn.Module):
+        if isinstance(model, FSDP) and self.use_distributed:
+            with FSDP.state_dict_type(
+                model,
+                StateDictType.FULL_STATE_DICT,
+                FullStateDictConfig(offload_to_cpu=True, rank0_only=False),
+            ):
+                return model.state_dict()
+
+        return model.state_dict()

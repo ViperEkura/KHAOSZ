@@ -1,6 +1,5 @@
 """Training strategy implementations with factory pattern."""
 
-import copy
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, Union
 
@@ -8,28 +7,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.nn.parallel import DistributedDataParallel as DDP
 
 from astrai.factory import BaseFactory
 
 
-def unwrap_model(model: nn.Module) -> nn.Module:
-    if isinstance(model, DDP):
-        return model.module
-    if isinstance(model, FSDP):
-        return model._fsdp_wrapped_module
-    return model
-
-
-def create_ref_model(model: nn.Module) -> nn.Module:
-    """Create a reference model for DPO/GRPO training.
-
-    Handles DDP-wrapped models safely by unwrapping first,
-    then creating a deep copy with frozen gradients.
-    """
-    original_model = unwrap_model(model)
-    ref_model = copy.deepcopy(original_model)
+def create_ref_model(model_fn, state_dict: dict) -> nn.Module:
+    """Create a frozen reference model from model_fn + full state dict."""
+    ref_model = model_fn()
+    ref_model.load_state_dict(state_dict)
     ref_model.requires_grad_(False)
     ref_model.eval()
     return ref_model
@@ -91,6 +76,8 @@ class BaseStrategy(ABC):
     ):
         self.model = model
         self.device = device
+        self.executor = kwargs.pop("executor", None)
+        self.model_fn = kwargs.pop("model_fn", None)
         self.extra_kwargs = kwargs
 
     @abstractmethod
@@ -230,7 +217,9 @@ class DPOStrategy(BaseStrategy):
         **kwargs,
     ):
         super().__init__(model, device, **kwargs)
-        self.ref_model = create_ref_model(model)
+        self.ref_model = create_ref_model(
+            self.model_fn, self.executor.unwrap_model(model)
+        )
         self.beta = beta
         self.reduction = reduction
 
@@ -284,7 +273,9 @@ class GRPOStrategy(BaseStrategy):
         **kwargs,
     ):
         super().__init__(model, device, **kwargs)
-        self.ref_model = create_ref_model(model)
+        self.ref_model = create_ref_model(
+            self.model_fn, self.executor.unwrap_model(model)
+        )
         self.clip_eps = clip_eps
         self.kl_coef = kl_coef
         self.group_size = group_size
@@ -294,8 +285,7 @@ class GRPOStrategy(BaseStrategy):
 
     def sync_ref_model(self):
         """Copy current model weights to ref model."""
-        ref_state = self.model.state_dict()
-        self.ref_model.load_state_dict(ref_state)
+        self.ref_model.load_state_dict(self.executor.unwrap_model(self.model))
 
     def compute_loss(self, batch: Dict[str, Tensor]) -> Tensor:
         self._step += 1
