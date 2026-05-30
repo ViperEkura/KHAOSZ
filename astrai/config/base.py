@@ -1,6 +1,7 @@
 import json
 from dataclasses import MISSING, dataclass, fields
-from typing import Any, Dict, Optional, Self, get_type_hints
+from pathlib import Path
+from typing import Any, Dict, Optional, Self, Union, get_type_hints
 
 
 @dataclass
@@ -83,4 +84,15 @@ class BaseConfig:
             return value
         if isinstance(value, target_type):
             return value
+        if isinstance(value, dict) and issubclass(target_type, BaseConfig):
+            return target_type.from_dict(value)
         raise TypeError
+
+    @classmethod
+    def from_json(cls, path: Union[str, Path]) -> Self:
+        with open(path, "r", encoding="utf-8") as f:
+            return cls.from_dict(json.load(f))
+
+    def to_json(self, path: Union[str, Path]):
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
