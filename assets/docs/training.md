@@ -36,14 +36,16 @@ Two-level loop: **epoch** → **batch**. Optimizer step fires every `grad_accum_
 
 ```
 on_train_begin
+  model.train()
   on_epoch_begin
     for batch in dataloader:
       on_batch_begin
       with executor.accumulate(model):
-        loss = strategy(batch)
+        loss = strategy.compute_loss(batch)
+        context.loss = loss.item()
         stand_loss = loss / executor.grad_accum_steps
         executor.backward(stand_loss)
-        iteration += 1
+        context.iteration += 1
         on_batch_end
 
         if executor.sync_gradients:
@@ -61,9 +63,13 @@ on_train_end
 | Hook | Fires | Default callback |
 |------|-------|-----------------|
 | `on_train_begin` | Before training starts | `GradientCheckpointingCallback` |
+| `on_epoch_begin` | Start of each epoch | `ProgressBarCallback` |
+| `on_batch_begin` | Every batch | — |
 | `on_optimizer_step` | Every accumulation window | `GradientClippingCallback`, `ValidationCallback` |
 | `on_batch_end` | Every batch | `CheckpointCallback`, `MetricLoggerCallback`, `ProgressBarCallback` |
-| `on_train_end` | Training ends | `CheckpointCallback`, `MetricLoggerCallback` (final save) |
+| `on_epoch_end` | End of each epoch | `ProgressBarCallback` |
+| `on_error` | On exception during training | `CheckpointCallback`, `MetricLoggerCallback` |
+| `on_train_end` | Training ends (always via finally) | `CheckpointCallback`, `MetricLoggerCallback`, `GradientCheckpointingCallback` |
 
 Default callbacks (in order): `gradient_checkpointing` (activation checkpointing, optional), `checkpoint` (safetensors, rank-0), `metric_logger` (JSONL, rank-0), `progress_bar` (tqdm), `gradient_clipping`, `validation` (periodic validation on val_dataset).
 
@@ -77,7 +83,7 @@ $$
 L_{\text{PT}} = -\sum_{t=1}^{T} \log P(x_t \mid x_{\lt t}; \theta)
 $$
 
-Keys: `input_ids`, `target_ids`
+Keys: `input_ids`, `target_ids`. Optional: `label_smoothing`.
 
 ### SFT (Supervised Fine-Tuning)
 
@@ -87,7 +93,7 @@ $$
 L_{\text{SFT}} = -\sum_{t=P+1}^{P+L} \log P(s_t \mid s_{\lt t}; \theta)
 $$
 
-Keys: `input_ids`, `target_ids`, `loss_mask`
+Keys: `input_ids`, `target_ids`, `loss_mask`. Optional: `label_smoothing`.
 
 ### DPO (Direct Preference Optimization)
 
@@ -97,7 +103,7 @@ $$
 L_{\text{DPO}} = -\mathbb{E}\left[\log\sigma\left(\beta\log\frac{\pi_\theta(y_w\mid x)}{\pi_{\text{ref}}(y_w\mid x)} - \beta\log\frac{\pi_\theta(y_l\mid x)}{\pi_{\text{ref}}(y_l\mid x)}\right)\right]
 $$
 
-Parameters: `beta=0.1`. Keys: `chosen`, `rejected`, `chosen_mask`, `rejected_mask`.
+Parameters: `beta=0.1`, `reduction="mean"`. Keys: `chosen`, `rejected`, `chosen_mask`, `rejected_mask`.
 
 ### GRPO (Group Relative Policy Optimization)
 
@@ -111,7 +117,7 @@ $$
 L_{\text{GRPO}} = -\mathbb{E}\left[\min\left(\frac{\pi_\theta}{\pi_{\text{ref}}}A,\; \text{clip}\left(\frac{\pi_\theta}{\pi_{\text{ref}}}, 1-\epsilon, 1+\epsilon\right)A\right)\right] + \lambda \cdot \mathbb{E}\left[(\log\pi_\theta - \log\pi_{\text{ref}})^2\right]
 $$
 
-Parameters: `group_size=4`, `clip_eps=0.2`, `kl_coef=0.01`, `sync_interval=200`.
+Parameters: `group_size=4`, `clip_eps=0.2`, `kl_coef=0.01`, `sync_interval=200`, `reduction="mean"`.
 
 Keys: `prompts`, `responses`, `masks`, `rewards`.
 
@@ -122,7 +128,7 @@ Keys: `prompts`, `responses`, `masks`, `rewards`.
 | Cosine | `CosineScheduler` | Linear warmup → cosine decay to `min_rate` |
 | SGDR | `SGDRScheduler` | Cosine annealing with warm restarts (`t_mult=2`) |
 
-Created by `SchedulerFactory.create(optimizer, schedule_type, **kwargs)`.
+Created by `SchedulerFactory.create(optimizer, schedule_type, **kwargs)`. Valid types: `"cosine"`, `"sgdr"`. Omit to use no scheduler.
 
 ## Gradient Checkpointing
 
@@ -139,8 +145,8 @@ Callback wraps each `DecoderBlock.forward` with `torch.utils.checkpoint.checkpoi
 
 ```
 Checkpoint(state_dict, epoch, iteration, extra, meta, config)
-  ├── save(save_dir)    rank-0 only: meta.json (epoch/iteration/timestamp) + config.json (model config) + state_dict.safetensors + optional {key}.pt (optimizer.pt, scheduler.pt)
-  └── load(save_dir)    broadcasts metadata from rank-0
+  ├── save(save_dir)    rank-0 only: meta.json (epoch/iteration/timestamp) + config.json (model config) + model.safetensors + optional {key}.pt (optimizer.pt, scheduler.pt)
+  └── load(save_dir, broadcast=False)    loads from local disk; set broadcast=True to broadcast metadata from rank-0
 ```
 
 Optimizer/scheduler state persisted by default via `Checkpoint.extra`.  
@@ -161,7 +167,7 @@ context = (
 - Creates executor via `ExecutorFactory.create(cfg.parallel_mode, grad_accum_steps=cfg.grad_accum_steps, **cfg.executor_kwargs)`
 - Calls `executor.prepare(model, optimizer, dataloader, scheduler)` for model distribution (e.g. DDP) + gradient accumulation wrappers
 - Creates `ResumableDistributedSampler` for shuffle+resume
-- Builds strategy via `StrategyFactory.create(train_type, ...)`
+- Builds strategy via `StrategyFactory.create(train_type, model, device, **kwargs)`
 
 ## Training CLI
 
@@ -170,6 +176,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 nohup python scripts/tools/train.py \
     --nprocs=4 \
+    --parallel_mode=ddp \
     --train_type=seq \
     --data_root_path=/path/to/dataset \
     --param_path=/path/to/model \
@@ -191,4 +198,4 @@ nohup python scripts/tools/train.py \
 
 Full parameter reference at [params.md](params.md).
 
-> Document Update Time: 2026-05-28
+> Document Update Time: 2026-05-30

@@ -12,7 +12,7 @@ RoPE is applied **before** KV cache write, not after — otherwise position enco
 
 ## KVCache System
 
-Six classes working together:
+Six classes (plus two helpers) working together:
 
 ```
 KVCache (facade)
@@ -43,7 +43,8 @@ KVCache (facade)
 BaseSamplingStrategy (ABC)
   ├── TemperatureStrategy
   ├── TopKStrategy
-  └── TopPStrategy
+  ├── TopPStrategy
+  └── SamplingPipeline
 ```
 
 `SamplingPipeline` composes them: Temperature → Top-K → Top-P → softmax → multinomial.  
@@ -73,7 +74,9 @@ Adding a protocol = one builder file, no handler subclassing needed.
 InferenceEngine
   ├── generate(prompt, stream, ...) → str | List[str] | Generator
   ├── generate_with_request(req)    → same
-  └── generate_async(prompt, ...)   → AsyncGenerator
+  ├── generate_async(prompt, ...)   → AsyncGenerator
+  ├── get_stats()                   → Dict
+  └── shutdown()
 ```
 
 `GenerateResult` uses `Condition` for non-streaming (`wait_completion()`) and `Event` for streaming (`wait()`). Stream callback is `cb(token)`.
@@ -124,9 +127,9 @@ Supports `stop_sequences` and streaming via `event: content_block_delta`.
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `messages` | List[dict] | required | Chat messages (role, content) |
-| `temperature` | float | 1.0 | Sampling temperature (>= 0.0) |
-| `top_p` | float | 1.0 | Nucleus threshold |
 | `top_k` | int | 50 | Top-k count |
+| `top_p` | float | 1.0 | Nucleus threshold |
+| `temperature` | float | 1.0 | Sampling temperature (> 0.0) |
 | `max_tokens` | Optional[int] | None | Max generation length |
 | `stream` | bool | False | Stream output |
 
@@ -142,7 +145,8 @@ engine.generate("Hello", stream=True)           # -> Generator[str]
 engine.generate(["A", "B"], stream=True)        # -> Generator[Tuple[int, str]]
 
 # Async
-await engine.generate_async("Hello", ...)       # -> AsyncGenerator[str]
+async for token in engine.generate_async("Hello", ...):    # -> AsyncGenerator[str]
+    print(token)
 ```
 
-> Document Update Time: 2026-05-28
+> Document Update Time: 2026-05-30

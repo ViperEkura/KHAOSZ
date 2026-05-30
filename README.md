@@ -82,6 +82,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 nohup python scripts/tools/train.py \
     --nprocs=4 \
+    --parallel_mode=ddp \
     --train_type=seq \
     --data_root_path=/path/to/dataset \
     --param_path=/path/to/model \
@@ -108,8 +109,8 @@ Full reference at [Parameter Guide](assets/docs/params.md).
 ```bash
 python scripts/tools/generate.py \
     --param_path /path/to/model \
-    --input_json_file /path/to/input.json \
-    --output_json_file /path/to/output.json
+    --input_json_file /path/to/input.jsonl \
+    --output_json_file /path/to/output.jsonl
 ```
 
 #### Docker
@@ -224,6 +225,7 @@ Watch a video walkthrough on [bilibili](https://www.bilibili.com/video/BV1fuLB6y
 | [Training](./assets/docs/training.md) | Training loop, strategies & formulas |
 | [Inference](./assets/docs/inference.md) | KVCache, continuous batching, sampling & HTTP API |
 | [Data Flow](./assets/docs/dataflow.md) | Data pipeline, storage backends & dataset architecture |
+| [Preprocessing](./assets/docs/preprocessing.md) | Declarative JSON-driven data preprocessing |
 
 ### Contributing
 

@@ -147,10 +147,11 @@ For instruction mode, keys are `"prompt"` and `"response"`.
 
 For each message in the `messages` array:
 
-1. Render through the chat template for that single message
-2. Encode the rendered text, record token span `(start, end, role)`
-3. Concatenate all spans -- special tokens from the chat template naturally prevent BPE merging across message boundaries
-4. Fill `loss_mask` from the mask rules
+1. Prepend BOS token (position 0, always masked)
+2. Render through the chat template for that single message
+3. Encode the rendered text, record token span `(start, end, role)`
+4. Concatenate all spans — special tokens from the chat template naturally prevent BPE merging across message boundaries
+5. Fill `loss_mask` from the mask rules
 
 **Multi-turn example**:
 

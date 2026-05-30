@@ -88,6 +88,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 nohup python scripts/tools/train.py \
     --nprocs=4 \
+    --parallel_mode=ddp \
     --train_type=seq \
     --data_root_path=/path/to/dataset \
     --param_path=/path/to/model \
@@ -114,8 +115,8 @@ nohup python scripts/tools/train.py \
 ```bash
 python scripts/tools/generate.py \
     --param_path /path/to/model \
-    --input_json_file /path/to/input.json \
-    --output_json_file /path/to/output.json
+    --input_json_file /path/to/input.jsonl \
+    --output_json_file /path/to/output.jsonl
 ```
 
 #### Docker
@@ -230,6 +231,7 @@ python scripts/demo/generate_ar.py
 | [训练文档](./training.md) | 训练循环、策略与公式 |
 | [推理文档](./inference.md) | KVCache、连续批处理、采样与 HTTP API |
 | [数据流程](./dataflow.md) | 数据管道、存储后端与数据集架构 |
+| [数据预处理](./preprocessing.md) | 声明式 JSON 驱动数据预处理 |
 
 ### 贡献
 

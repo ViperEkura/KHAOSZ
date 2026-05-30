@@ -5,7 +5,7 @@ This document describes the data pipeline: from raw text to model input tensors.
 ## Overview
 
 ```
-Raw Text → AutoTokenizer → Token IDs → .h5/.bin → Dataset → Sampler → DataLoader → Training/Inference
+Raw Text → AutoTokenizer → Token IDs → .h5/.bin → Store.load() → Store.fetch() → Dataset → Sampler → DataLoader → Training/Inference
 ```
 
 ## Data Preparation
@@ -33,14 +33,21 @@ H5 backend supports shared memory via `.share_memory_()`. Bin (mmap) uses OS pag
 ## Dataset Architecture
 
 ```
-DatasetFactory.load(train_type, load_path, window_size, stride, storage_type)
-  → StoreFactory.create(detect_format(path))
-    → Store._data[Dict[str, List[Tensor]]] + _cum[Dict[str, List[int]]]
-      → BaseDataset.__getitem__(idx)
-        → sliding window [begin, end) via get_index(idx)
+DatasetFactory.load(train_type, load_path, window_size, stride=None, storage_type=None)
+  → BaseDataset.load(load_path, storage_type=None)
+    → detect_format(load_path)
+    → StoreFactory.create(storage_type)
+    → Store.load(load_path)
+      → H5Store._normalize() / MmapStore._normalize()
+        → Store._data[Dict[str, List[Tensor]]] + _cum[Dict[str, List[int]]]
+          → BaseDataset.__getitem__(idx)
+            → get_index(idx) → [begin, end)
+            → Store.fetch(begin, end, keys) → Tensor / Dict[str, Tensor]
 ```
 
-`window_size` = max input length, `stride` = step between consecutive samples (defaults to `window_size`).
+`window_size` = max input length, `stride` = step between consecutive samples (defaults to `window_size`, optional). `storage_type` defaults to `None` (auto-detect via `detect_format`).
+
+`Store.fetch(begin, end, keys)` accepts a single key (`str`) returning a `Tensor`, or a list of keys returning `Dict[str, Tensor]`. Internally uses `bisect` across multi-segment tensors. Raises `RuntimeError("Store not loaded")` if called before `load()`.
 
 ## Sampler
 
@@ -54,4 +61,4 @@ DatasetFactory.load(train_type, load_path, window_size, stride, storage_type)
 
 Standard PyTorch `DataLoader` with configurable `batch_size`, `num_workers`, `pin_memory`, `prefetch_factor`. Sampler produces indices; dataloader fetches tensor batches via `__getitem__`.
 
-> Document Update Time: 2026-05-28
+> Document Update Time: 2026-05-30

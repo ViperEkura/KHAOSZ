@@ -8,6 +8,8 @@ classDiagram
         class BaseConfig {
             +to_dict() Dict
             +from_dict(d) Self
+            +from_json(path) Self
+            +to_json(path)
         }
 
         class BaseModelConfig {
@@ -17,42 +19,42 @@ classDiagram
         }
 
         class AutoRegressiveLMConfig {
-            +int vocab_size
-            +int dim
-            +int n_layers
-            +float norm_eps
-            +int dim_ffn
+            +Optional[int] vocab_size
+            +Optional[int] dim
+            +Optional[int] n_layers
+            +Optional[float] norm_eps
+            +Optional[int] dim_ffn
             +Optional[bool] tie_weight
             +Optional[dict] rope_scaling
-            +int max_len
-            +float rope_theta
+            +Optional[int] max_len
+            +Optional[float] rope_theta
             +str attn_type
-            +int n_heads
-            +int n_kv_heads
-            +bool use_qk_norm
-            +bool use_gated_attention
+            +Optional[int] n_heads
+            +Optional[int] n_kv_heads
+            +Optional[bool] use_qk_norm
+            +Optional[bool] use_gated_attention
             +Optional[int] kv_lora_rank
             +Optional[int] qk_nope_head_dim
             +Optional[int] qk_rope_head_dim
             +str ffn_type
-            +int n_routed_experts
-            +int n_shared_experts
-            +int n_activated_experts
+            +Optional[int] n_routed_experts
+            +Optional[int] n_shared_experts
+            +Optional[int] n_activated_experts
             +Optional[str] topk_method
         }
 
         class EncoderConfig {
-            +int vocab_size
-            +int dim
-            +int n_layers
-            +float norm_eps
-            +int dim_ffn
-            +int max_len
-            +float rope_theta
-            +int n_heads
-            +int n_kv_heads
-            +bool use_qk_norm
-            +bool use_gated_attention
+            +Optional[int] vocab_size
+            +Optional[int] dim
+            +Optional[int] n_layers
+            +Optional[float] norm_eps
+            +Optional[int] dim_ffn
+            +Optional[int] max_len
+            +Optional[float] rope_theta
+            +Optional[int] n_heads
+            +Optional[int] n_kv_heads
+            +Optional[bool] use_qk_norm
+            +Optional[bool] use_gated_attention
             +Optional[dict] rope_scaling
             +Optional[str] pooling_type
             +Optional[bool] normalize_embeddings
@@ -62,6 +64,38 @@ classDiagram
             +Registry _registry
             +register(name) decorator
             +load(raw) BaseConfig
+        }
+
+        class InputConfig {
+            +str type
+            +str messages_key
+            +str prompt_key
+            +str response_key
+            +str text_key
+        }
+
+        class ProcessingConfig {
+            +int max_seq_len
+            +int min_chars
+            +int max_chars
+            +bool deduplicate
+            +Optional[int] max_items
+        }
+
+        class OutputConfig {
+            +Optional[str] domain_key
+            +str storage_format
+            +int max_tokens_per_shard
+        }
+
+        class PipelineConfig {
+            +int version
+            +InputConfig input
+            +dict mask
+            +str mask_default
+            +ProcessingConfig preprocessing
+            +OutputConfig output
+            +from_dict(d) Self
         }
 
         class TrainConfig {
@@ -312,10 +346,29 @@ classDiagram
         }
     }
 
+    namespace preprocessing {
+        class BaseMaskBuilder {
+            <<abstract>>
+            +build(item, config, tokenizer) Optional[dict]
+        }
+
+        class ChatMaskBuilder {
+            +build(item, config, tokenizer) Optional[dict]
+        }
+
+        class InstructionMaskBuilder {
+            +build(item, config, tokenizer) Optional[dict]
+        }
+
+        class TextMaskBuilder {
+            +build(item, config, tokenizer) Optional[dict]
+        }
+    }
+
     namespace tokenize {
         class AutoTokenizer {
             +vocab_size int
-            +encode(tokens, out_ids, is_pretokenized, add_special_tokens) List[int]
+            +encode(tokens, out_ids, is_pretokenized, add_special_tokens) List
             +decode(tokens, skip_special_tokens) str
             +__getattr__(name) Any (bos_id, eos_id, pad_id, stop_ids)
             +apply_chat_template(messages, system_prompt, tokenize, add_generation_prompt) Union[str, List[int]]
@@ -346,14 +399,20 @@ classDiagram
             +create(name, *args, **kwargs) T
             +list_registered() list
         }
+
+        class MaskBuilderFactory {
+            +Registry _registry
+            +register(name) decorator
+            +create(input_type, config, tokenizer) BaseMaskBuilder
+        }
     }
 
     namespace trainer {
         class Trainer {
             +TrainConfig train_config
             +List[TrainCallback] callbacks
-            +train(checkpoint)
-            +_get_default_callbacks() List[TrainCallback]
+            +train(resume_dir)
+            -_get_default_callbacks() List[TrainCallback]
         }
 
         class TrainContext {
@@ -383,8 +442,12 @@ classDiagram
         }
 
         class BaseStrategy {
-            +Union[Callable, nn.Module] model
+            +Callable model
+            +Optional[BaseExecutor] executor
+            +Optional[Callable] model_fn
+            +dict extra_kwargs
             +str device
+            +__call__(batch) Tensor
             +compute_loss(batch) Tensor
         }
 
@@ -425,6 +488,8 @@ classDiagram
         class BaseScheduler {
             +get_lr() List[float]
             +step()
+            +state_dict() dict
+            +load_state_dict(d)
         }
 
         class SchedulerFactory {
@@ -436,6 +501,7 @@ classDiagram
         class CosineScheduler {
             +int warmup_steps
             +int lr_decay_steps
+            +int total_steps
             +float min_rate
         }
 
@@ -474,11 +540,11 @@ classDiagram
             +int interval
             +bool weight_only
             +Callable save_extra_fn
-            +_save_checkpoint(context)
+            -_save_checkpoint(context)
             +on_batch_end(context)
             +on_train_end(context)
             +on_error(context)
-            +save_extra(context)$
+            +save_extra(context) dict$
         }
 
         class ProgressBarCallback {
@@ -491,7 +557,7 @@ classDiagram
         }
 
         class MetricLoggerCallback {
-            +str log_dir
+            +Path log_dir
             +int save_interval
             +int log_interval
             +List[str] metrics
@@ -501,7 +567,7 @@ classDiagram
         }
 
         class ValidationCallback {
-            +_run_validation(context)
+            -_run_validation(context)
             +on_optimizer_step(context)
         }
 
@@ -517,7 +583,7 @@ classDiagram
             +float weight_decay
             +bool nesterov
             +int ns_steps
-            +float adamw_lr
+            +Optional[float] adamw_lr
             +tuple adamw_betas
             +float adamw_eps
             +float adamw_wd
@@ -634,7 +700,7 @@ classDiagram
         class Task {
             +str task_id
             +List prompt_ids
-            +int max_tokens
+            +Optional[int] max_tokens
             +float temperature
             +float top_p
             +int top_k
@@ -643,8 +709,8 @@ classDiagram
             +int input_tokens
             +int output_tokens
             +float arrival_time
-            +float finish_time
-            +Callable stream_callback
+            +Optional[float] finish_time
+            +Optional[Callable] stream_callback
             +int next_pos
             +is_finished(stop_ids) bool
         }
@@ -671,6 +737,11 @@ classDiagram
             +activate(task)
             +return_to_waiting(tasks)
             +get_active_tasks() List[Task]
+            +has_work() bool
+            +wait_for_tasks(timeout)
+            +get_waiting_tasks() List[Task]
+            +clear_queues()
+            +wake()
             +get_stats() Dict
         }
 
@@ -760,7 +831,7 @@ classDiagram
 
         class ResponseBuilder {
             <<abstract>>
-            +prepare(request, engine) Tuple[str, GenContext, List[str]]
+            +prepare(request, tokenizer) Tuple[str, GenContext, List[str]]
             +format_stream_start(ctx) List[str]
             +format_chunk(token) str
             +format_stream_end(ctx, stop) List[str]
@@ -768,7 +839,7 @@ classDiagram
         }
 
         class OpenAIResponseBuilder {
-            +prepare(request, engine) Tuple
+            +prepare(request, tokenizer) Tuple
             +format_stream_start(ctx) List[str]
             +format_chunk(token) str
             +format_stream_end(ctx, stop) List[str]
@@ -776,7 +847,7 @@ classDiagram
         }
 
         class AnthropicResponseBuilder {
-            +prepare(request, engine) Tuple
+            +prepare(request, tokenizer) Tuple
             +format_stream_start(ctx) List[str]
             +format_chunk(token) str
             +format_stream_end(ctx, stop) List[str]
@@ -787,12 +858,13 @@ classDiagram
             +request
             +engine
             +builder: ResponseBuilder
-            +handle() Union[StreamingResponse, Dict]
-            -_handle_stream(agen, ctx, stops) StreamingResponse
-            -_handle_non_stream(agen, ctx, stops) Dict
+            +async handle() Union[StreamingResponse, Dict]
+            -_handle_stream(agen, ctx, stop_sequences) StreamingResponse
+            -async _handle_non_stream(agen, ctx, stop_sequences) Dict
         }
 
         class StopChecker {
+            +__init__(sequences)
             +check(text) Optional[str]
         }
 
@@ -802,6 +874,12 @@ classDiagram
             +str model
             +int prompt_tokens
             +int completion_tokens
+        }
+
+        class StopInfo {
+            +Optional[str] matched
+            +str body
+            +str yielded
         }
 
         class app {
@@ -829,14 +907,14 @@ classDiagram
     }
 
     namespace parallel {
-        class Functions {
+        class setup {
             <<module>>
             +spawn_parallel_fn(func, world_size, backend, master_addr, master_port, device_type, start_method, **kwargs)
-            +setup_parallel(rank, world_size, backend, master_addr, master_port, device_type)
+            +setup_parallel(rank, world_size, backend, master_addr, master_port, device_type) contextmanager
             +get_current_device() str
             +get_world_size() int
             +get_rank() int
-            +only_on_rank(rank, sync) decorator
+            +only_on_rank(rank, sync=False) decorator
         }
 
         class GradientState {
@@ -847,6 +925,7 @@ classDiagram
         class AccumOptimizer {
             +Optimizer optimizer
             +GradientState gradient_state
+            +param_groups (property)
             +step(closure)
             +zero_grad()
             +state_dict() dict
@@ -867,7 +946,7 @@ classDiagram
             +prepare(model, optimizer, dataloader, scheduler) tuple
             +accumulate(model) context manager
             +backward(loss)
-            +unwrap_model(model) nn.Module
+            +unwrap_model(model) dict
             +sync_gradients (property) bool
             +grad_accum_steps (property) int
         }
@@ -876,14 +955,14 @@ classDiagram
         }
 
         class DDPExecutor {
-            +_prepare_model(model) nn.Module
-            +_no_sync(model) context manager
-            +unwrap_model(model) nn.Module
+            -_prepare_model(model) nn.Module
+            -_no_sync(model) context manager
+            +unwrap_model(model) dict
         }
 
         class FSDPExecutor {
-            +_prepare_model(model) nn.Module
-            +unwrap_model(model) nn.Module
+            -_prepare_model(model) nn.Module
+            +unwrap_model(model) dict
         }
 
         class ExecutorFactory {
@@ -899,11 +978,25 @@ classDiagram
         }
 
         class ColumnParallelLinear {
+            +int in_features
+            +int out_features
+            +int out_features_per_rank
+            +bool gather_results
+            +Parameter weight
+            +Optional[Parameter] bias
             +forward(x) Tensor
+            +load_state_dict(state_dict)
         }
 
         class RowParallelLinear {
+            +int in_features
+            +int out_features
+            +int in_features_per_rank
+            +bool reduce_results
+            +Parameter weight
+            +Optional[Parameter] bias
             +forward(x) Tensor
+            +load_state_dict(state_dict)
         }
     }
 
@@ -938,6 +1031,10 @@ classDiagram
     AutoModel <|-- EmbeddingEncoder
     BaseConfig <|-- BaseModelConfig
     BaseConfig <|-- TrainConfig
+    BaseConfig <|-- InputConfig
+    BaseConfig <|-- ProcessingConfig
+    BaseConfig <|-- OutputConfig
+    BaseConfig <|-- PipelineConfig
     BaseModelConfig <|-- AutoRegressiveLMConfig
     BaseModelConfig <|-- EncoderConfig
     BaseFactory <|-- AutoModel
@@ -950,11 +1047,15 @@ classDiagram
     BaseFactory <|-- StoreFactory
     BaseFactory <|-- ExecutorFactory
     BaseFactory <|-- ConfigFactory
+    BaseFactory <|-- MaskBuilderFactory
     BaseExecutor <|-- NoneExecutor
     BaseExecutor <|-- DDPExecutor
     BaseExecutor <|-- FSDPExecutor
     ResponseBuilder <|-- OpenAIResponseBuilder
     ResponseBuilder <|-- AnthropicResponseBuilder
+    BaseMaskBuilder <|-- ChatMaskBuilder
+    BaseMaskBuilder <|-- InstructionMaskBuilder
+    BaseMaskBuilder <|-- TextMaskBuilder
 
     %% --- Composition (strong ownership, part destroyed with whole) ---
     KVCache *-- PagePool
@@ -994,6 +1095,8 @@ classDiagram
 
     %% --- Dependency (uses temporarily) ---
     TrainConfig ..> BaseStrategy : selects
+    PipelineConfig ..> MaskBuilderFactory : selects
+    MaskBuilderFactory ..> BaseMaskBuilder : creates
     StrategyFactory ..> BaseStrategy : creates
     SchedulerFactory ..> BaseScheduler : creates
     DatasetFactory ..> BaseDataset : creates
@@ -1046,7 +1149,8 @@ classDiagram
 
 | Module | Components | Description |
 |--------|------------|-------------|
-| **astrai.config** | BaseConfig, BaseModelConfig, AutoRegressiveLMConfig, EncoderConfig, ConfigFactory, TrainConfig | Configuration management (to_dict/from_dict, to_file/from_file) |
+| **astrai.config** | BaseConfig, BaseModelConfig, AutoRegressiveLMConfig, EncoderConfig, ConfigFactory, TrainConfig, PipelineConfig, InputConfig, ProcessingConfig, OutputConfig | Configuration management (to_dict/from_dict, to_file/from_file, from_json/to_json) |
+| **astrai.preprocessing** | BaseMaskBuilder, MaskBuilderFactory, ChatMaskBuilder, InstructionMaskBuilder, TextMaskBuilder, Pipeline, filter_by_length, dedup_signature | Declarative JSON-driven data preprocessing |
 | **astrai.dataset** | BaseDataset–GRPODataset, Store–MmapStore, StoreFactory, ResumableDistributedSampler, DatasetFactory | Dataset loading and management |
 | **astrai.serialization** | Checkpoint | Model serialization |
 | **astrai.model** | AutoModel, AutoRegressiveLM, EmbeddingEncoder, DecoderBlock, GQA, MLA, MLP, DeepSeekMoE, AttnFactory, FFNFactory, RMSNorm, Linear, RotaryEmbedding, Embedding | Neural network model |
@@ -1070,14 +1174,14 @@ classDiagram
 | **Observer** | `TrainCallback`, callback implementations | Training process monitoring |
 | **Context** | `TrainContext` | Unified training state bag |
 | **Object Pool** | `Allocator`, `PagePool` | Page-based KV cache with LRU eviction |
-| **Executor** | `BaseExecutor`, `NoneExecutor`, `DDPExecutor` | Gradient accumulation & model distribution |
+| **Executor** | `BaseExecutor`, `NoneExecutor`, `DDPExecutor`, `FSDPExecutor` | Gradient accumulation & model distribution |
 | **Storage** | `Store`, `H5Store`, `MmapStore` | Format-agnostic data access with multi-segment support |
 | **Producer-Consumer** | `InferenceScheduler`, `Task`, queues | Continuous batching |
 | **AutoModel Registry** | `AutoModel`, `AutoRegressiveLM`, `EmbeddingEncoder` | Model-type dynamic loading |
 
 ## Core Relationships
 
-1. **Config → Training**: `TrainConfig` holds model, dataset, optimizer_fn, scheduler_fn, `parallel_mode`, `executor_kwargs`
+1. **Config → Training**: `TrainConfig` holds `model_fn`, `dataset`, `optimizer_fn`, `scheduler_fn`, `parallel_mode`, `executor_kwargs`
 2. **Training Flow**: `Trainer` → `TrainContextBuilder` → `TrainContext`, uses `BaseStrategy` for loss, `BaseExecutor` for gradient accumulation + model distribution
 3. **Strategy Selection**: `StrategyFactory` creates strategy by `train_type`
 4. **Executor Selection**: `ExecutorFactory.create(cfg.parallel_mode, grad_accum_steps=cfg.grad_accum_steps, **cfg.executor_kwargs)` → `NoneExecutor` / `DDPExecutor` / `FSDPExecutor`
@@ -1089,4 +1193,4 @@ classDiagram
 10. **AutoModel**: `from_pretrained()` loads `config.json` + `model.safetensors`, `_disable_random_init` replaces `nn.init.*` with no-ops
 11. **Protocols**: `OptimizerProtocol` / `SchedulerProtocol` — structural subtyping for `AccumOptimizer` / `AccumScheduler` wrappers
 
-> Document Update Time: 2026-05-28
+> Document Update Time: 2026-05-30
