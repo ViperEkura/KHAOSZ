@@ -186,6 +186,8 @@ Pure tokenization. No `loss_mask` is produced. Used for pretraining.
 
 ## Output Layout
 
+### Single-Shard (`bin`)
+
 ```
 output_dir/
   __default__/              # when domain_key is null
@@ -196,6 +198,59 @@ output_dir/
     meta.json
     sequence.bin
     loss_mask.bin
+```
+
+### Multi-Shard (`bin`)
+
+When `max_tokens_per_shard` is exceeded, bin output is split into numbered shard subdirectories:
+
+```
+output_dir/
+  __default__/
+    shard_0000/
+      meta.json
+      sequence.bin
+      loss_mask.bin
+    shard_0001/
+      meta.json
+      sequence.bin
+      loss_mask.bin
+```
+
+`MmapStore` automatically discovers and merges all shards under the domain directory.
+
+### H5 Output
+
+HDF5 files are always named with a shard index, avoiding overwrite regardless of `max_tokens_per_shard`:
+
+```
+output_dir/
+  __default__/
+    data_0000.h5            # each H5 contains key→dataset groups
+    data_0001.h5
+  wiki/
+    data_0000.h5
+```
+
+## Python API Usage
+
+```python
+from astrai.preprocessing.pipeline import Pipeline
+from astrai.config.preprocess_config import PipelineConfig
+
+config = PipelineConfig.from_json("sft_pipeline.json")
+Pipeline(
+    config,
+    ["data_part1.jsonl", "data_part2.jsonl"],
+    output_dir="output/",
+    tokenizer_path="params"
+).run()
+```
+
+Or from the CLI:
+
+```bash
+python scripts/tools/preprocess.py data/*.jsonl -o output/ -c sft.json
 ```
 
 ## Extension

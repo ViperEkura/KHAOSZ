@@ -124,7 +124,7 @@ class Pipeline:
             chunk_dir = os.path.join(self.output_dir, domain)
             fmt = self.config.output.storage_format
             if fmt == "bin":
-                save_bin(chunk_dir, tensors)
+                save_bin(os.path.join(chunk_dir, f"shard_{idx:04d}"), tensors)
             else:
                 save_h5(chunk_dir, f"data_{idx:04d}", tensors)
             shard_idx[domain] = idx + 1

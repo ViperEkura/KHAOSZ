@@ -64,7 +64,7 @@ class StopChecker:
 class ResponseBuilder(ABC):
     """Interface for protocol-specific response formatting.
 
-    A new protocol requires one concrete builder implementing 6 methods.
+    A new protocol requires one concrete builder implementing 5 methods.
     """
 
     @abstractmethod

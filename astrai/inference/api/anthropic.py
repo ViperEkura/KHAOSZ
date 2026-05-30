@@ -1,5 +1,6 @@
 """Anthropic message completion response builder."""
 
+import time
 import uuid
 from typing import Any, Dict, List, Tuple, Union
 
@@ -39,7 +40,7 @@ class AnthropicResponseBuilder(ResponseBuilder):
         prompt = engine.tokenizer.apply_chat_template(messages, tokenize=False)
         ctx = GenContext(
             resp_id=f"msg_{uuid.uuid4().hex[:24]}",
-            created=0,
+            created=int(time.time()),
             model=request.model,
             prompt_tokens=0,
         )

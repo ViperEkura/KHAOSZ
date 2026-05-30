@@ -451,7 +451,7 @@ class TestPipeline:
             tokenizer_path=tokenizer_dir,
         ).run()
 
-        meta_path = os.path.join(out_dir, "__default__", "meta.json")
+        meta_path = os.path.join(out_dir, "__default__", "shard_0000", "meta.json")
         assert os.path.exists(meta_path)
         with open(meta_path, "r") as f:
             meta = json.load(f)
@@ -505,7 +505,7 @@ class TestPipeline:
             tokenizer_path=tokenizer_dir,
         ).run()
 
-        meta_path = os.path.join(out_dir, "__default__", "meta.json")
+        meta_path = os.path.join(out_dir, "__default__", "shard_0000", "meta.json")
         assert os.path.exists(meta_path)
         with open(meta_path, "r") as f:
             meta = json.load(f)
@@ -560,7 +560,7 @@ class TestPipeline:
             tokenizer_path=tokenizer_dir,
         ).run()
 
-        meta_path = os.path.join(out_dir, "__default__", "meta.json")
+        meta_path = os.path.join(out_dir, "__default__", "shard_0000", "meta.json")
         assert os.path.exists(meta_path)
         with open(meta_path, "r") as f:
             meta = json.load(f)

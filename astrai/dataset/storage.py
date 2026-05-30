@@ -117,8 +117,12 @@ def detect_format(load_path: str) -> str:
     if h5_files:
         return "h5"
     bin_files = list(root.rglob("*.bin"))
-    if bin_files and (root / "meta.json").exists():
-        return "bin"
+    if bin_files:
+        has_meta = (root / "meta.json").exists() or len(
+            list(root.rglob("meta.json"))
+        ) > 0
+        if has_meta:
+            return "bin"
     raise FileNotFoundError(f"No supported data files found at {load_path}")
 
 
@@ -244,7 +248,17 @@ class MmapStore(Store):
 
     def load(self, path: str):
         self._mmap_refs = []
-        raw = load_bin(path)
-        self._normalize(raw)
+        root = Path(path)
+        all_raw: Dict[str, List[Tensor]] = {}
+        meta_paths = list(root.rglob("meta.json"))
+        for meta_path in meta_paths:
+            raw = load_bin(str(meta_path.parent))
+            for key, tensors in raw.items():
+                if key not in all_raw:
+                    all_raw[key] = []
+                all_raw[key].extend(tensors)
+        if not meta_paths:
+            raise FileNotFoundError(f"No meta.json found under {path}")
+        self._normalize(all_raw)
         for tensors in self._data.values():
             self._mmap_refs.extend(tensors)

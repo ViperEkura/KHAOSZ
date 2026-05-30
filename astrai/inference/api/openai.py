@@ -1,5 +1,7 @@
 """OpenAI chat completion response builder."""
 
+import logging
+import time
 import uuid
 from typing import Any, Dict, List, Tuple
 
@@ -13,6 +15,16 @@ from astrai.inference.api.protocol import (
 )
 from astrai.inference.engine import InferenceEngine
 
+logger = logging.getLogger(__name__)
+
+_UNSUPPORTED_PARAMS = (
+    "n",
+    "presence_penalty",
+    "frequency_penalty",
+    "logit_bias",
+    "user",
+)
+
 
 class OpenAIResponseBuilder(ResponseBuilder):
     def prepare(
@@ -24,9 +36,26 @@ class OpenAIResponseBuilder(ResponseBuilder):
         self._resp_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         self._model = request.model
 
+        for param in _UNSUPPORTED_PARAMS:
+            value = getattr(request, param, None)
+            fields = getattr(type(request), "model_fields", {})
+            default = fields[param].default if param in fields else None
+            if value is not None and value != default:
+                logger.warning(
+                    "ChatCompletionRequest param '%s'=%r is not supported and will be ignored",
+                    param,
+                    value,
+                )
+            if value is not None and value != default:
+                logger.warning(
+                    "ChatCompletionRequest param '%s'=%r is not supported and will be ignored",
+                    param,
+                    value,
+                )
+
         ctx = GenContext(
             resp_id=self._resp_id,
-            created=0,
+            created=int(time.time()),
             model=self._model,
             prompt_tokens=0,
         )

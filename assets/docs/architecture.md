@@ -363,6 +363,16 @@ classDiagram
         class TextMaskBuilder {
             +build(item, config, tokenizer) Optional[dict]
         }
+
+        class Pipeline {
+            +PipelineConfig config
+            +List[str] paths
+            +str output_dir
+            +str tokenizer_path
+            +BaseMaskBuilder mask_builder
+            +transform(item) Optional[dict]
+            +run()
+        }
     }
 
     namespace tokenize {
@@ -1092,6 +1102,8 @@ classDiagram
     KvcacheView o-- Storage
     SamplingPipeline o-- BaseSamplingStrategy
     BaseDataset o-- Store
+    Pipeline o-- PipelineConfig
+    Pipeline o-- BaseMaskBuilder
 
     %% --- Dependency (uses temporarily) ---
     TrainConfig ..> BaseStrategy : selects
