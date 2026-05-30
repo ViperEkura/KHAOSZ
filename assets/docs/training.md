@@ -1,38 +1,5 @@
 # Training
 
-## Model Architecture
-
-The model uses a decoder-only Transformer with **GQA** (Grouped Query Attention) and optional **MLA** (Multi-head Latent Attention). 1.0 billion parameters, Chinese–English bilingual.
-
-```mermaid
-flowchart TB
-    subgraph Layers["Transformer Layers"]
-        direction TB
-        A[Input Embedding] --> B[Transformer Block\nLayer 1]
-        B --> C[Transformer Block\nLayer ...]
-        C --> D[Transformer Block\nLayer ...]
-        D --> E[RMSNorm]
-        E --> F[Linear]
-        F --> G[SoftMax]
-    end
-
-    subgraph TransformerBlock["Transformer Block"]
-        direction TB
-        H[x] --> I[RMSNorm]
-        I --> J[Linear → Q/K/V]
-        J --> K[Q]; J --> L[K]; J --> M[V]
-        K --> N[RoPE]; L --> O[RoPE]
-        N --> P["Q @ K^T / sqrt(d)"]; O --> P
-        P --> Q[Masked SoftMax]; Q --> R[S @ V]; M --> R
-        R --> S[Linear]; S --> T[+]; H --> T
-        T --> U[RMSNorm]
-        U --> V["Linear (gate)"]; U --> W["Linear (up)"]
-        V --> X[SiLU]; X --> Y[×]; W --> Y
-        Y --> Z["Linear (down)"]; Z --> AA[+]; T --> AA
-        AA --> BB[x']
-    end
-```
-
 ### Autoregression
 
 Given a token sequence, the model predicts the probability of the next token. Each generated token is appended to the input and fed back, repeating until an end-of-sequence token or max length.
