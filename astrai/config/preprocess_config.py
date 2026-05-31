@@ -16,7 +16,6 @@ class ProcessingConfig(BaseConfig):
     max_seq_len: int = 2048
     min_chars: int = 50
     max_chars: int = 2_000_000
-    deduplicate: bool = True
     max_items: Optional[int] = None
 
 

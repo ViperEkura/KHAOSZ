@@ -1,10 +1,9 @@
 """Config-driven JSONL preprocessing pipeline.
 
 Composes a :class:`BaseMaskBuilder` (selected by ``input.type``) with
-deduplication, sharding, and flush to ``.h5`` / ``.bin`` storage.
+sharding and flush to ``.h5`` / ``.bin`` storage.
 """
 
-import hashlib
 import json
 import os
 from collections import defaultdict
@@ -36,11 +35,6 @@ def filter_by_length(text: str, min_len: int = 50, max_len: int = 2_000_000) -> 
     return min_len <= len(text) <= max_len
 
 
-def dedup_signature(item: dict) -> str:
-    raw = json.dumps(item, sort_keys=True, ensure_ascii=False)
-    return hashlib.md5(raw[:200].encode()).hexdigest()
-
-
 class Pipeline:
     """Tokenization pipeline driven by a declarative :class:`PipelineConfig`.
 
@@ -70,8 +64,6 @@ class Pipeline:
 
     def run(self):
         self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_path)
-
-        seen: set = set()
         domains: dict = defaultdict(lambda: defaultdict(list))
         total_tokens = 0
         shard_idx: dict[str, int] = defaultdict(int)
@@ -85,24 +77,23 @@ class Pipeline:
             if pp.max_items and count >= pp.max_items:
                 break
 
-            if pp.deduplicate:
-                sig = dedup_signature(item)
-                if sig in seen:
-                    continue
-                seen.add(sig)
-
             result = self.transform(item)
             if result is None:
                 continue
 
-            ids = result["ids"]
+            ids = result.pop("sequence")
             if not ids:
                 continue
 
-            domain = result.get("domain", "__default__")
-            domains[domain]["sequence"].append(ids)
-            if "loss_mask" in result:
-                domains[domain]["loss_mask"].append(result["loss_mask"])
+            domain = result.pop("domain", "__default__")
+            result["sequence"] = ids
+
+            bucket = domains[domain]
+            for key in list(bucket.keys()):
+                if key not in result:
+                    bucket[key].append([1] * len(ids))
+            for key, val in result.items():
+                bucket[key].append(val)
 
             count += 1
             total_tokens += len(ids)

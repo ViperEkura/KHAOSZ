@@ -151,7 +151,7 @@ class SectionedMaskBuilder(BaseMaskBuilder):
             return None
 
         result: dict = {
-            "ids": all_ids,
+            "sequence": all_ids,
             "domain": _extract_domain(item, config.output.domain_key),
         }
         if not all(m == 1 for m in loss_mask):

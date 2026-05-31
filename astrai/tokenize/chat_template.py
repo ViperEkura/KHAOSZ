@@ -29,7 +29,7 @@ class ChatTemplate:
         self.description = description
         self.default_variables = default_variables or {}
         self.special_tokens = special_tokens or {}
-        self._compiled : Template = Template(template_str)
+        self._compiled: Template = Template(template_str)
 
     @classmethod
     def from_string(
