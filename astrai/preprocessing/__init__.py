@@ -1,18 +1,14 @@
 from astrai.preprocessing.builder import (
     BaseMaskBuilder,
-    ChatMaskBuilder,
-    InstructionMaskBuilder,
     MaskBuilderFactory,
-    TextMaskBuilder,
+    SectionedMaskBuilder,
 )
 from astrai.preprocessing.pipeline import Pipeline, dedup_signature, filter_by_length
 
 __all__ = [
     "BaseMaskBuilder",
-    "ChatMaskBuilder",
-    "InstructionMaskBuilder",
     "MaskBuilderFactory",
-    "TextMaskBuilder",
+    "SectionedMaskBuilder",
     "Pipeline",
     "dedup_signature",
     "filter_by_length",

@@ -4,21 +4,32 @@ Composes a :class:`BaseMaskBuilder` (selected by ``input.type``) with
 deduplication, sharding, and flush to ``.h5`` / ``.bin`` storage.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import os
 from collections import defaultdict
-from typing import List, Optional
+from itertools import chain
+from typing import Optional
 
 import torch
 import tqdm
 
 from astrai.config.preprocess_config import PipelineConfig
 from astrai.dataset.storage import save_bin, save_h5
-from astrai.preprocessing.builder import MaskBuilderFactory
+from astrai.preprocessing.builder import SectionedMaskBuilder
 from astrai.tokenize import AutoTokenizer
+
+_STR_TO_DTYPE: dict[str, torch.dtype] = {
+    "bool": torch.bool,
+    "uint8": torch.uint8,
+    "int8": torch.int8,
+    "int16": torch.int16,
+    "int32": torch.int32,
+    "int64": torch.int64,
+    "float16": torch.float16,
+    "float32": torch.float32,
+    "float64": torch.float64,
+}
 
 
 def filter_by_length(text: str, min_len: int = 50, max_len: int = 2_000_000) -> bool:
@@ -42,7 +53,7 @@ class Pipeline:
     def __init__(
         self,
         config: PipelineConfig,
-        input_paths: List[str],
+        input_paths: list[str],
         output_dir: str,
         tokenizer_path: str,
     ):
@@ -52,7 +63,7 @@ class Pipeline:
         self.output_dir = output_dir
         self.tokenizer_path = tokenizer_path
 
-        self.mask_builder = MaskBuilderFactory.create(config.input.type)
+        self.mask_builder = SectionedMaskBuilder()
 
     def transform(self, item: dict) -> Optional[dict]:
         return self.mask_builder.build(item, self.config, self._tokenizer)
@@ -120,7 +131,12 @@ class Pipeline:
             idx = shard_idx[domain]
             tensors = {}
             for key, ids_list in keys.items():
-                tensors[key] = [torch.tensor(sum(ids_list, []), dtype=torch.long)]
+                dt = _STR_TO_DTYPE.get(
+                    self.config.output.dtype.get(key, "int32"), torch.int32
+                )
+                tensors[key] = [
+                    torch.tensor(list(chain.from_iterable(ids_list)), dtype=dt)
+                ]
             chunk_dir = os.path.join(self.output_dir, domain)
             fmt = self.config.output.storage_format
             if fmt == "bin":

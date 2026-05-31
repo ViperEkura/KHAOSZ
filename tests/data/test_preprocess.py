@@ -12,22 +12,22 @@ from astrai.config.preprocess_config import (
     ProcessingConfig,
 )
 from astrai.preprocessing.builder import (
-    ChatMaskBuilder,
-    InstructionMaskBuilder,
     MaskBuilderFactory,
-    TextMaskBuilder,
+    SectionedMaskBuilder,
 )
 from astrai.preprocessing.pipeline import Pipeline, dedup_signature, filter_by_length
 from astrai.tokenize import AutoTokenizer
 
-_SPECIAL_TOKENS = [
-    "<unk>",
-    "<pad>",
-    "<|begin_of_sentence|>",
-    "<|end_of_sentence|>",
-    "<|im_start|>",
-    "<|im_end|>",
-]
+_SPECIAL_TOKENS_CONFIG = {
+    "bos_token": "<|begin_of_sentence|>",
+    "eos_token": "<|end_of_sentence|>",
+    "pad_token": "<|_pad_|>",
+    "unk_token": "<|_unk_|>",
+    "im_start": "<|im_start|>",
+    "im_end": "<|im_end|>",
+}
+
+_SPECIAL_TOKENS = list(_SPECIAL_TOKENS_CONFIG.values())
 
 _CHAT_TEMPLATE = (
     "{% for message in messages %}"
@@ -75,8 +75,8 @@ def _build_chat_tokenizer() -> AutoTokenizer:
     auto_tok._special_token_map = {
         "bos_token": "<|begin_of_sentence|>",
         "eos_token": "<|end_of_sentence|>",
-        "pad_token": "<pad>",
-        "unk_token": "<unk>",
+        "pad_token": "<|_pad_|>",
+        "unk_token": "<|_unk_|>",
     }
     auto_tok.set_chat_template(_CHAT_TEMPLATE)
     return auto_tok
@@ -96,9 +96,19 @@ def temp_dir():
     shutil.rmtree(d, ignore_errors=True)
 
 
+_CHAT_SECTIONS = [{"field": "messages", "action": "$role", "template": True}]
+
+_INSTRUCTION_SECTIONS = [
+    {"field": "prompt", "action": "mask", "add_special_tokens": True},
+    {"field": "response", "action": "train"},
+]
+
+_TEXT_SECTIONS = [{"field": "text", "action": "train"}]
+
+
 def make_chat_config():
     return PipelineConfig(
-        input=InputConfig(type="chat", messages_key="messages"),
+        input=InputConfig(sections=_CHAT_SECTIONS),
         mask={"system": "mask", "user": "mask", "assistant": "train"},
         mask_default="mask",
         preprocessing=ProcessingConfig(max_seq_len=2048),
@@ -107,9 +117,7 @@ def make_chat_config():
 
 def make_instruction_config():
     return PipelineConfig(
-        input=InputConfig(
-            type="instruction", prompt_key="prompt", response_key="response"
-        ),
+        input=InputConfig(sections=_INSTRUCTION_SECTIONS),
         mask={"prompt": "mask", "response": "train"},
         mask_default="mask",
         preprocessing=ProcessingConfig(max_seq_len=2048),
@@ -118,7 +126,7 @@ def make_instruction_config():
 
 def make_text_config():
     return PipelineConfig(
-        input=InputConfig(type="text", text_key="text"),
+        input=InputConfig(sections=_TEXT_SECTIONS),
         preprocessing=ProcessingConfig(
             max_seq_len=2048, min_chars=1, max_chars=2_000_000
         ),
@@ -129,58 +137,59 @@ class TestPipelineConfig:
     def test_default_values(self):
         config = PipelineConfig()
         assert config.version == 1
-        assert config.input.type == "chat"
         assert config.mask == {}
         assert config.mask_default == "mask"
         assert config.preprocessing.max_seq_len == 2048
         assert config.output.storage_format == "bin"
+        assert config.input.sections is None
 
     def test_from_dict_flat(self):
         data = {
             "version": 1,
-            "input": {"type": "chat", "messages_key": "msgs"},
+            "input": {
+                "sections": [{"field": "messages", "action": "$role", "template": True}]
+            },
             "mask": {"system": "mask", "assistant": "train"},
             "mask_default": "mask",
             "preprocessing": {"max_seq_len": 1024},
             "output": {"storage_format": "h5"},
         }
         config = PipelineConfig.from_dict(data)
-        assert config.input.type == "chat"
-        assert config.input.messages_key == "msgs"
+        assert config.input.sections == [
+            {"field": "messages", "action": "$role", "template": True}
+        ]
         assert config.mask == {"system": "mask", "assistant": "train"}
         assert config.preprocessing.max_seq_len == 1024
         assert config.output.storage_format == "h5"
 
     def test_to_dict_roundtrip(self):
         config = PipelineConfig(
-            input=InputConfig(type="instruction", prompt_key="q", response_key="a"),
+            input=InputConfig(sections=_INSTRUCTION_SECTIONS),
             mask={"prompt": "mask", "response": "train"},
             mask_default="mask",
         )
         d = config.to_dict()
         config2 = PipelineConfig.from_dict(d)
-        assert config2.input.type == "instruction"
-        assert config2.input.prompt_key == "q"
+        assert config2.input.sections == _INSTRUCTION_SECTIONS
         assert config2.mask == {"prompt": "mask", "response": "train"}
 
     def test_to_json_from_json(self, temp_dir):
         config = PipelineConfig(
-            input=InputConfig(type="text", text_key="body"),
+            input=InputConfig(sections=_TEXT_SECTIONS),
             mask={"text": "train"},
             mask_default="mask",
         )
         path = os.path.join(temp_dir, "config.json")
         config.to_json(path)
         loaded = PipelineConfig.from_json(path)
-        assert loaded.input.type == "text"
-        assert loaded.input.text_key == "body"
+        assert loaded.input.sections == _TEXT_SECTIONS
         assert loaded.mask == {"text": "train"}
 
 
 class TestChatMaskBuilder:
     def test_simple_chat_mask(self, chat_tokenizer):
         config = make_chat_config()
-        builder = ChatMaskBuilder()
+        builder = SectionedMaskBuilder()
         item = {
             "messages": [
                 {"role": "system", "content": "You are helpful."},
@@ -206,7 +215,7 @@ class TestChatMaskBuilder:
 
     def test_mask_only_assistant_trained(self, chat_tokenizer):
         config = make_chat_config()
-        builder = ChatMaskBuilder()
+        builder = SectionedMaskBuilder()
         item = {
             "messages": [
                 {"role": "user", "content": "What is 2+2?"},
@@ -227,12 +236,12 @@ class TestChatMaskBuilder:
 
     def test_chat_all_masked(self, chat_tokenizer):
         config = PipelineConfig(
-            input=InputConfig(type="chat", messages_key="messages"),
+            input=InputConfig(sections=_CHAT_SECTIONS),
             mask={"system": "mask", "user": "mask", "assistant": "mask"},
             mask_default="mask",
             preprocessing=ProcessingConfig(max_seq_len=2048),
         )
-        builder = ChatMaskBuilder()
+        builder = SectionedMaskBuilder()
         item = {
             "messages": [
                 {"role": "system", "content": "You are helpful."},
@@ -244,12 +253,12 @@ class TestChatMaskBuilder:
 
     def test_chat_all_trained(self, chat_tokenizer):
         config = PipelineConfig(
-            input=InputConfig(type="chat", messages_key="messages"),
+            input=InputConfig(sections=_CHAT_SECTIONS),
             mask={},
             mask_default="train",
             preprocessing=ProcessingConfig(max_seq_len=2048),
         )
-        builder = ChatMaskBuilder()
+        builder = SectionedMaskBuilder()
         item = {
             "messages": [
                 {"role": "system", "content": "You are helpful."},
@@ -261,19 +270,19 @@ class TestChatMaskBuilder:
 
     def test_empty_messages_returns_none(self, chat_tokenizer):
         config = make_chat_config()
-        builder = ChatMaskBuilder()
+        builder = SectionedMaskBuilder()
         assert builder.build({"messages": []}, config, chat_tokenizer) is None
         assert builder.build({}, config, chat_tokenizer) is None
 
     def test_domain_extraction(self, chat_tokenizer):
         config = PipelineConfig(
-            input=InputConfig(type="chat", messages_key="messages"),
+            input=InputConfig(sections=_CHAT_SECTIONS),
             mask={"assistant": "train"},
             mask_default="mask",
             preprocessing=ProcessingConfig(max_seq_len=2048),
             output=OutputConfig(domain_key="source"),
         )
-        builder = ChatMaskBuilder()
+        builder = SectionedMaskBuilder()
         item = {
             "messages": [
                 {"role": "user", "content": "Hi"},
@@ -286,12 +295,12 @@ class TestChatMaskBuilder:
 
     def test_truncation_to_max_len(self, chat_tokenizer):
         config = PipelineConfig(
-            input=InputConfig(type="chat", messages_key="messages"),
+            input=InputConfig(sections=_CHAT_SECTIONS),
             mask={"assistant": "train"},
             mask_default="mask",
             preprocessing=ProcessingConfig(max_seq_len=10),
         )
-        builder = ChatMaskBuilder()
+        builder = SectionedMaskBuilder()
         item = {
             "messages": [
                 {
@@ -309,7 +318,7 @@ class TestChatMaskBuilder:
 class TestInstructionMaskBuilder:
     def test_basic_instruction_mask(self, test_tokenizer):
         config = make_instruction_config()
-        builder = InstructionMaskBuilder()
+        builder = SectionedMaskBuilder()
         item = {"prompt": "Translate to French: Hello", "response": "Bonjour"}
         result = builder.build(item, config, test_tokenizer)
         assert result is not None
@@ -317,7 +326,7 @@ class TestInstructionMaskBuilder:
 
     def test_prompt_masked_response_trained(self, test_tokenizer):
         config = make_instruction_config()
-        builder = InstructionMaskBuilder()
+        builder = SectionedMaskBuilder()
         item = {"prompt": "hello", "response": "world"}
         result = builder.build(item, config, test_tokenizer)
         mask = result["loss_mask"]
@@ -335,13 +344,18 @@ class TestInstructionMaskBuilder:
     def test_train_on_prompt(self, test_tokenizer):
         config = PipelineConfig(
             input=InputConfig(
-                type="instruction", prompt_key="prompt", response_key="response"
+                sections=[
+                    {
+                        "field": "prompt",
+                        "action": "train",
+                        "add_special_tokens": True,
+                    },
+                    {"field": "response", "action": "mask"},
+                ]
             ),
-            mask={"prompt": "train", "response": "mask"},
-            mask_default="mask",
             preprocessing=ProcessingConfig(max_seq_len=2048),
         )
-        builder = InstructionMaskBuilder()
+        builder = SectionedMaskBuilder()
         item = {"prompt": "hello", "response": "world"}
         result = builder.build(item, config, test_tokenizer)
         mask = result["loss_mask"]
@@ -355,7 +369,7 @@ class TestInstructionMaskBuilder:
 class TestTextMaskBuilder:
     def test_basic_text(self, test_tokenizer):
         config = make_text_config()
-        builder = TextMaskBuilder()
+        builder = SectionedMaskBuilder()
         item = {"text": "Hello world. This is a test document."}
         result = builder.build(item, config, test_tokenizer)
         assert result is not None
@@ -365,24 +379,24 @@ class TestTextMaskBuilder:
 
     def test_empty_text_returns_none(self, test_tokenizer):
         config = make_text_config()
-        builder = TextMaskBuilder()
+        builder = SectionedMaskBuilder()
         assert builder.build({"text": ""}, config, test_tokenizer) is None
         assert builder.build({"text": "   "}, config, test_tokenizer) is None
 
     def test_too_short_text(self, test_tokenizer):
         config = PipelineConfig(
-            input=InputConfig(type="text", text_key="text"),
+            input=InputConfig(sections=_TEXT_SECTIONS),
             preprocessing=ProcessingConfig(min_chars=100),
         )
-        builder = TextMaskBuilder()
+        builder = SectionedMaskBuilder()
         assert builder.build({"text": "short"}, config, test_tokenizer) is None
 
     def test_truncation(self, test_tokenizer):
         config = PipelineConfig(
-            input=InputConfig(type="text", text_key="text"),
+            input=InputConfig(sections=_TEXT_SECTIONS),
             preprocessing=ProcessingConfig(max_seq_len=3, min_chars=1),
         )
-        builder = TextMaskBuilder()
+        builder = SectionedMaskBuilder()
         item = {"text": "This is a very long text that should be truncated"}
         result = builder.build(item, config, test_tokenizer)
         assert len(result["ids"]) <= 3
@@ -396,14 +410,7 @@ class TestPipeline:
         with open(os.path.join(tokenizer_dir, "tokenizer_config.json"), "w") as f:
             json.dump(
                 {
-                    "special_tokens": {
-                        "bos_token": "<|begin_of_sentence|>",
-                        "eos_token": "<|end_of_sentence|>",
-                        "pad_token": "<pad>",
-                        "unk_token": "<unk>",
-                        "im_start": "<|im_start|>",
-                        "im_end": "<|im_end|>",
-                    },
+                    "special_tokens": _SPECIAL_TOKENS_CONFIG,
                     "chat_template": _CHAT_TEMPLATE,
                 },
                 f,
@@ -436,7 +443,7 @@ class TestPipeline:
             )
 
         config = PipelineConfig(
-            input=InputConfig(type="chat", messages_key="messages"),
+            input=InputConfig(sections=_CHAT_SECTIONS),
             mask={"system": "mask", "user": "mask", "assistant": "train"},
             mask_default="mask",
             preprocessing=ProcessingConfig(max_seq_len=2048, deduplicate=True),
@@ -457,9 +464,10 @@ class TestPipeline:
             meta = json.load(f)
         assert "sequence" in meta
         assert "loss_mask" in meta
+        assert meta["sequence"]["dtype"] == "int32"
+        assert meta["loss_mask"]["dtype"] == "int32"
 
     def test_full_text_pipeline(self, temp_dir, test_tokenizer):
-        import tempfile as tmp
 
         tokenizer_dir = os.path.join(temp_dir, "tok")
         os.makedirs(tokenizer_dir, exist_ok=True)
@@ -467,7 +475,13 @@ class TestPipeline:
         test_tokenizer._tokenizer.save(os.path.join(tokenizer_dir, "tokenizer.json"))
         with open(os.path.join(tokenizer_dir, "tokenizer_config.json"), "w") as f:
             json.dump(
-                {"special_tokens": {"pad_token": "<pad>", "unk_token": "<unk>"}}, f
+                {
+                    "special_tokens": {
+                        "pad_token": "<|_pad_|>",
+                        "unk_token": "<|_unk_|>",
+                    }
+                },
+                f,
             )
 
         jsonl_path = os.path.join(temp_dir, "text.jsonl")
@@ -490,7 +504,7 @@ class TestPipeline:
             )
 
         config = PipelineConfig(
-            input=InputConfig(type="text", text_key="text"),
+            input=InputConfig(sections=_TEXT_SECTIONS),
             preprocessing=ProcessingConfig(
                 max_seq_len=2048, min_chars=10, deduplicate=True
             ),
@@ -511,6 +525,7 @@ class TestPipeline:
             meta = json.load(f)
         assert "sequence" in meta
         assert "loss_mask" not in meta
+        assert meta["sequence"]["dtype"] == "int32"
 
     def test_full_instruction_pipeline(self, temp_dir, test_tokenizer):
         tokenizer_dir = os.path.join(temp_dir, "tok")
@@ -518,7 +533,13 @@ class TestPipeline:
         test_tokenizer._tokenizer.save(os.path.join(tokenizer_dir, "tokenizer.json"))
         with open(os.path.join(tokenizer_dir, "tokenizer_config.json"), "w") as f:
             json.dump(
-                {"special_tokens": {"pad_token": "<pad>", "unk_token": "<unk>"}}, f
+                {
+                    "special_tokens": {
+                        "pad_token": "<|_pad_|>",
+                        "unk_token": "<|_unk_|>",
+                    }
+                },
+                f,
             )
 
         jsonl_path = os.path.join(temp_dir, "instruct.jsonl")
@@ -543,9 +564,7 @@ class TestPipeline:
             )
 
         config = PipelineConfig(
-            input=InputConfig(
-                type="instruction", prompt_key="prompt", response_key="response"
-            ),
+            input=InputConfig(sections=_INSTRUCTION_SECTIONS),
             mask={"prompt": "mask", "response": "train"},
             mask_default="mask",
             preprocessing=ProcessingConfig(max_seq_len=2048),
@@ -566,6 +585,60 @@ class TestPipeline:
             meta = json.load(f)
         assert "sequence" in meta
         assert "loss_mask" in meta
+        assert meta["sequence"]["dtype"] == "int32"
+        assert meta["loss_mask"]["dtype"] == "int32"
+
+    def test_dtype_override(self, temp_dir, test_tokenizer):
+        tokenizer_dir = os.path.join(temp_dir, "tok")
+        os.makedirs(tokenizer_dir, exist_ok=True)
+        test_tokenizer._tokenizer.save(os.path.join(tokenizer_dir, "tokenizer.json"))
+        with open(os.path.join(tokenizer_dir, "tokenizer_config.json"), "w") as f:
+            json.dump(
+                {
+                    "special_tokens": {
+                        "pad_token": "<|_pad_|>",
+                        "unk_token": "<|_unk_|>",
+                    }
+                },
+                f,
+            )
+
+        jsonl_path = os.path.join(temp_dir, "data.jsonl")
+        with open(jsonl_path, "w", encoding="utf-8") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "prompt": "Q",
+                        "response": "A",
+                    }
+                )
+                + "\n"
+            )
+
+        config = PipelineConfig(
+            input=InputConfig(sections=_INSTRUCTION_SECTIONS),
+            mask={"prompt": "mask", "response": "train"},
+            mask_default="mask",
+            preprocessing=ProcessingConfig(max_seq_len=2048),
+            output=OutputConfig(
+                storage_format="bin",
+                dtype={"loss_mask": "bool"},
+            ),
+        )
+
+        out_dir = os.path.join(temp_dir, "output")
+        Pipeline(
+            config=config,
+            input_paths=[jsonl_path],
+            output_dir=out_dir,
+            tokenizer_path=tokenizer_dir,
+        ).run()
+
+        meta_path = os.path.join(out_dir, "__default__", "shard_0000", "meta.json")
+        with open(meta_path, "r") as f:
+            meta = json.load(f)
+        assert meta["sequence"]["dtype"] == "int32"
+        assert meta["loss_mask"]["dtype"] == "bool"
 
 
 class TestUtility:
@@ -583,21 +656,67 @@ class TestUtility:
         assert dedup_signature(a) != dedup_signature(c)
 
 
+class TestSectionedMaskBuilder:
+    def test_sectioned_chat(self, chat_tokenizer):
+        config = PipelineConfig(
+            input=InputConfig(sections=_CHAT_SECTIONS),
+            mask={"system": "mask", "user": "mask", "assistant": "train"},
+            mask_default="mask",
+            preprocessing=ProcessingConfig(max_seq_len=2048),
+        )
+        builder = SectionedMaskBuilder()
+        item = {
+            "messages": [
+                {"role": "user", "content": "What is 2+2?"},
+                {"role": "assistant", "content": "4"},
+            ]
+        }
+        result = builder.build(item, config, chat_tokenizer)
+        assert result is not None
+        assert len(result["ids"]) == len(result["loss_mask"])
+        assert sum(result["loss_mask"]) > 0
+        assert 0 in result["loss_mask"]
+
+    def test_sectioned_instruction(self, test_tokenizer):
+        config = PipelineConfig(
+            input=InputConfig(sections=_INSTRUCTION_SECTIONS),
+            preprocessing=ProcessingConfig(max_seq_len=2048, min_chars=0),
+        )
+        builder = SectionedMaskBuilder()
+        item = {"prompt": "Q: Why?", "response": "A: Because."}
+        result = builder.build(item, config, test_tokenizer)
+        assert result is not None
+        mask = result["loss_mask"]
+        assert mask[0] == 0
+        assert mask[-1] == 1
+
+    def test_sectioned_text(self, test_tokenizer):
+        config = PipelineConfig(
+            input=InputConfig(sections=_TEXT_SECTIONS),
+            preprocessing=ProcessingConfig(max_seq_len=2048, min_chars=1),
+        )
+        builder = SectionedMaskBuilder()
+        item = {"text": "Hello world, this is a test."}
+        result = builder.build(item, config, test_tokenizer)
+        assert result is not None
+        assert "loss_mask" not in result
+
+    def test_sectioned_text_too_short(self, test_tokenizer):
+        config = PipelineConfig(
+            input=InputConfig(sections=_TEXT_SECTIONS),
+            preprocessing=ProcessingConfig(max_seq_len=2048, min_chars=100),
+        )
+        builder = SectionedMaskBuilder()
+        item = {"text": "short"}
+        result = builder.build(item, config, test_tokenizer)
+        assert result is None
+
+
 class TestFactoryRegistration:
     def test_registered_builders(self):
         names = MaskBuilderFactory._registry.list_names()
-        assert "chat" in names
-        assert "instruction" in names
-        assert "text" in names
+        assert "sectioned" in names
 
-    def test_create_chat_builder(self):
-        builder = MaskBuilderFactory.create("chat")
-        assert isinstance(builder, ChatMaskBuilder)
-
-    def test_create_instruction_builder(self):
-        builder = MaskBuilderFactory.create("instruction")
-        assert isinstance(builder, InstructionMaskBuilder)
-
-    def test_create_text_builder(self):
-        builder = MaskBuilderFactory.create("text")
-        assert isinstance(builder, TextMaskBuilder)
+    def test_create_sectioned_builder(self):
+        builder = MaskBuilderFactory.create("sectioned")
+        assert isinstance(builder, SectionedMaskBuilder)
