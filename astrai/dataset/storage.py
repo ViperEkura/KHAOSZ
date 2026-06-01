@@ -18,6 +18,7 @@ Key properties:
 """
 
 import bisect
+import glob
 import json
 import os
 from abc import ABC, abstractmethod
@@ -113,13 +114,17 @@ def detect_format(load_path: str) -> str:
             return "h5"
         raise ValueError(f"Unsupported file format: {suffix}")
 
-    h5_files = list(root.rglob("*.h5")) + list(root.rglob("*.hdf5"))
+    h5_files = [
+        Path(p)
+        for pattern in ("*.h5", "*.hdf5")
+        for p in glob.glob(str(root / "**" / pattern), recursive=True)
+    ]
     if h5_files:
         return "h5"
-    bin_files = list(root.rglob("*.bin"))
+    bin_files = [Path(p) for p in glob.glob(str(root / "**" / "*.bin"), recursive=True)]
     if bin_files:
         has_meta = (root / "meta.json").exists() or len(
-            list(root.rglob("meta.json"))
+            [Path(p) for p in glob.glob(str(root / "**" / "meta.json"), recursive=True)]
         ) > 0
         if has_meta:
             return "bin"
@@ -250,7 +255,9 @@ class MmapStore(Store):
         self._mmap_refs = []
         root = Path(path)
         all_raw: Dict[str, List[Tensor]] = {}
-        meta_paths = list(root.rglob("meta.json"))
+        meta_paths = [
+            Path(p) for p in glob.glob(str(root / "**" / "meta.json"), recursive=True)
+        ]
         for meta_path in meta_paths:
             raw = load_bin(str(meta_path.parent))
             for key, tensors in raw.items():

@@ -44,11 +44,12 @@ def setup_parallel(
         yield None
         return
 
-    device_id = torch.device(device_type, rank)
+    local_rank = int(os.environ["LOCAL_RANK"]) if "LOCAL_RANK" in os.environ else rank
+    device_id = torch.device(device_type, local_rank)
 
     os.environ["MASTER_ADDR"] = master_addr
     os.environ["MASTER_PORT"] = master_port
-    os.environ["LOCAL_RANK"] = str(rank)
+    os.environ["LOCAL_RANK"] = str(local_rank)
     os.environ["WORLD_SIZE"] = str(world_size)
     os.environ["LOCAL_DEVICE"] = str(device_id)
 
@@ -126,7 +127,23 @@ def spawn_parallel_fn(
     start_method: str = "spawn",
     **kwargs,
 ):
-    # clear environment variables
+    # Multi-node support: if RANK env var is set, init process group
+    # and run function directly (no local spawn).
+    if "RANK" in os.environ:
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
+        with setup_parallel(
+            rank=rank,
+            world_size=world_size,
+            backend=backend,
+            master_addr=os.environ.get("MASTER_ADDR", master_addr),
+            master_port=os.environ.get("MASTER_PORT", master_port),
+            device_type=device_type,
+        ):
+            func(**kwargs)
+        return
+
+    # clear environment variables (single-node path)
     for key in [
         "MASTER_ADDR",
         "MASTER_PORT",
