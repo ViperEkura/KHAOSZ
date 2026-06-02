@@ -118,6 +118,12 @@ class TrainConfig(BaseConfig):
     val_dataset: Optional[Dataset] = field(
         default=None, metadata={"help": "Dataset for validation."}
     )
+    val_split: Optional[float] = field(
+        default=None,
+        metadata={
+            "help": "Ratio to split from training dataset for validation (e.g. 0.05). Ignored if val_dataset is set."
+        },
+    )
     val_step: int = field(
         default=1000,
         metadata={"help": "Number of optimizer steps between validation runs."},
