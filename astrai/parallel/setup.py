@@ -164,20 +164,7 @@ class TorchrunStrategy(LaunchStrategy):
 class LocalStrategy(LaunchStrategy):
     """Local launcher — single-process or mp.start_processes."""
 
-    def _clear_env(self):
-        for key in (
-            "MASTER_ADDR",
-            "MASTER_PORT",
-            "RANK",
-            "WORLD_SIZE",
-            "LOCAL_RANK",
-            "LOCAL_DEVICE",
-        ):
-            os.environ.pop(key, None)
-
     def launch(self, func: Callable, **kwargs):
-        self._clear_env()
-
         args = (
             self.world_size,
             self.backend,
