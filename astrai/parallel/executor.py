@@ -2,6 +2,7 @@
 
 import contextlib
 import logging
+import os
 from contextlib import contextmanager
 from typing import Optional, Tuple
 
@@ -181,7 +182,7 @@ class DDPExecutor(BaseExecutor):
         if not self.use_distributed:
             logger.warning("DDP backend selected but world_size=1, model not wrapped")
             return model
-        local_rank = get_rank()
+        local_rank = int(os.environ.get("LOCAL_RANK", get_rank()))
         model = DDP(
             model,
             device_ids=[local_rank],
