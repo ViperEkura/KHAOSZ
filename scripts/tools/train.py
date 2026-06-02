@@ -315,6 +315,8 @@ def train(
         },
     )
 
+    grad_ckpt_modules = [DecoderBlock] if gradient_checkpointing else []
+
     train_config = TrainConfig(
         model_fn=model_fn,
         strategy=train_type,
@@ -332,9 +334,6 @@ def train(
         random_seed=random_seed,
         num_workers=num_workers,
         pin_memory=pin_memory,
-        gradient_checkpointing_modules=[DecoderBlock]
-        if gradient_checkpointing
-        else [],
         nprocs=nprocs,
         backend=backend,
         master_addr=master_addr,
@@ -342,6 +341,7 @@ def train(
         parallel_mode=parallel_mode,
         device_type=device_type,
         start_method=start_method,
+        gradient_checkpointing_modules=grad_ckpt_modules,
         executor_kwargs=executor_kwargs,
         extra_kwargs=strategy_kwargs,
     )
