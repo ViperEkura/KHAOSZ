@@ -16,6 +16,7 @@ nvcc -I csrc/include -arch=sm_89 -std=c++17 -O3 csrc/tests/quant_gemm_test.cu \
 #include <cstdlib>
 #include <cuda_fp8.h>
 #include <cuda_runtime.h>
+#include <exception>
 #include <type_traits>
 #include <vector>
 
@@ -705,7 +706,7 @@ static void bench_dtype_combos() {
 
 } // namespace
 
-int main() {
+static int run_main() {
     print_test_header();
     bool ok = test_gemm();
     ok &= test_dtype_combos();
@@ -713,4 +714,13 @@ int main() {
     if (ok)
         bench_dtype_combos();
     return ok ? 0 : 1;
+}
+
+int main() {
+    try {
+        return run_main();
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "quant_gemm test failed: %s\n", error.what());
+        return 1;
+    }
 }

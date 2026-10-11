@@ -49,6 +49,7 @@ that computes the wrong thing is not a win.
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <cstring>
 #include <string>
 #include <tuple>
@@ -604,7 +605,7 @@ template <typename EA, typename EB> void list_space(const char* tag) {
 
 } // namespace
 
-int main(int argc, char** argv) {
+static int run_main(int argc, char** argv) {
     const char* shape_arg = nullptr;
     const char* dtype_arg = "bf16";
     const char* only_arg = nullptr;
@@ -748,4 +749,13 @@ int main(int argc, char** argv) {
 #endif
     }
     return 0;
+}
+
+int main(int argc, char** argv) {
+    try {
+        return run_main(argc, argv);
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "tile sweep failed: %s\n", error.what());
+        return 1;
+    }
 }
