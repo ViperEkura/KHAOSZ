@@ -66,7 +66,7 @@ _CONFIG_API = 2
 
 @dataclass(frozen=True)
 class Problem:
-    """The planner's dispatch key for one call (gemm.cuh PlanQuery).
+    """The planner's dispatch key for one call (api/native/gemm_plan.h PlanQuery).
 
     perf_class comes from the probe (the C++ derivation), so this module
     keeps no dtype-pair mirror; the coverage cache keys on the cheap part
@@ -310,7 +310,7 @@ class GemmAutotuner:
     def _candidates(self, key: tuple) -> List[Row]:
         """The recipe vocabulary filtered to this staging pair and the
         device's smem ceiling — the compiled truth from tile_vocabulary,
-        not a Python-side re-parse of policy.cuh."""
+        not a Python-side re-parse of policy/gemm.cuh."""
         m, n, _, _, crosswise, dt_a, dt_b = key
         widths = _WIDTHS_OF.get((str(dt_a), str(dt_b)))
         assert self._facts is not None

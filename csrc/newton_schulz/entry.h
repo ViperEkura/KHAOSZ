@@ -1,6 +1,6 @@
 #pragma once
 
-#include <api/gemm_common.h>
+#include <api/native/gemm.h>
 #include <cuda_runtime.h>
 #include <torch/extension.h>
 

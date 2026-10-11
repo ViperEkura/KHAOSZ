@@ -1,7 +1,7 @@
 #pragma once
 /* Wave-weighted work for the compiled Newton-Schulz matrix recipes. */
 
-#include <launcher/gemm_cost.h>
+#include <policy/gemm/cost.h>
 
 #include <algorithm>
 #include <cmath>

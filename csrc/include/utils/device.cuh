@@ -6,7 +6,7 @@
 
 #include <cuda_runtime.h>
 
-#include <cstdint>
+#include <api/native/device.h>
 
 namespace astrai {
 
@@ -17,17 +17,6 @@ namespace astrai {
  * opt-in limit; smem_per_sm and regs_per_sm bound CTA residency. cc gates TMA.
  * Query these values because resource limits vary by architecture.
  */
-struct DeviceFacts {
-    int sms;
-    int smem_max;
-    int smem_per_sm;
-    int regs_per_sm;
-    int64_t l2_bytes;
-    int cc = 0;
-    int ordinal = 0;
-    int threads_per_sm = 0;
-};
-
 inline DeviceFacts device_facts() {
     static DeviceFacts cached[64] = {};
     int dev = 0;

@@ -6,9 +6,9 @@
  * family (utils/swizzle.cuh) shared with the operand staging in load_async.cuh.
  */
 
-#include <api/gemm_common.h>
+#include <api/native/gemm.h>
 #include <datatype/element.cuh>
-#include <policy.cuh>
+#include <policy/gemm.cuh>
 #include <utils/define.cuh>
 #include <utils/swizzle.cuh>
 #include <utils/tensor.cuh>

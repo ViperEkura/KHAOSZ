@@ -248,7 +248,7 @@ def test_explain_reports_strict_error(toy_family):
 _DUMMY_CACHE = object()
 
 
-@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])
 @pytest.mark.parametrize("head_dim", [64, 96])
 @pytest.mark.parametrize(
     "fwd,has_cache,ndim,has_mask",

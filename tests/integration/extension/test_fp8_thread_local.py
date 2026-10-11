@@ -9,13 +9,6 @@ meta) run without a GPU. The primitives themselves are CUDA-only
 
 import threading
 
-try:
-    from astrai.extension.kernel.quantize import K_FOLD_SLOTS
-except RuntimeError:
-    # The binding must stay import-safe on boxes without the extension;
-    # every K_FOLD_SLOTS use sits inside kernel-level tests that skip
-    # via skip_no_fp8/skip_no_kernel when the kernel is not built.
-    K_FOLD_SLOTS = None
 from astrai.extension.policy.quantization.autocast import (
     fp8_autocast,
     fp8_linear_enabled,

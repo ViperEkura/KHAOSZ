@@ -1,5 +1,5 @@
 #pragma once
-#include <api/attention_common.h>
+#include <api/native/attention.h>
 #include <cuda_bf16.h>
 #include <datatype/element.cuh>
 #include <memory/pipeline.cuh>
@@ -69,33 +69,32 @@ template <typename Traits> struct KVTileLoader {
     }
 };
 
-struct MaskView {
-    const bool* __restrict__ mask;
-    int b_stride, h_stride, l_stride;
-    int k_len, q_len;
+struct MaskRows {
     int batch, head0, head1;
     int qrow0, qrow1;
 };
 
 template <bool HasMask, bool MaskCoversShape = false> struct AttentionMask {
     const bool* __restrict__ mask;
-    int base0, base1, max_key0, max_key1;
+    int base0, base1, max_key0, max_key1, key_stride;
     bool valid0, valid1;
-    DEVICE_FORCEINLINE AttentionMask(MaskView view, int max0, int max1, bool row0, bool row1)
-        : mask(view.mask), base0(view.batch * view.b_stride + view.head0 * view.h_stride +
-                                 view.qrow0 * view.l_stride),
-          base1(view.batch * view.b_stride + view.head1 * view.h_stride +
-                view.qrow1 * view.l_stride),
-          max_key0(HasMask && !MaskCoversShape ? min(max0, view.k_len) : max0),
-          max_key1(HasMask && !MaskCoversShape ? min(max1, view.k_len) : max1),
+    DEVICE_FORCEINLINE
+    AttentionMask(const AttentionParams& p, MaskRows rows, int max0, int max1, bool row0, bool row1)
+        : mask(p.mask), base0(rows.batch * p.mask_b_stride + rows.head0 * p.mask_h_stride +
+                              rows.qrow0 * p.mask_q_stride),
+          base1(rows.batch * p.mask_b_stride + rows.head1 * p.mask_h_stride +
+                rows.qrow1 * p.mask_q_stride),
+          max_key0(HasMask && !MaskCoversShape ? min(max0, p.mask_k_size) : max0),
+          max_key1(HasMask && !MaskCoversShape ? min(max1, p.mask_k_size) : max1),
+          key_stride(p.mask_k_stride),
           valid0(row0 &&
-                 (!HasMask || MaskCoversShape || view.q_len == 1 || view.qrow0 < view.q_len)),
-          valid1(row1 &&
-                 (!HasMask || MaskCoversShape || view.q_len == 1 || view.qrow1 < view.q_len)) {}
+                 (!HasMask || MaskCoversShape || p.mask_q_size == 1 || rows.qrow0 < p.mask_q_size)),
+          valid1(row1 && (!HasMask || MaskCoversShape || p.mask_q_size == 1 ||
+                          rows.qrow1 < p.mask_q_size)) {}
 
     DEVICE_FORCEINLINE bool is_masked(int row, int key) const {
         return !(row ? valid1 : valid0) || key >= (row ? max_key1 : max_key0) ||
-               (HasMask && !mask[(row ? base1 : base0) + key]);
+               (HasMask && !mask[(row ? base1 : base0) + key * key_stride]);
     }
 };
 

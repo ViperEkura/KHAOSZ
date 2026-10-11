@@ -1,13 +1,12 @@
 /*
  * SGLang-style paged GQA prefill (flat KV pool, ragged batch via
  * qo_indptr/kv_indptr) — the implementation of the entry declared in
- * api/attention.h. Device-side code is in launcher/attention.cuh
+ * api/torch/attention.h. Device-side code is in launcher/attention.cuh
  * + kernel/attention/split_q.cuh.
  */
 
 #include "entry.h"
-#include <api/attention.h>
-#include <api/attention_dtypes.h>
+#include <api/torch/attention.h>
 #include <launcher/attention.cuh>
 
 namespace astrai {
@@ -36,7 +35,15 @@ torch::Tensor attn_paged_prefill(torch::Tensor q,
     auto O = torch::empty_strided(q.sizes(), q.strides(), q.options());
     p.o_ptr = O.data_ptr();
 
-    attn_dtype_dispatch<AttnDispatchPagedPrefill>(q.scalar_type(), p, stream);
+    visit_dtype<AttentionTypes>(
+        q.scalar_type(),
+        [&](auto tag) {
+            using T = typename decltype(tag)::Type;
+            AttnDispatchPagedPrefill<T>::run(p, stream);
+        },
+        [](at::ScalarType dtype) {
+            return unsupported_dtype_message<AttentionTypes>("attention", dtype);
+        });
     C10_CUDA_CHECK(cudaGetLastError());
     return O;
 }

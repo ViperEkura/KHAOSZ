@@ -2,15 +2,43 @@
 /* Shared by attention entry TUs for tensor checks, partial allocation, and packing. */
 #include <cmath>
 #include <float.h>
+#include <limits>
 
 #include <c10/cuda/CUDAGuard.h>
 #include <torch/extension.h>
 
-#include <api/attention_common.h>
+#include <api/native/attention.h>
+#include <api/torch/dispatch.cuh>
 #include <launcher/attention.cuh>
 
 namespace astrai {
 namespace attention {
+
+inline int checked_int(int64_t value, const char* name) {
+    TORCH_CHECK(value >= 0 && value <= std::numeric_limits<int>::max(),
+                name, " exceeds the nonnegative int32 range");
+    return static_cast<int>(value);
+}
+
+// Q, mask, and contiguous KV bases use int offsets inside the kernels.
+inline void check_int32_offset(const torch::Tensor& tensor,
+                               const char* name,
+                               int dimensions) {
+    int64_t last_offset = 0;
+    for (int dim = 0; dim < dimensions; ++dim) {
+        const int64_t last_index = tensor.size(dim) - 1;
+        if (last_index <= 0)
+            continue;
+        const int64_t stride = tensor.stride(dim);
+        TORCH_CHECK(stride >= 0 &&
+                        stride <= (std::numeric_limits<int>::max() - last_offset) / last_index,
+                    name, " indexed offset exceeds int32 range");
+        last_offset += last_index * stride;
+    }
+}
+
+/* Supported kernel element types, shared by the four Torch entries. */
+using AttentionTypes = TypeList<bf16, fp16>;
 
 // Micro-checks shared by the packers
 inline void check_int32(const torch::Tensor& t, const char* name) {
@@ -28,6 +56,11 @@ check_qkv_dtype(const torch::Tensor& q, const torch::Tensor& k, const torch::Ten
                 "), got ", k.scalar_type());
     TORCH_CHECK(v.scalar_type() == q.scalar_type(), "V dtype must match Q (", q.scalar_type(),
                 "), got ", v.scalar_type());
+    visit_dtype<AttentionTypes>(
+        q.scalar_type(), [](auto) {},
+        [](at::ScalarType dtype) {
+            return unsupported_dtype_message<AttentionTypes>("attention", dtype);
+        });
 }
 
 /* Resolve the default scale; the entry fills output pointers after packing. */
@@ -36,6 +69,10 @@ inline void finish_pack(c10::optional<double> scale, AttentionParams& p) {
     TORCH_CHECK(std::isfinite(value) && value > 0.0 && std::isfinite((float)value) &&
                     (float)value > 0.0f,
                 "native attention scale must be finite and positive");
+    TORCH_CHECK(p.batch > 0 && p.q_head > 0 && p.kv_head > 0 && p.q_len > 0,
+                "attention batch, heads, and query length must be positive");
+    checked_int(static_cast<int64_t>(p.batch) * p.q_head, "attention batch * q_head");
+    with_head_dim(p.head_dim, [](auto) {});
     p.scale = (float)value;
     p.o_ptr = nullptr;
     p.o_part = nullptr;
@@ -109,14 +146,15 @@ inline void extract_q_dims_and_strides(torch::Tensor& q, int64_t layout, Attenti
     TORCH_CHECK(layout == BHLD || layout == BLHD, "unknown attention tensor layout");
     if (layout == BLHD)
         q = q.transpose(1, 2);
-    p.batch = (int)q.size(0);
-    p.q_head = (int)q.size(1);
-    p.q_len = (int)q.size(2);
-    p.head_dim = (int)q.size(3);
-    p.q_b_stride = (int)q.stride(0);
-    p.q_h_stride = (int)q.stride(1);
-    p.q_l_stride = (int)q.stride(2);
-    p.q_d_stride = (int)q.stride(3);
+    check_int32_offset(q, "Q", 4);
+    p.batch = checked_int(q.size(0), "q size(0)");
+    p.q_head = checked_int(q.size(1), "q size(1)");
+    p.q_len = checked_int(q.size(2), "q size(2)");
+    p.head_dim = checked_int(q.size(3), "q size(3)");
+    p.q_b_stride = checked_int(q.stride(0), "q stride(0)");
+    p.q_h_stride = checked_int(q.stride(1), "q stride(1)");
+    p.q_l_stride = checked_int(q.stride(2), "q stride(2)");
+    p.q_d_stride = checked_int(q.stride(3), "q stride(3)");
 }
 
 /*
@@ -126,28 +164,16 @@ inline void extract_q_dims_and_strides(torch::Tensor& q, int64_t layout, Attenti
  * Head/q dimensions with size 1 broadcast (stride set to 0).
  */
 
-// Stride of a mask dim that broadcasts when its extent is 1.
-inline int bc_stride(const torch::Tensor& m, int dim) {
-    return (m.size(dim) == 1) ? 0 : (int)m.stride(dim);
-}
-
-inline void set_mask_null(AttentionParams& p) {
-    p.mask = nullptr;
-    p.mask_b_stride = 0;
-    p.mask_h_stride = 0;
-    p.mask_l_stride = 0;
-    p.mask_k_len = 0;
-    p.mask_q_len = 0;
-}
-
 inline void pack_mask(const c10::optional<torch::Tensor>& mask,
                       AttentionParams& p,
                       const torch::Device& device,
                       bool paged = false) {
-    if (!mask.has_value() || !mask->defined()) {
-        set_mask_null(p);
+    p.mask = nullptr;
+    p.mask_b_size = p.mask_h_size = p.mask_q_size = 1;
+    p.mask_k_size = 0;
+    p.mask_b_stride = p.mask_h_stride = p.mask_q_stride = p.mask_k_stride = 0;
+    if (!mask.has_value() || !mask->defined())
         return;
-    }
     const auto& m = mask.value();
     TORCH_CHECK(m.device() == device && m.dtype() == torch::kBool,
                 "mask must be bool on Q's device");
@@ -157,23 +183,25 @@ inline void pack_mask(const c10::optional<torch::Tensor>& mask,
     const int limit = paged ? p.max_context_len : p.kv_len;
     TORCH_CHECK(paged ? (m.size(-1) > 0 && m.size(-1) <= limit) : m.size(-1) == limit,
                 "mask kv_len mismatch");
+
+    check_int32_offset(m, "mask", m.dim());
     p.mask = m.data_ptr<bool>();
-    p.mask_b_stride = bc_stride(m, 0);
-    p.mask_h_stride = 0;
-    p.mask_l_stride = 0;
-    p.mask_k_len = (int)m.size(-1);
-    p.mask_q_len = 1;
+    p.mask_b_size = checked_int(m.size(0), "m size(0)");
+    p.mask_k_size = checked_int(m.size(-1), "m size(-1)");
+    p.mask_b_stride = p.mask_b_size == 1 ? 0 : checked_int(m.stride(0), "m stride(0)");
+    p.mask_k_stride = checked_int(m.stride(-1), "m stride(-1)");
     if (m.dim() == 4) {
         TORCH_CHECK(m.size(1) == 1 || m.size(1) == p.q_head, "mask head mismatch");
-        p.mask_h_stride = bc_stride(m, 1);
+        p.mask_h_size = checked_int(m.size(1), "m size(1)");
+        p.mask_h_stride = p.mask_h_size == 1 ? 0 : checked_int(m.stride(1), "m stride(1)");
     }
     if (m.dim() >= 3) {
         const int q_dim = (int)m.dim() - 2;
         TORCH_CHECK(m.size(q_dim) == 1 || (paged ? (m.size(q_dim) > 0 && m.size(q_dim) <= p.q_len)
                                                  : m.size(q_dim) == p.q_len),
                     "mask q_len mismatch");
-        p.mask_l_stride = bc_stride(m, q_dim);
-        p.mask_q_len = (int)m.size(q_dim);
+        p.mask_q_size = checked_int(m.size(q_dim), "m size(q_dim)");
+        p.mask_q_stride = p.mask_q_size == 1 ? 0 : checked_int(m.stride(q_dim), "m stride(q_dim)");
     }
 }
 
@@ -197,18 +225,26 @@ inline void attn_pack_params(torch::Tensor q,
         k = k.transpose(1, 2), v = v.transpose(1, 2);
 
     TORCH_CHECK(k.size(0) == p.batch, "K/V batch must match Q");
-    p.kv_head = (int)k.size(1);
-    p.kv_len = (int)k.size(2);
+    p.kv_head = checked_int(k.size(1), "k size(1)");
+    p.kv_len = checked_int(k.size(2), "k size(2)");
+    TORCH_CHECK(p.kv_len > 0 && p.kv_len <= std::numeric_limits<int>::max() - 16,
+                "K/V sequence length must fit attention tile arithmetic");
+
     TORCH_CHECK(p.kv_head > 0 && p.q_head > 0 && p.q_head % p.kv_head == 0,
                 "q_head must be divisible by kv_head");
     TORCH_CHECK(k.size(3) == p.head_dim, "K/V head_dim must match Q");
+    check_int32_offset(k, "K/V base", 2);
+    TORCH_CHECK(static_cast<int64_t>(p.q_len) * (p.q_head / p.kv_head) <=
+                    std::numeric_limits<int>::max() - 1024,
+                "packed query rows exceed int32 range");
+
     TORCH_CHECK(q.stride(3) == 1 && k.stride(3) == 1 && v.stride(3) == 1,
                 "Q/K/V head_dim must be contiguous");
 
-    p.kv_b_stride = (int)k.stride(0);
-    p.kv_h_stride = (int)k.stride(1);
-    p.kv_l_stride = (int)k.stride(2);
-    p.kv_d_stride = (int)k.stride(3);
+    p.kv_b_stride = checked_int(k.stride(0), "k stride(0)");
+    p.kv_h_stride = checked_int(k.stride(1), "k stride(1)");
+    p.kv_l_stride = checked_int(k.stride(2), "k stride(2)");
+    p.kv_d_stride = checked_int(k.stride(3), "k stride(3)");
 
     p.is_causal = is_causal;
 
@@ -250,18 +286,19 @@ inline void pack_paged_common(torch::Tensor& q,
     }
     TORCH_CHECK(req_to_token.dim() == 2 && req_pool_indices.dim() == 1 && kv_indptr.dim() == 1,
                 "invalid paged metadata rank");
-    p.q_head = (int)q.size(1);
-    p.head_dim = (int)q.size(2);
-    p.kv_head = (int)k_cache.size(1);
+    p.q_head = checked_int(q.size(1), "q size(1)");
+    p.head_dim = checked_int(q.size(2), "q size(2)");
+    p.kv_head = checked_int(k_cache.size(1), "k_cache size(1)");
     TORCH_CHECK(k_cache.size(2) == p.head_dim, "k_cache head_dim mismatch");
     TORCH_CHECK(q.stride(2) == 1 && k_cache.stride(2) == 1 && v_cache.stride(2) == 1,
                 "Q/K/V head_dim must be contiguous");
     TORCH_CHECK(p.kv_head > 0 && p.q_head > 0 && p.q_head % p.kv_head == 0,
                 "q_head must be divisible by kv_head");
 
-    p.q_l_stride = (int)q.stride(0);
-    p.q_h_stride = (int)q.stride(1);
-    p.q_d_stride = (int)q.stride(2);
+    check_int32_offset(q, "Q", 3);
+    p.q_l_stride = checked_int(q.stride(0), "q stride(0)");
+    p.q_h_stride = checked_int(q.stride(1), "q stride(1)");
+    p.q_d_stride = checked_int(q.stride(2), "q stride(2)");
 
     p.k_ptr = k_cache.data_ptr();
     p.v_ptr = v_cache.data_ptr();
@@ -269,7 +306,8 @@ inline void pack_paged_common(torch::Tensor& q,
     p.req_to_token = req_to_token.data_ptr<int>();
     p.req_pool_indices = req_pool_indices.data_ptr<int>();
     p.kv_indptr = kv_indptr.data_ptr<int>();
-    p.max_context_len = (int)req_to_token.size(1);
+    p.max_context_len = checked_int(req_to_token.size(1), "req_to_token size(1)");
+    TORCH_CHECK(p.max_context_len > 0, "req_to_token context length must be positive");
 }
 
 /*
@@ -290,9 +328,9 @@ inline void attn_pack_paged_decode_params(torch::Tensor q,
                                           AttentionParams& p,
                                           bool is_causal) {
     pack_paged_common(q, k_cache, v_cache, req_to_token, req_pool_indices, kv_indptr, p);
-    p.batch = (int)q.size(0);
+    p.batch = checked_int(q.size(0), "q size(0)");
     p.q_len = 1;
-    TORCH_CHECK(req_pool_indices.size(0) == p.batch && kv_indptr.size(0) == p.batch + 1,
+    TORCH_CHECK(req_pool_indices.size(0) == p.batch && kv_indptr.size(0) == static_cast<int64_t>(p.batch) + 1,
                 "decode metadata batch mismatch");
     TORCH_CHECK(p.head_dim % 32 == 0, "head_dim must be multiple of 32");
     p.qo_indptr = nullptr;
@@ -315,8 +353,8 @@ inline void attn_pack_paged_decode_params(torch::Tensor q,
         TORCH_CHECK(nk.stride(2) == 1 && nv.stride(2) == 1, "new K/V head_dim must be contiguous");
         p.new_k_ptr = nk.data_ptr();
         p.new_v_ptr = nv.data_ptr();
-        p.new_kv_b_stride = (int)nk.stride(0);
-        p.new_kv_h_stride = (int)nk.stride(1);
+        p.new_kv_b_stride = checked_int(nk.stride(0), "nk stride(0)");
+        p.new_kv_h_stride = checked_int(nk.stride(1), "nk stride(1)");
     } else {
         p.new_k_ptr = nullptr;
         p.new_v_ptr = nullptr;
@@ -359,11 +397,11 @@ inline void attn_pack_paged_prefill_params(torch::Tensor q,
                     "prefill metadata must be contiguous on Q's device");
     }
 
-    p.q_len = (int)q.size(0);
-    p.batch = (int)req_pool_indices.size(0);
+    p.q_len = checked_int(q.size(0), "q size(0)");
+    p.batch = checked_int(req_pool_indices.size(0), "req_pool_indices size(0)");
     TORCH_CHECK(p.head_dim % 16 == 0, "head_dim must be multiple of 16");
-    TORCH_CHECK(kv_indptr.size(0) == p.batch + 1, "kv_indptr must be [batch+1]");
-    TORCH_CHECK(qo_indptr.size(0) == p.batch + 1, "qo_indptr must be [batch+1]");
+    TORCH_CHECK(kv_indptr.size(0) == static_cast<int64_t>(p.batch) + 1, "kv_indptr must be [batch+1]");
+    TORCH_CHECK(qo_indptr.size(0) == static_cast<int64_t>(p.batch) + 1, "qo_indptr must be [batch+1]");
     TORCH_CHECK(q_tile_to_batch.dim() == 1 && q_tile_to_index.dim() == 1,
                 "Q tile mappings must be 1D");
     TORCH_CHECK(q_tile_to_batch.size(0) == q_tile_to_index.size(0),
@@ -374,7 +412,13 @@ inline void attn_pack_paged_prefill_params(torch::Tensor q,
     p.qo_indptr = qo_indptr.data_ptr<int>();
     p.q_tile_to_batch = q_tile_to_batch.data_ptr<int>();
     p.q_tile_to_index = q_tile_to_index.data_ptr<int>();
-    p.num_q_tiles = (int)q_tile_to_batch.size(0);
+    p.num_q_tiles = checked_int(q_tile_to_batch.size(0), "q_tile_to_batch size(0)");
+    TORCH_CHECK(p.num_q_tiles > 0, "paged prefill needs at least one query tile");
+    TORCH_CHECK(p.num_q_tiles <=
+                    (std::numeric_limits<int>::max() / HOST_Q_TILE_ROWS) /
+                        (p.q_head / p.kv_head),
+                "paged prefill work grid exceeds int32 range");
+
 
     p.is_causal = is_causal;
     pack_mask(mask, p, q.device(), true);

@@ -3,7 +3,7 @@
 The kernels are dtype-agnostic at the ABI (void* pointers, the element type
 being a compile-time kernel parameter) and instantiated per element type; each
 entry switches on q's ``at::ScalarType`` over the family's instantiation list
-(``ASTRAI_ATTN_DTYPE_LIST``) and refuses anything else.  These tests pin the two
+(``AttentionTypes``) and refuses anything else.  These tests pin the two
 halves of that contract: the instantiated type runs, and any other precision
 fails loudly instead of being reinterpreted as the instantiated one — the
 failure mode that matters, since a void* carries no type of its own.
@@ -74,16 +74,17 @@ ENTRIES = {
 
 @skip_no_kernel
 @pytest.mark.parametrize("entry", sorted(ENTRIES))
-def test_instantiated_dtype_runs(entry):
-    """The build's instantiated element type (bf16) runs and returns it."""
-    out = ENTRIES[entry](torch.bfloat16)
-    assert out.dtype == torch.bfloat16
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_instantiated_dtype_runs(entry, dtype):
+    """Both instantiated element types run and preserve output precision."""
+    out = ENTRIES[entry](dtype)
+    assert out.dtype == dtype
     assert torch.isfinite(out).all()
 
 
 @skip_no_kernel
 @pytest.mark.parametrize("entry", sorted(ENTRIES))
-@pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
+@pytest.mark.parametrize("dtype", [torch.float32])
 def test_other_dtype_rejected(entry, dtype):
     """A precision with no kernel instantiation is refused, not reinterpreted.
 
@@ -92,15 +93,16 @@ def test_other_dtype_rejected(entry, dtype):
     silently running the bf16 kernel on these bytes would return finite garbage.
     """
     with pytest.raises(
-        RuntimeError, match=r"has no kernel for .*\(instantiated: BFloat16\)"
+        RuntimeError, match=r"has no kernel for .*\(instantiated: BFloat16, Half\)"
     ):
         ENTRIES[entry](dtype)
 
 
 @skip_no_kernel
-def test_uninstantiated_head_dim_raises():
-    q = torch.zeros(1, 1, N_HEADS, 96, device="cuda", dtype=torch.bfloat16)
-    k = torch.zeros(1, KV_LEN, N_KV_HEADS, 96, device="cuda", dtype=torch.bfloat16)
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_uninstantiated_head_dim_raises(dtype):
+    q = torch.zeros(1, 1, N_HEADS, 96, device="cuda", dtype=dtype)
+    k = torch.zeros(1, KV_LEN, N_KV_HEADS, 96, device="cuda", dtype=dtype)
     with pytest.raises(RuntimeError, match="head_dim 96 has no kernel instantiation"):
         attn_decode(q, k, k)
 
@@ -133,9 +135,10 @@ def _reference(q, k, v, mask=None, causal=False, scale=None):
 @skip_no_kernel
 @pytest.mark.parametrize("q_len,kv_len", [(13, 7), (7, 13), (7, 7), (137, 7)])
 @pytest.mark.parametrize("causal", [False, True])
-def test_prefill_signed_query_positions(q_len, kv_len, causal):
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_prefill_signed_query_positions(dtype, q_len, kv_len, causal):
     torch.manual_seed(19)
-    q = torch.randn(2, q_len, 6, 64, device="cuda", dtype=torch.bfloat16)
+    q = torch.randn(2, q_len, 6, 64, device="cuda", dtype=dtype)
     k = torch.randn(2, kv_len, 2, 64, device="cuda", dtype=q.dtype)
     v = torch.randn_like(k)
     out = attn_prefill(q, k, v, is_causal=causal, scale=0.17)
@@ -147,10 +150,11 @@ def test_prefill_signed_query_positions(q_len, kv_len, causal):
 
 @skip_no_kernel
 @pytest.mark.parametrize("kv_len", [15, 127, 513])
-def test_decode_mask_broadcast_and_temporary_workspace(kv_len):
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_decode_mask_broadcast_and_temporary_workspace(dtype, kv_len):
     torch.manual_seed(20)
     # Preserve noncontiguous batch/head strides in the output.
-    q = torch.randn(2, 1, 12, 64, device="cuda", dtype=torch.bfloat16)[:, :, ::2]
+    q = torch.randn(2, 1, 12, 64, device="cuda", dtype=dtype)[:, :, ::2]
     k = torch.randn(2, kv_len, 2, 64, device="cuda", dtype=q.dtype)
     v = torch.randn_like(k)
     mask = torch.ones(1, 6, 1, kv_len, device="cuda", dtype=torch.bool)
@@ -170,11 +174,12 @@ def test_decode_mask_broadcast_and_temporary_workspace(kv_len):
 
 @skip_no_kernel
 @pytest.mark.parametrize("dim,width", [(64, 31), (256, 31), (64, 513), (256, 513)])
-def test_paged_decode_graph_replays_split_append(dim, width):
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_paged_decode_graph_replays_split_append(dtype, dim, width):
     torch.manual_seed(21)
     batch, heads, kv_heads = 2, 6, 2
     length_cases = ((15, 7), (9, 13)) if width == 31 else ((257, 499), (479, 193))
-    q = torch.randn(batch, heads, dim, device="cuda", dtype=torch.bfloat16)
+    q = torch.randn(batch, heads, dim, device="cuda", dtype=dtype)
     k_cache = torch.randn(batch * width, kv_heads, dim, device="cuda", dtype=q.dtype)
     v_cache = torch.randn_like(k_cache)
     table = torch.arange(batch * width, device="cuda", dtype=torch.int32).view(
@@ -242,11 +247,12 @@ def test_paged_decode_graph_replays_split_append(dim, width):
 
 @skip_no_kernel
 @pytest.mark.parametrize("dim", [64, 128, 256])
-def test_paged_decode_large_graph_reuses_shorter_lengths(dim):
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_paged_decode_large_graph_reuses_shorter_lengths(dtype, dim):
     torch.manual_seed(26)
     batch, heads, kv_heads, width = 2, 6, 2, 8192
     length_cases = ((8191, 1), (17, 33), (1, 513), (0, 2048))
-    q = torch.randn(batch, heads, dim, device="cuda", dtype=torch.bfloat16)
+    q = torch.randn(batch, heads, dim, device="cuda", dtype=dtype)
     k_cache = torch.randn(batch * width, kv_heads, dim, device="cuda", dtype=q.dtype)
     v_cache = torch.randn_like(k_cache)
     table = torch.arange(batch * width, device="cuda", dtype=torch.int32).view(
@@ -323,10 +329,11 @@ def test_paged_decode_large_graph_reuses_shorter_lengths(dim):
 @skip_no_kernel
 @pytest.mark.parametrize("dim,length,masked", [(64, 13, False), (256, 193, True)])
 @pytest.mark.parametrize("layout", ["aligned", "k_offset", "v_offset", "outer_strides"])
-def test_paged_decode_append_strided_sources(dim, length, masked, layout):
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_paged_decode_append_strided_sources(dtype, dim, length, masked, layout):
     torch.manual_seed(24)
     batch, heads, kv_heads, width = 2, 6, 2, length + 7
-    q = torch.randn(batch, heads, dim, device="cuda", dtype=torch.bfloat16)
+    q = torch.randn(batch, heads, dim, device="cuda", dtype=dtype)
     lengths = (length, length - 6)
     head_stride = dim + (1 if layout == "outer_strides" else 8)
     batch_stride = kv_heads * head_stride + (1 if layout == "outer_strides" else 8)
@@ -394,10 +401,11 @@ def test_paged_decode_append_strided_sources(dim, length, masked, layout):
 
 @skip_no_kernel
 @pytest.mark.parametrize("unaligned_cache", ["k", "v"])
-def test_paged_decode_single_token_unaligned_cache_graph(unaligned_cache):
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_paged_decode_single_token_unaligned_cache_graph(dtype, unaligned_cache):
     torch.manual_seed(26)
     heads, kv_heads, dim, pool_size, slot = 6, 2, 64, 3, 1
-    q = torch.randn(1, heads, dim, device="cuda", dtype=torch.bfloat16)
+    q = torch.randn(1, heads, dim, device="cuda", dtype=dtype)
     new_k = torch.randn(1, kv_heads, dim, device="cuda", dtype=q.dtype)
     new_v = torch.randn_like(new_k)
     offsets = (1, 8) if unaligned_cache == "k" else (8, 1)
@@ -459,11 +467,12 @@ def test_paged_decode_single_token_unaligned_cache_graph(unaligned_cache):
 
 @skip_no_kernel
 @pytest.mark.parametrize("dim", [32, 64, 128, 256])
-def test_paged_decode_combines_empty_and_partial_splits(dim):
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_paged_decode_combines_empty_and_partial_splits(dtype, dim):
     torch.manual_seed(25)
     batch, heads, kv_heads, width = 2, 6, 2, 97
     lengths = (3, 81)
-    q = torch.randn(batch, heads, dim, device="cuda", dtype=torch.bfloat16)
+    q = torch.randn(batch, heads, dim, device="cuda", dtype=dtype)
     k_cache = torch.randn(batch * width, kv_heads, dim, device="cuda", dtype=q.dtype)
     v_cache = torch.randn_like(k_cache)
     table = torch.arange(batch * width, device="cuda", dtype=torch.int32).view(
@@ -511,11 +520,35 @@ def test_native_scale_never_silently_uses_default(scale):
 
 
 @skip_no_kernel
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+@pytest.mark.parametrize("causal", [False, True])
+@pytest.mark.parametrize(
+    "shape", [(2, 6, 17, 23), (1, 6, 17, 23), (2, 1, 17, 23), (2, 6, 1, 23)]
+)
+def test_prefill_four_axis_mask_layout(dtype, causal, shape):
+    torch.manual_seed(28)
+    q = torch.randn(2, 17, 6, 64, device="cuda", dtype=dtype)
+    k = torch.randn(2, 23, 2, 64, device="cuda", dtype=dtype)
+    v = torch.randn_like(k)
+    storage = (
+        torch.rand(*(2 * size for size in shape[:3]), shape[3] + 4, device="cuda")
+        > 0.25
+    )
+    mask = storage[::2, ::2, ::2, : shape[3]]
+    if shape[2] > 1:
+        mask[:, :, -1] = False
+    out = attn_prefill(q, k, v, mask=mask, is_causal=causal, scale=0.17)
+    ref = _reference(q, k, v, mask=mask, causal=causal, scale=0.17)
+    torch.testing.assert_close(out, ref, atol=0.03, rtol=0.03)
+
+
+@skip_no_kernel
 @pytest.mark.parametrize("rank", [2, 3, 4])
 @pytest.mark.parametrize("causal", [False, True])
-def test_prefill_mask_query_axis_broadcast(rank, causal):
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_prefill_mask_query_axis_broadcast(dtype, rank, causal):
     torch.manual_seed(22)
-    q = torch.randn(2, 17, 6, 64, device="cuda", dtype=torch.bfloat16)
+    q = torch.randn(2, 17, 6, 64, device="cuda", dtype=dtype)
     k = torch.randn(2, 23, 2, 64, device="cuda", dtype=q.dtype)
     v = torch.randn_like(k)
     mask = torch.ones(1, 23, device="cuda", dtype=torch.bool)
@@ -534,10 +567,11 @@ def test_prefill_mask_query_axis_broadcast(rank, causal):
 @pytest.mark.parametrize(
     "q_lens,kv_lens", [((1, 65), (129, 192)), ((1, 1025), (129, 1152))]
 )
-def test_paged_prefill_ragged_tile_boundary(causal, q_lens, kv_lens):
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_paged_prefill_ragged_tile_boundary(dtype, causal, q_lens, kv_lens):
     torch.manual_seed(27)
     batch, width, heads, kv_heads, dim = 2, max(kv_lens), 6, 1, 64
-    q = torch.randn(sum(q_lens), heads, dim, device="cuda", dtype=torch.bfloat16)
+    q = torch.randn(sum(q_lens), heads, dim, device="cuda", dtype=dtype)
     k_cache = torch.randn(batch * width, kv_heads, dim, device="cuda", dtype=q.dtype)
     v_cache = torch.randn_like(k_cache)
     table = torch.arange(batch * width, device="cuda", dtype=torch.int32).view(
@@ -594,11 +628,12 @@ def test_paged_prefill_ragged_tile_boundary(causal, q_lens, kv_lens):
     ids=["broadcast", "short", "expanded_short"],
 )
 @pytest.mark.parametrize("mask_cols", [7, 19])
-def test_paged_prefill_short_mask_bounds(mask_rows, expand_rows, mask_cols):
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_paged_prefill_short_mask_bounds(dtype, mask_rows, expand_rows, mask_cols):
     torch.manual_seed(23)
     q_lens, kv_lens = (5, 9), (11, 17)
     batch, width, heads, kv_heads, dim = 2, 19, 6, 2, 64
-    q = torch.randn(sum(q_lens), heads, dim, device="cuda", dtype=torch.bfloat16)
+    q = torch.randn(sum(q_lens), heads, dim, device="cuda", dtype=dtype)
     k_cache = torch.randn(batch * width, kv_heads, dim, device="cuda", dtype=q.dtype)
     v_cache = torch.randn_like(k_cache)
     table = torch.arange(batch * width, device="cuda", dtype=torch.int32).view(

@@ -1,13 +1,12 @@
 /*
  * GQA decode (split-KV FlashDecoding), contiguous K/V — the implementation
- * of the entry declared in api/attention.h (the gated_deltanet_fwd.cu
+ * of the entry declared in api/torch/attention.h (the gated_deltanet_fwd.cu
  * shape). Device-side code (kernels, launchers, dispatchers) is in
  * launcher/attention.cuh + kernel/attention/split_kv.cuh.
  */
 
 #include "entry.h"
-#include <api/attention.h>
-#include <api/attention_dtypes.h>
+#include <api/torch/attention.h>
 #include <launcher/attention.cuh>
 
 namespace astrai {
@@ -35,7 +34,15 @@ torch::Tensor attn_decode(torch::Tensor q,
     p.o_ptr = O_view.data_ptr();
 
     DecodeCall call{p, q, o_part_buf, ml_part_buf};
-    attn_dtype_dispatch<ContiguousDecodeEntry>(q.scalar_type(), call, stream);
+    visit_dtype<AttentionTypes>(
+        q.scalar_type(),
+        [&](auto tag) {
+            using T = typename decltype(tag)::Type;
+            ContiguousDecodeEntry<T>::run(call, stream);
+        },
+        [](at::ScalarType dtype) {
+            return unsupported_dtype_message<AttentionTypes>("attention", dtype);
+        });
     C10_CUDA_CHECK(cudaGetLastError());
     return O;
 }

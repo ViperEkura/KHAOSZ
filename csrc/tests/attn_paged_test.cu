@@ -446,9 +446,14 @@ static int run_decode_mask_test(int B, int Hq, int Hkv, int max_seq, int seed) {
     AttentionParams p = rig.base_params();
     p.is_causal = false;
     p.mask = rig.d_mask;
+    p.mask_b_size = B;
+    p.mask_h_size = 1;
+    p.mask_q_size = 1;
+    p.mask_k_size = rig.max_sl;
     p.mask_b_stride = rig.max_sl;
-    p.mask_k_len = rig.max_sl;
-    p.mask_q_len = 1;
+    p.mask_h_stride = 0;
+    p.mask_q_stride = 0;
+    p.mask_k_stride = 1;
     AttnDispatchPagedDecode<bf16>::run(p, 0);
     cudaDeviceSynchronize();
 
@@ -546,10 +551,14 @@ template <int HEAD_DIM> static int run_prefill_mask_test(int Hq, int Hkv, int q_
     AttentionParams p = rig.base_params();
     p.is_causal = false;
     p.mask = rig.d_mask;
-    p.mask_b_stride = q_len * q_len;
-    p.mask_l_stride = q_len;
-    p.mask_k_len = q_len;
-    p.mask_q_len = q_len;
+    p.mask_b_size = 1;
+    p.mask_h_size = 1;
+    p.mask_q_size = q_len;
+    p.mask_k_size = q_len;
+    p.mask_b_stride = 0;
+    p.mask_h_stride = 0;
+    p.mask_q_stride = q_len;
+    p.mask_k_stride = 1;
     p.q_tile_to_batch = d_qtb;
     p.q_tile_to_index = d_qti;
     p.num_q_tiles = num_q_tiles;

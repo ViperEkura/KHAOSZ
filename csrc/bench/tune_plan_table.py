@@ -15,7 +15,7 @@ stages, so they keep separate GPU clock and thermal states.
 
 Row tables are served at runtime through ``kernel.gemm.set_table`` (no
 rebuild, no environment variable); an emitted row file can also be pasted
-into csrc/gemm/plan_table_builtin.cpp's GENERATED block, which does
+into csrc/gemm/plan/builtin.cpp's GENERATED block, which does
 require a rebuild. The legacy ``model`` recipe label measures the default
 heuristic with every row tier off, the reference of the min-gain mode.
 """
@@ -50,7 +50,7 @@ def cli() -> None:
 
 # Combo name -> (activation dtype, weight dtype). Scales: int8 operands
 # require their dequant scale, fp8 accept one optionally (a [1] per-tensor
-# scalar), bf16 rejects one. Matches the csrc dispatch (gemm.cu).
+# scalar), bf16 rejects one. Matches the csrc dispatch (gemm/entry.cu).
 COMBOS: dict[str, tuple[torch.dtype, torch.dtype]] = {
     "w16a16": (torch.bfloat16, torch.bfloat16),
     "w8a16": (torch.bfloat16, torch.int8),
@@ -74,11 +74,11 @@ PERF_CLASS: dict[str, int] = {
 # A recipe is one tile: its CTA class, its ring depth and its k-tile depth,
 # written as a row file's (cta, k_stages, k_tile) — which is exactly the dispatch
 # key dispatch_tile matches on. The vocabulary is single-sourced from the
-# compiled binding (kernel.gemm.tile_vocabulary -> planning.cpp manifests):
+# compiled binding (kernel.gemm.tile_vocabulary -> gemm/plan/planner.cpp manifests):
 # the extension returns, per staging pair, every dispatch key the ladders
 # carry in dispatch (manifest) order, deduped by its own first-match rule —
 # the same rule dispatch_tile applies — so this file cannot disagree with
-# policy.cuh's manifests. Names come from the vocabulary record itself
+# policy/gemm/manifest.h's manifests. Names come from the vocabulary record itself
 # (``Tile.name``, whose spelling the bench emits on the C++ side), which is
 # how dataset recipe strings join without a second mapping — and without a
 # second spelling of the format.
@@ -159,12 +159,12 @@ if _missing:
     raise RuntimeError(
         f"vocabulary read from the tile_vocabulary binding missed {_missing}: "
         f"a stale extension build? Rebuild gemm before tuning (the binding "
-        f"and policy.cuh ship in the same library)."
+        f"and policy/gemm.cuh ship in the same library)."
     )
 
 
 def ladder_for_widths(ba: int, bb: int) -> str:
-    """The grouping the binding uses (manifest_for in policy.cuh): 2-byte
+    """The grouping the binding uses (manifest_for in policy/gemm/manifest.h): 2-byte
     and mixed pairs get the congruous ladder, 1-byte pairs the byte one, a
     crosswise problem the shared six. The sweep is NT (crosswise 0), so a
     mixed width pair rides the kK=32 twins now (the 1-byte bus is a
@@ -204,7 +204,7 @@ def reachability_report() -> list[str]:
 # Mirror planner feasibility: TMA adds alignment pad and mbarriers to the ring.
 # An over-budget recipe would silently fall back to cp.async during a sweep.
 # class -> CTA (M, N), the inverse of the same map that names the ordinals
-# (policy.cuh's kTileClassCta is the C++ home for these numbers).
+# (policy/gemm/manifest.h's kTileClassCta is the C++ home for these numbers).
 CTA_GEOM: dict[int, tuple[int, int]] = {v: k for k, v in _CLASS_OF.items()}
 _DTYPE_BYTES = {
     torch.bfloat16: 2,
@@ -832,7 +832,7 @@ def _sweep_parallel(
     default="rows",
     show_default=True,
     help="rows: the row-file syntax; cpp: TileClass initializers, "
-    "grouped per class, ready to paste into plan_table_builtin.cpp's GENERATED block.",
+    "grouped per class, ready to paste into gemm/plan/builtin.cpp's GENERATED block.",
 )
 @click.option("--warmup", type=click.IntRange(min=1), default=10, show_default=True)
 @click.option("--iterations", type=click.IntRange(min=1), default=50, show_default=True)
@@ -888,7 +888,7 @@ def _sweep_parallel(
     "--list-recipes",
     is_flag=True,
     default=False,
-    help="Print the candidate vocabulary this process reads out of policy.cuh, "
+    help="Print the candidate vocabulary this process reads out of policy/gemm.cuh, "
     "with the tiles no row can reach, and exit.",
 )
 def plan_table_command(
@@ -931,7 +931,7 @@ def plan_table_command(
     if unknown_recipes:
         raise click.BadParameter(
             f"unknown recipes: {', '.join(unknown_recipes)}; --list-recipes "
-            f"prints the vocabulary read from policy.cuh"
+            f"prints the vocabulary read from policy/gemm.cuh"
         )
     unknown = [combo for combo in combos if combo not in COMBOS]
     if unknown:
@@ -1509,7 +1509,7 @@ def main(
     )
 
 
-# The byte-pair floor the model owns (model_plan in planning.cpp): m <= 8 on a
+# The byte-pair floor the model owns (model_plan in gemm/plan/planner.cpp): m <= 8 on a
 # 1-byte x 1-byte pair is bandwidth-floor-bound, every candidate measured
 # identical, so a row there would only override the rule with noise.
 FLOOR_MMAX = 8

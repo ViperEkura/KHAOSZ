@@ -35,6 +35,24 @@ calls (`fwd=None`, no KV cache) resolve by capability: the CUDA cache kernels
 cannot run without a cache, so they fall back to flash (mask-free/causal calls
 only) and finally to torch SDPA.
 
+## Native dtype dispatch
+
+All four native attention entries instantiate BF16 and FP16 for Q, K, V and
+output, with FP32 accumulation. Q/K/V must share one dtype. FP16 uses the
+`mma.sync.m16n8k16` FP16 warp atom; both precisions reuse the same tile,
+workspace, mask and KV-layout implementation. FP32 is not a native attention
+instantiation and continues through backend fallback when selected implicitly.
+
+The private `csrc/attention/entry.h` owns
+`AttentionTypes = TypeList<bf16, fp16>`, shared by the four Torch entries.
+Each entry calls `visit_dtype<AttentionTypes>` directly and selects its
+launcher in the callback. The visitor, CUDA element/ScalarType mapping and
+`unsupported_dtype_message<List>` formatter live in
+`csrc/include/api/torch/dispatch.cuh`; the formatter also serves quantize.
+Torch dtype names and classification stay in the CUDA-free `api/torch/dtype.h`.
+Supported-type diagnostics derive from the same list used by dispatch.
+`api/native/attention.h` remains the framework-free parameter contract; `api/torch/attention.h` declares the Tensor entry points.
+
 ## Python Wrappers
 
 `astrai/extension/kernel/attention.py` provides Python wrappers for each compiled attention kernel. Each wrapper calls its CUDA kernel directly and raises `RuntimeError` if the `.so` is not available. Fallback to torch SDPA is handled by the attention backend, not the wrapper functions.
@@ -143,11 +161,19 @@ accumulation. Empty splits contribute zero, including fully masked rows.
 ## Parameter boundaries
 
 The native parameter struct groups pointers first, then shapes, strides and
-control values, using natural alignment. Mask metadata stays directly in
-`AttentionParams`: `mask_b_stride`, `mask_h_stride` and `mask_l_stride`
-follow the tensor stride names (`l` is the query sequence axis), while
-`mask_k_len` and `mask_q_len` bound the key and query axes. Separate bounds
-preserve partial paged masks and singleton query broadcast.
+control values, using natural alignment. `AttentionParams` carries the Boolean mask pointer plus flat
+`int` shape and stride fields in `[batch, head, query, key]` order:
+`mask_{b,h,q,k}_size` and `mask_{b,h,q,k}_stride`. Entry reads these from the
+mask tensor and inserts singleton axes for 2D/3D inputs. Singleton batch,
+head and query axes use zero strides; expanded axes keep their original
+shape bounds, even when their storage stride is zero. Batch/head sizes are
+validated at entry; query/key coverage checks read the corresponding shape
+fields. The key axis retains the existing contiguous requirement and
+short-mask boundary semantics. There is no separate tensor-view type,
+array-based metadata, or redundant query/key length fields. Both split-Q and
+split-KV use these same fields. The struct declares no defaults for mask
+shape/stride; entry initializes every field on every call, and native callers
+provide the shape and strides explicitly.
 
 - Callers choose `is_causal`, `mask` and `scale`. Dense alignment comes from
   Q/K lengths; packed alignment comes from each request's device metadata.

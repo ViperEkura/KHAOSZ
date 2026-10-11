@@ -113,7 +113,7 @@ _active_config: ContextVar[_ActiveConfig | None] = ContextVar(
 # machine owned — the per-weight meta registry (delayed-scaling rings, the
 # version-keyed weight-cast cache, the checkpoint pending queue, the
 # generation counter invalidating that cache) — lives in the C++ op's
-# translation unit (``csrc/gemm/fp8_linear.cu``). A meta is addressed
+# translation unit (``csrc/gemm/fp8/linear.cu``). A meta is addressed
 # by its module's *slot* when the dispatcher knows one (see the slot
 # stable module path, so a replaced weight parameter keeps its history) and by
 # ``(data_ptr, shape, dtype)`` otherwise; the snapshot binds slotted entries by

@@ -1,6 +1,6 @@
 """Map the dispatch LOGIC over a dense (m, n, k) grid — no kernel launches.
 
-The planner chain is host-only by design (plan_probe in gemm.cuh), so
+The planner chain is host-only by design (plan_probe in api/torch/gemm.h), so
 "which recipe serves this cell" is an analytic question: probing a full
 stride grid costs seconds where measuring one costs ~10s/cell (and a
 batch-ordered measurement of that size is the thermal-bias trap the

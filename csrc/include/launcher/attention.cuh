@@ -14,7 +14,7 @@
 #include <string>
 #include <type_traits>
 
-#include <api/attention_common.h>
+#include <api/native/attention.h>
 #include <kernel/attention/split_kv.cuh>
 #include <kernel/attention/split_q.cuh>
 #include <memory/layout_policies.cuh>
@@ -205,8 +205,8 @@ template <typename QSchedule, typename KV, typename Fn>
 inline auto with_prefill_kernel(const AttentionParams& p, Fn&& fn) {
     // Paged partial masks need extent checks; full coverage can omit them.
     // Dense keeps its checked kernel to avoid redundant compiler-generated comparisons.
-    const bool mask_covers_shape = KV::kPaged && p.mask && p.mask_k_len >= KV::host_kv_len(p) &&
-                                   (p.mask_q_len == 1 || p.mask_q_len >= p.q_len);
+    const bool mask_covers_shape = KV::kPaged && p.mask && p.mask_k_size >= KV::host_kv_len(p) &&
+                                   (p.mask_q_size == 1 || p.mask_q_size >= p.q_len);
     return with_head_dim(p.head_dim, [&](auto dim) {
         constexpr int D = decltype(dim)::value;
         if (p.is_causal) {

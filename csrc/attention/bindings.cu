@@ -1,11 +1,11 @@
 #include <torch/extension.h>
 
-#include <api/attention.h>
-#include <api/attention_common.h>
+#include <api/torch/attention.h>
+#include <api/native/attention.h>
 
 /*
  * The attention family's whole pybind surface: four entries, one module
- * (`attention`) — a single PYBIND block, one def per api/attention.h entry.
+ * (`attention`) — a single PYBIND block, one def per api/torch/attention.h entry.
  */
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {

@@ -24,7 +24,7 @@ from astrai.extension.runtime.loader import get_module
 
 
 class TensorLayout(enum.IntEnum):
-    """Q/K/V tensor layout, mirrors the C++ ``TensorLayout`` enum in ``attn_common.h``.
+    """Q/K/V tensor layout, mirrors the C++ ``TensorLayout`` enum in ``api/native/attention.h``.
 
     Kernels internally operate on BHLD; BLHD inputs are transposed at entry.
     """
@@ -45,14 +45,14 @@ def attn_decode(
     """GQA decode attention (q_len == 1).
 
     Args:
-        q: [batch, 1, n_heads, head_dim] (blhd, bf16)
-        k: [batch, kv_len, n_kv_heads, head_dim] (blhd, bf16)
-        v: [batch, kv_len, n_kv_heads, head_dim] (blhd, bf16)
+        q: [batch, 1, n_heads, head_dim] (blhd, bf16/fp16)
+        k: [batch, kv_len, n_kv_heads, head_dim] (blhd, bf16/fp16)
+        v: [batch, kv_len, n_kv_heads, head_dim] (blhd, bf16/fp16)
         mask: 2D [batch, kv_len] or 3D [batch, 1, kv_len] (bool, True=keep)
         is_causal: apply causal mask
 
     Returns:
-        [batch, 1, n_heads, head_dim] (blhd, bf16)
+        [batch, 1, n_heads, head_dim] (blhd, bf16/fp16)
     """
     mod = get_module("attention")
     return mod.attn_decode(
@@ -78,15 +78,15 @@ def attn_prefill(
     """GQA prefill attention (q_len > 1).
 
     Args:
-        q: [batch, q_len, n_heads, head_dim] (blhd, bf16)
-        k: [batch, kv_len, n_kv_heads, head_dim] (blhd, bf16)
-        v: [batch, kv_len, n_kv_heads, head_dim] (blhd, bf16)
+        q: [batch, q_len, n_heads, head_dim] (blhd, bf16/fp16)
+        k: [batch, kv_len, n_kv_heads, head_dim] (blhd, bf16/fp16)
+        v: [batch, kv_len, n_kv_heads, head_dim] (blhd, bf16/fp16)
         mask: 2D [batch, kv_len], 3D [batch, q_len, kv_len], or 4D
             [batch, n_heads, q_len, kv_len] (bool, True=keep)
         is_causal: apply causal mask
 
     Returns:
-        [batch, q_len, n_heads, head_dim] (blhd, bf16)
+        [batch, q_len, n_heads, head_dim] (blhd, bf16/fp16)
     """
     mod = get_module("attention")
     return mod.attn_prefill(
@@ -124,8 +124,8 @@ def attn_paged_decode(
     (from kv_indptr), eliminating padding waste.
 
     Args:
-        q: [batch, n_heads, head_dim] (bf16, 3D — no seq dim)
-        k_cache: [pool_size, n_kv_heads, head_dim] (bf16, flat)
+        q: [batch, n_heads, head_dim] (bf16/fp16, 3D — no seq dim)
+        k_cache: [pool_size, n_kv_heads, head_dim] (bf16/fp16, flat)
         v_cache: same as k_cache
         req_to_token: [num_reqs, max_context_len] (int32) — token -> slot
         req_pool_indices: [batch] (int32) — rows into req_to_token
@@ -139,7 +139,7 @@ def attn_paged_decode(
         out_buf: pre-allocated output buffer [batch, n_heads, head_dim] (graph-safe)
 
     Returns:
-        [batch, n_heads, head_dim] (bf16, 3D)
+        [batch, n_heads, head_dim] (bf16/fp16, 3D)
     """
     mod = get_module("attention")
     return mod.attn_paged_decode(
@@ -182,8 +182,8 @@ def attn_paged_prefill(
     q_len and kv_len, addressed via qo_indptr and kv_indptr.
 
     Args:
-        q: [total_q, n_heads, head_dim] (bf16, 3D — flattened across requests)
-        k_cache: [pool_size, n_kv_heads, head_dim] (bf16, flat)
+        q: [total_q, n_heads, head_dim] (bf16/fp16, 3D — flattened across requests)
+        k_cache: [pool_size, n_kv_heads, head_dim] (bf16/fp16, flat)
         v_cache: same as k_cache
         req_to_token: [num_reqs, max_context_len] (int32)
         req_pool_indices: [batch] (int32)
@@ -198,7 +198,7 @@ def attn_paged_prefill(
         is_causal: apply causal mask using each request's KV and Q lengths
 
     Returns:
-        [total_q, n_heads, head_dim] (bf16, 3D)
+        [total_q, n_heads, head_dim] (bf16/fp16, 3D)
     """
     mod = get_module("attention")
     return mod.attn_paged_prefill(

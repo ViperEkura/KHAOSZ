@@ -11,8 +11,8 @@ production classes, so a win is attributable to a single axis.
 Compiled standalone (no CMake target), like the C tests:
 
     nvcc -I csrc/include -I csrc/tests -arch=sm_89 -std=c++20 -O3 \
-        csrc/bench/bench_tile_sweep.cu csrc/gemm/planning.cpp \
-        csrc/gemm/plan_table.cpp -o /tmp/tile_sweep && /tmp/tile_sweep
+        csrc/bench/bench_tile_sweep.cu csrc/gemm/plan/planner.cpp \
+        csrc/gemm/plan/table.cpp csrc/gemm/plan/builtin.cpp -o /tmp/tile_sweep && /tmp/tile_sweep
     # also build and sweep the int8 candidate set (~2x compile):
     nvcc ... -DASTRAI_SWEEP_INT8=1 ... --dtype both
 
@@ -49,6 +49,7 @@ that computes the wrong thing is not a win.
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <cstring>
 #include <string>
 #include <tuple>
@@ -430,7 +431,7 @@ sweep_shape(int m, int n, int k, bool use_scale, int warmup, int iters, const ch
                  * Raster is a property of the geometry, and production recomputes it
                  * per tile; match that so the comparison is apples-to-apples.
                  */
-                p.raster = plan_raster(plan_query<EA, EB, RowMajor, ColMajor>(p, dev),
+                p.raster = plan_raster(plan_query<EA, EB, RowMajor, ColMajor>(p, &dev),
                                        (int)Tile::CtaShape::kM, (int)Tile::CtaShape::kN);
 
                 const BenchResult r =
@@ -604,7 +605,7 @@ template <typename EA, typename EB> void list_space(const char* tag) {
 
 } // namespace
 
-int main(int argc, char** argv) {
+static int run_main(int argc, char** argv) {
     const char* shape_arg = nullptr;
     const char* dtype_arg = "bf16";
     const char* only_arg = nullptr;
@@ -748,4 +749,13 @@ int main(int argc, char** argv) {
 #endif
     }
     return 0;
+}
+
+int main(int argc, char** argv) {
+    try {
+        return run_main(argc, argv);
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "tile sweep failed: %s\n", error.what());
+        return 1;
+    }
 }

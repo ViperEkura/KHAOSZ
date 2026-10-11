@@ -78,7 +78,7 @@ FP32 accumulators before BF16 rounding. Batch launches reuse the existing
 `GemmParams` batch strides and `grid.z`; matrices never share accumulators.
 
 Tile candidates reuse the complete `TileManifest` from
-`include/policy/manifest.cuh`. `kernel.newton_schulz.tiles(operation)` reports
+`include/policy/gemm/manifest.h`. `kernel.newton_schulz.tiles(operation)` reports
 CTA/warp dimensions, K depth, stages, thread count, shared memory and supported
 input layouts. SYRK filters for square CTA geometry; its column-major
 candidates also follow the GEMM crosswise K-depth constraint. The WMMA
@@ -131,7 +131,7 @@ part of each decision.
 ## Native cost planning
 
 Symmetric operations reuse `geometry_cost` and `geometry_raster` from
-`include/launcher/gemm_cost.h`. The legacy geometry cost ranks five relative work proxies in log space; lower scores are preferred:
+`include/policy/gemm/cost.h`. The legacy geometry cost ranks five relative work proxies in log space; lower scores are preferred:
 
 | Proxy | Work represented |
 | --- | --- |

@@ -197,7 +197,7 @@ The extension package separates mechanism from policy:
 - `astrai/extension/runtime/loader.py` discovers and lazily loads the compiled kernel modules (`.so` name = module name = pybind name).
 - `astrai/extension/kernel/` contains stateless adapters — one file per compiled kernel module — that call their kernel directly and fail when it is unavailable.
 - `astrai/extension/backend/` owns capability checks, implementation selection, fallback, and KV cache I/O (`dispatch.py` is the family-agnostic selection core it registers into).
-- `astrai/extension/quantize.py` holds every quantization scheme (int8 strategies, fp8 recipes and autocast); its `aten::linear` override installs lazily on the first fp8 activation, so plain imports stay dispatcher-neutral.
+- `astrai/extension/kernel/quantize.py` exposes shared FP8/int8 execution with explicit multipliers. `astrai/extension/policy/quantization/autocast.py` owns FP8 recipes and autocast; its `aten::linear` override installs lazily on the first FP8 activation, so plain imports stay dispatcher-neutral.
 - Model and inference code use the stable `astrai.extension` API instead of selecting ops directly.
 
 Attention computation is decoupled from the model via `AttentionBackend` ABC (`astrai/extension/backend/attention/`):

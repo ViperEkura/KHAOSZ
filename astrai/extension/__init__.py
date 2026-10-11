@@ -40,8 +40,8 @@ from astrai.extension.kernel.gemm import (
     tile_vocabulary,
 )
 from astrai.extension.kernel.quantize import (
-    quantize_act_int8,
-    quantize_weight_int8,
+    quantize,
+    quantize_scaled,
 )
 from astrai.extension.policy.gemm import autotune, plan
 from astrai.extension.policy.gemm.plan import PLANNER_MODES
@@ -109,8 +109,8 @@ __all__ = [
     "fp8_load_state_dict",
     "fp8_reset",
     "fp8_state_dict",
-    "quantize_act_int8",
-    "quantize_weight_int8",
+    "quantize",
+    "quantize_scaled",
     "Axes",
     "ExplicitSelectionError",
     "ImplRecord",

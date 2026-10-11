@@ -4,7 +4,7 @@
 #include <type_traits>
 
 #include <kernel/gemm/kernel.cuh>
-#include <launcher/plan_types.h>
+#include <policy/gemm/config.h>
 #include <utils/device.cuh>
 #include <utils/launch.cuh>
 
@@ -13,14 +13,14 @@ namespace gemm {
 
 /*
  * Launchers — pure CUDA, usable from the binding and the C tests. The
- * runtime knobs live in GemmConfig (launcher/plan_types.h), owned at runtime by
+ * runtime knobs live in GemmConfig (policy/gemm/config.h), owned at runtime by
  * astrai.extension.policy.gemm.plan.
  */
 
 // Grid for one Policy's tile: N x M blocks, batch on z.
 template <typename Traits> dim3 gemm_grid(const GemmParams& p) {
-    return dim3((p.n + Traits::kBlockN - 1) / Traits::kBlockN,
-                (p.m + Traits::kBlockM - 1) / Traits::kBlockM, p.batch);
+    return dim3(p.n / Traits::kBlockN + (p.n % Traits::kBlockN != 0),
+                p.m / Traits::kBlockM + (p.m % Traits::kBlockM != 0), p.batch);
 }
 
 // One plan-log line per launch (" mx" marks the block_scale cell).
@@ -113,8 +113,7 @@ bool tma_maps_for(const GemmParams& p, CUtensorMap* ma, CUtensorMap* mb) {
 }
 
 /* Keep the broadcast and strided-batch kernel variants in one routing ladder. */
-template <typename F>
-decltype(auto) with_tma_ranks(bool rank3a, bool rank3b, F&& fn) {
+template <typename F> decltype(auto) with_tma_ranks(bool rank3a, bool rank3b, F&& fn) {
     if (rank3a) {
         if (rank3b)
             return fn(std::true_type{}, std::true_type{});
@@ -130,7 +129,9 @@ decltype(auto) with_tma_ranks(bool rank3a, bool rank3b, F&& fn) {
  * operand (misaligned base/ld) so the caller falls back to cp.async.
  */
 template <typename Policy>
-bool launch_policy_tma(const GemmParams& p, cudaStream_t stream, int smem_max) {
+bool launch_policy_tma(const GemmParams& p, cudaStream_t stream, int smem_max = -1) {
+    if (smem_max < 0)
+        smem_max = device_facts().smem_max;
     using Traits = typename Policy::Traits;
     /*
      * The planner prices rings only; TMA's pad + barriers can tip past
@@ -156,12 +157,6 @@ bool launch_policy_tma(const GemmParams& p, cudaStream_t stream, int smem_max) {
     with_tma_ranks(p.batch > 1 && p.a_batch_stride > 0, p.batch > 1 && p.b_batch_stride > 0,
                    launch_rank);
     return true;
-}
-
-// Preserve direct C++ callers that do not already have a device snapshot.
-template <typename Policy>
-bool launch_policy_tma(const GemmParams& p, cudaStream_t stream) {
-    return launch_policy_tma<Policy>(p, stream, device_facts().smem_max);
 }
 
 } // namespace gemm
