@@ -3,7 +3,7 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <epilogue/writer.cuh>
 #include <kernel/gemm/mainloop.cuh>
-#include <launcher/gemm_cost.h>
+#include <policy/gemm/cost.h>
 #include <launcher/kernel_resources.cuh>
 #include <scheduler.cuh>
 #include <utils/device.cuh>

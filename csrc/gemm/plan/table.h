@@ -1,10 +1,10 @@
 #pragma once
-/* Host-only GEMM row contract shared by planning.cpp and plan_table.cpp. */
+/* Host-only GEMM row contract shared by gemm/plan/planner.cpp and gemm/plan/table.cpp. */
 #include <cstdint>
 #include <optional>
 
-#include <launcher/plan_types.h>
-#include <policy/manifest.cuh>
+#include <policy/gemm/config.h>
+#include <policy/gemm/manifest.h>
 
 namespace astrai {
 namespace gemm {

@@ -1,5 +1,5 @@
 #pragma once
-/* GEMM runtime config, planner query, and dispatch decision. */
+/* Process-wide GEMM runtime switches and environment seeding. */
 #include <atomic>
 #include <cstdint>
 
@@ -21,7 +21,7 @@ inline GemmConfig& gemm_config() {
     return cfg;
 }
 
-void gemm_config_seed_once(); // planning.cpp: environment defaults
+void gemm_config_seed_once(); // gemm/plan/planner.cpp: environment defaults
 
 inline bool gemm_plan_log_enabled() {
     gemm_config_seed_once();

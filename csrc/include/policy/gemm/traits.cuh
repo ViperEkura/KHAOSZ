@@ -5,7 +5,7 @@
 
 #include <api/native/gemm.h>
 #include <datatype/element.cuh>
-#include <policy/geometry.h>
+#include <policy/gemm/geometry.h>
 #include <mma/mma.cuh>
 #include <utils/tensor.cuh>
 

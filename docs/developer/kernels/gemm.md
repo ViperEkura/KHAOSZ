@@ -136,15 +136,16 @@ Headers under `csrc/include` contain declarations and device templates;
 |------|------|
 | `api/native/quantize.h` | capability constants, `QuantLayout`, `RingLayout` and `QuantParams`; no framework or CUDA instruction dependency |
 | `datatype/element.cuh` | shared CUDA element traits: storage, native pair conversion, FP8 limits |
-| `api/torch/dtype.h` | ScalarType mapping, typed tags and shared X-macro switch generators for scalar and pair dispatch |
+| `api/torch/dtype.h` | CUDA-free Torch dtype names, checkpoint-name matching and supported-type metadata |
+| `api/torch/dispatch.cuh` | CUDA element/ScalarType mapping, typed tags and shared scalar/pair visitor generators |
 | `kernel/quantize/kernel.cuh` | pure-CUDA device code: vectorized `fp8_quantize_kernel` + 64×32-tile transpose kernel (out_layout 0/1/2, Dual orientation a template param), `ElemTrait<T>` conversion and pair unpack from `datatype/element.cuh` — no torch |
 | `datatype/dequant.cuh` | in-register dequantization functors (`DequantPair<SrcT, MmaT>`): the exact int8→bf16 expansion quantized-GEMM operands fold between the smem read and the mma |
 | `api/native/gemm.h` | GEMM layout tags and unchanged `GemmParams` POD; no Torch or CUDA instruction dependency |
-| `policy/traits.cuh` | Compute promotion (`gemm_mma_traits`), promoted MMA traits and shared-memory policy (`GemmTraits`, `GemmSmem`) |
-| `policy/geometry.h` | Pure C++ geometry, layout tests and ring-budget formulas, shared by host planning and CUDA policy |
-| `policy/manifest.cuh` | One native tile vocabulary and staging manifest, with no Torch or CUDA instruction dependency |
-| `policy.cuh` | `GemmPolicy`: the kernel's composed dtype, layout, tile, staging, and output policy |
-| `launcher/plan_types.h` | Internal runtime configuration owner and helpers; imports the native planner contract |
+| `policy/gemm/traits.cuh` | Compute promotion (`gemm_mma_traits`), promoted MMA traits and shared-memory policy (`GemmTraits`, `GemmSmem`) |
+| `policy/gemm/geometry.h` | Pure C++ geometry, layout tests and ring-budget formulas, shared by host planning and CUDA policy |
+| `policy/gemm/manifest.h` | One native tile vocabulary and staging manifest, with no Torch or CUDA instruction dependency |
+| `policy/gemm.cuh` | `GemmPolicy`: the kernel's composed dtype, layout, tile, staging, and output policy |
+| `policy/gemm/config.h` | Internal runtime configuration owner and helpers; imports the native planner contract |
 | `memory/load_async.cuh` / `load_crosswise.cuh` / `load_crosswise_packed.cuh` | Operand staging by access pattern: cp.async (congruous and 16-bit transposed) with `PrefetchCarry`; direct 8-bit crosswise LDG+PRMT with `CrosswiseCarry`; packed k-pair crosswise with `PairPackCarry` |
 | `scheduler.cuh` | CTA id → (block_m, block_n) grouped/plain raster (runtime `raster` knob) |
 | `kernel/gemm/mainloop.cuh` | `GemmCollectiveMainloop`: stage rings, stage loads, fragment addressing (ldmatrix + dequantized scalar paths), pipelined mma.sync loop |
@@ -154,15 +155,15 @@ Headers under `csrc/include` contain declarations and device templates;
 | `launcher/gemm_tiles.cuh` | Manifest tile selection, output-reclaim fallback, and launch from the resolved staging decision |
 | `launcher/gemm_dispatch.cuh` | Typed query construction, layout canonicalization, and routing shared by launch and probe |
 | `api/native/gemm_plan.h` | Pure C++ query/decision, staging, probe results, capabilities, configuration and vocabulary interfaces |
-| `gemm/plan_table.h` / `plan_table.cpp` | Private host row contract, parsing, row sources, configuration and row selection |
-| `gemm/plan_table_builtin.cpp` | Generated measured rows, compiled in a separate host TU |
-| `gemm/planning.cpp` | Recipe vocabulary, model ranking and raster selection |
+| `gemm/plan/table.h` / `gemm/plan/table.cpp` | Private host row contract, parsing, row sources, configuration and row selection |
+| `gemm/plan/builtin.cpp` | Generated measured rows, compiled in a separate host TU |
+| `gemm/plan/planner.cpp` | Recipe vocabulary, model ranking and raster selection |
 | `api/torch/gemm.h` | Tensor-based `quant_gemm_impl` and `ScalarType`-based `plan_probe`; imports native result types and contains no Python interfaces or kernel instantiations |
-| `gemm/gemm.cu` | Typed host layer: one dtype-pair visitor feeds launch and probe; the schedule visitor selects the compiled architecture variant. Holds no `py::` type |
-| `gemm/fp8_linear.cu` | Composed fp8 training linear (forward and backward) in one C++ `autograd::Function` |
-| `gemm/fp8_runtime.cu` / `fp8_linear.h` | Single `State` owner, checkpoint/debug and pybind interface; internal declarations connecting the runtime to the autograd entry |
-| `gemm/fp8_ring.h` / `fp8_cache.h` / `fp8_state.h` | Delayed-scaling ring and recipe; weight/activation cast caches; meta registry and restore helpers |
-| `gemm/bindings.cu` | Quantized GEMM and planner pybind surface: None-tolerant argument marshalling, state/config dict contracts and `PYBIND11_MODULE`; calls `bind_fp8` from `fp8_runtime.cu` |
+| `gemm/entry.cu` | Typed host layer: one dtype-pair visitor feeds launch and probe; the schedule visitor selects the compiled architecture variant. Holds no `py::` type |
+| `gemm/fp8/linear.cu` | Composed fp8 training linear (forward and backward) in one C++ `autograd::Function` |
+| `gemm/fp8/runtime.cu` / `gemm/fp8/linear.h` | Single `State` owner, checkpoint/debug and pybind interface; internal declarations connecting the runtime to the autograd entry |
+| `gemm/fp8/ring.h` / `gemm/fp8/cache.h` / `gemm/fp8/state.h` | Delayed-scaling ring and recipe; weight/activation cast caches; meta registry and restore helpers |
+| `gemm/bindings.cu` | Quantized GEMM and planner pybind surface: None-tolerant argument marshalling, state/config dict contracts and `PYBIND11_MODULE`; calls `bind_fp8` from `gemm/fp8/runtime.cu` |
 | `csrc/quantize/bindings.cu` | pybind surface only → module `quantize` |
 | `csrc/quantize/entry.cu` | the entry implementation: run_quantize + ring binding + dtype dispatch (also compiled into the gemm module so fp8_linear shares the chain) |
 
@@ -190,7 +191,7 @@ module), and `astrai/extension/quantize.py` is the strategy layer (fp8
 recipes, delayed / dynamic scaling, `fp8_autocast`, plus the int8
 quantizers). The composed fp8 linear — quantize, ring fold/advance, the
 weight-cast cache and all three GEMMs — lives in C++
-(`csrc/gemm/fp8_linear.cu`, compiled into the `gemm` module
+(`csrc/gemm/fp8/linear.cu`, compiled into the `gemm` module
 where the GEMM dispatch state lives) behind a single Python->C++ crossing;
 the strategy layer routes `aten::linear` to it on CUDA. The aten override
 installs lazily on the first fp8 activation (autocast enter or the global
@@ -202,16 +203,44 @@ formulas that consume these operands — lives in
 [quantize.md](quantize.md); the sm_120 block_scale mma cell is covered in
 the design notes below.
 
-## The entry ladder
+## Entry and parameter ownership
 
-`gemm/entry.h` is the op entry in one place, a fixed ladder:
-classify the dtype pair → gate the device (`check_fp8_device`) →
-resolve the dequant scales (`resolve_quant_scale`) → resolve the operand
-layouts and leading dims → validate the geometry → allocate the output →
-fill `GemmParams` → dispatch. `gemm.cu`'s `quant_gemm_impl` is the thin
-wrapper that instantiates the ladder with the family's dtype-pair lookup
-(passed in as a template parameter, so the header carries no include-order
-contract). The pybind spelling is `bindings.cu`'s.
+The public Tensor signature stays in `api/torch/gemm.h`; the kernel POD stays
+in `api/native/gemm.h`. Private packing types never enter the native API.
+
+| Location | Responsibility |
+|---|---|
+| `gemm/bindings.cu` | Python arguments and planner dictionaries |
+| `gemm/entry.cu` | Device guard, Tensor entry, dtype/schedule selection, probe |
+| `gemm/params.h` | Scale/bias validation, operand layout resolution, output allocation and POD packing |
+| `gemm/plan/` | Ordinary C++ planner, row table and generated builtin rows |
+| `gemm/fp8/` | Training autograd, scale rings, cast caches and runtime state |
+| `gemm/instantiations/` | One heavy CUDA compilation unit per dtype pair; CMake compiles each schedule |
+| `policy/gemm/` | Tile manifest, traits, geometry, cost model and shared runtime switches |
+| `launcher/gemm_*.cuh` | Native layout lowering, recipe selection and CUDA launch |
+
+`GemmInputs` owns the original operands, scales and bias during the call.
+`resolve_operand` returns a `GemmOperand` with its Tensor storage, leading
+dimension, batch stride and effective transpose flag, with no output-reference
+arguments. `PreparedGemm` keeps both resolved operands and the output alive
+alongside `GemmParams` until the asynchronous launch has been submitted.
+The CUDA device guard encloses packing, allocation and launch.
+
+`select_gemm_variant` selects the dtype pair and compiled schedule once,
+binding launch and probe functions to the same `DeviceFacts` snapshot. The
+native probe accepts `GemmParams`, using the launch's layout-lowering route;
+the public probe fills a contiguous hypothetical problem before calling it.
+The native launch passes the POD by const reference until layout lowering or
+device launch needs a copy. Kernel parameters and layout remain unchanged.
+
+FP8 forward passes its existing `Fp8Cfg` recipe through the implementation
+without repeating five scalar fields. Torch dtype names and checkpoint-name
+matching are shared in `api/torch/dtype.h`; FP8 state owns only its registry
+and restore logic. The metadata header has no CUDA dependency.
+CUDA element mappings and typed visitor generators live in
+`api/torch/dispatch.cuh`, shared by GEMM, attention and quantize. Quantize uses
+the same single-dtype visitor and diagnostic-name expansion as attention;
+each family keeps its supported-type list private.
 
 Layout resolution: the user flag names the math (0 = last two dims are
 `[rows][contract]`, 1 = transposed); a col-major *view* of a contiguous
@@ -412,7 +441,7 @@ recipe bundling shapes + stage depth + loop mode. `Shape` itself is the
 shared vocabulary type of `utils/shape.cuh`: the same `Shape<...>` spells
 both the CTA tile here and the staging layouts' chunk grids, so tile
 geometry and smem layout read in one notation. The production manifest in
-`policy/manifest.cuh` — the named `Tile_*` recipes; read the list there, not here,
+`policy/gemm/manifest.h` — the named `Tile_*` recipes; read the list there, not here,
 because copied enumerations rot — is the `TileManifest` type list the
 launch ladders dispatch over (CUTLASS builder-table style: `dispatch_tile`
 in `launcher/gemm_tiles.cuh` indexes the manifest by the plan's `TileClass` and depth bit,
@@ -424,7 +453,7 @@ unchanged.
 
 ## Planning
 
-`gemm/planning.cpp` ranks recipes; `gemm/plan_table.cpp` owns row parsing,
+`gemm/plan/planner.cpp` ranks recipes; `gemm/plan/table.cpp` owns row parsing,
 configuration and lookup. Ties keep manifest order. Decisions are cached
 per thread/query; row lookup precedes heuristic ranking, so newly installed rows
 take effect immediately. Empty tables avoid their mutex.
@@ -456,7 +485,7 @@ Optional `k_tile` is the recipe's ring K (default 64); `k_min/k_max` bound the
 problem K. Trailing gates require enough grid CTAs per SM or machine-fill
 per-mille. Raster zero invokes `plan_raster`. Unsupported recipes or rings
 above the device's shared-memory budget fall through. Builtin rows live
-between generated markers in `gemm/plan_table_builtin.cpp`; changing them
+between generated markers in `gemm/plan/builtin.cpp`; changing them
 requires a rebuild.
 
 **Existing fitted model.** Available only through `planner="model"` for

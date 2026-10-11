@@ -4,7 +4,7 @@
 #include <type_traits>
 
 #include <kernel/gemm/kernel.cuh>
-#include <launcher/plan_types.h>
+#include <policy/gemm/config.h>
 #include <utils/device.cuh>
 #include <utils/launch.cuh>
 
@@ -13,7 +13,7 @@ namespace gemm {
 
 /*
  * Launchers — pure CUDA, usable from the binding and the C tests. The
- * runtime knobs live in GemmConfig (launcher/plan_types.h), owned at runtime by
+ * runtime knobs live in GemmConfig (policy/gemm/config.h), owned at runtime by
  * astrai.extension.policy.gemm.plan.
  */
 

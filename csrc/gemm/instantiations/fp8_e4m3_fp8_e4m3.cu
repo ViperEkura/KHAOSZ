@@ -1,7 +1,7 @@
 /*
  * fp8 x fp8 e4m3 instantiation unit. One explicit gemm_dispatch
  * instantiation per unit keeps the heavy template work in parallel nvcc
- * jobs; gemm.cu addresses the specialization through its extern template
+ * jobs; gemm/entry.cu addresses the specialization through its extern template
  * declarations.
  */
 #include <launcher/gemm_dispatch.cuh>

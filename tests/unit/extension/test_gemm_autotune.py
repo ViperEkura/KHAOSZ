@@ -31,7 +31,7 @@ FACTS = {
 
 # The cross-section of tile_vocabulary rows the fake serves, in the
 # binding's 10-field form (cw, ba, bb, cta, k_stages, k_tile, bm, bn, threads,
-# smem). smem follows policy.cuh's ring formula so the feasibility paths
+# smem). smem follows policy/gemm.cuh's ring formula so the feasibility paths
 # behave like the real vocabulary.
 def _ring(bm, bn, k_tile, k_stages, ba, bb):
     return (k_stages + 1) * k_tile * (bm * ba + bn * bb)

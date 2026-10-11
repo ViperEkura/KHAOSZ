@@ -1,5 +1,5 @@
 /* GEMM host planning, config, and recipe vocabulary. */
-#include <launcher/gemm_cost.h>
+#include <policy/gemm/cost.h>
 
 #include <algorithm>
 #include <array>
@@ -13,10 +13,10 @@
 #include <utility>
 #include <vector>
 
-#include "plan_table.h"
+#include "table.h"
 
 #include <api/native/gemm_plan.h>
-#include <policy/manifest.cuh>
+#include <policy/gemm/manifest.h>
 
 namespace astrai {
 namespace gemm {

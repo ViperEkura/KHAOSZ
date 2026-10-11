@@ -60,3 +60,49 @@ def test_unaligned_base_uses_cpasync_plan(capfd):
     assert chosen is not None
     assert tuple(map(int, chosen.groups())) == (cp["cta"], cp["k_stages"])
     assert " tma " not in log
+
+
+@skip_no_kernel
+@pytest.mark.parametrize(
+    "trans_a,trans_b", [(False, False), (False, True), (True, False), (True, True)]
+)
+@pytest.mark.parametrize("batched_a", [False, True])
+def test_strided_operand_fallback_keeps_storage_alive(trans_a, trans_b, batched_a):
+    m, n, k, batch = 17, 23, 33, 2
+
+    def operand(rows, columns, batched):
+        shape = (batch, rows * 2, columns * 2) if batched else (rows * 2, columns * 2)
+        storage = torch.randint(-2, 3, shape, device="cuda").to(torch.bfloat16)
+        return storage[..., ::2, ::2]
+
+    a = operand(k if trans_a else m, m if trans_a else k, batched_a)
+    b = operand(n if trans_b else k, k if trans_b else n, not batched_a)
+    assert a.stride(-1) != 1 and a.stride(-2) != 1
+    assert b.stride(-1) != 1 and b.stride(-2) != 1
+    lhs = a.transpose(-1, -2) if trans_a else a
+    rhs = b.transpose(-1, -2) if trans_b else b
+    expected = (lhs.float() @ rhs.float()).to(torch.bfloat16)
+    output = kernel.gemm.quant_gemm(a, b, trans_a=trans_a, trans_b=trans_b)
+    # More fallback allocations on the same stream may reuse temporary storage.
+    for _ in range(3):
+        kernel.gemm.quant_gemm(-a, b, trans_a=trans_a, trans_b=trans_b)
+    torch.testing.assert_close(output, expected, atol=0, rtol=0)
+
+
+@skip_no_kernel
+@pytest.mark.skipif(torch.cuda.device_count() < 2, reason="requires two CUDA devices")
+def test_operand_device_guard_covers_packing_and_restores_current_device():
+    original = torch.cuda.current_device()
+    target = (original + 1) % torch.cuda.device_count()
+    a = torch.randint(-2, 3, (34, 66), device=f"cuda:{target}").to(torch.bfloat16)[
+        ::2, ::2
+    ]
+    b = torch.randint(-2, 3, (46, 66), device=f"cuda:{target}").to(torch.bfloat16)[
+        ::2, ::2
+    ]
+    output = kernel.gemm.quant_gemm(a, b)
+    assert torch.cuda.current_device() == original
+    assert output.device == a.device
+    torch.testing.assert_close(
+        output, (a.float() @ b.float().T).to(torch.bfloat16), atol=0, rtol=0
+    )

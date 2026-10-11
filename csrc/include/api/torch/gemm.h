@@ -10,7 +10,7 @@ namespace gemm {
 
 /*
  * The single quantized-GEMM entry (one kernel per cell); semantics, validation
- * and dispatch at the definition in gemm.cu. pybind's quant_gemm is a thin
+ * and dispatch at the definition in gemm/entry.cu. pybind's quant_gemm is a thin
  * None-tolerant wrapper.
  */
 torch::Tensor quant_gemm_impl(torch::Tensor a,

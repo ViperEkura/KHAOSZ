@@ -5,7 +5,7 @@
 #include <cmath>
 #include <cstdint>
 
-#include <api/torch/dtype.h>
+#include <api/torch/dispatch.cuh>
 #include <api/native/quantize.h>
 
 namespace astrai {
@@ -22,15 +22,12 @@ using torch::Tensor;
  * publishes with the same number, passed through QuantParams).
  */
 inline float fp8_max_of(at::ScalarType fmt) {
-    TORCH_CHECK(fmt == scalar_type_v<fp8_e4m3> || fmt == scalar_type_v<fp8_e5m2>,
+    TORCH_CHECK(is_fp8(fmt),
                 "fp8 linear: format must be float8_e4m3fn or float8_e5m2");
     return fmt == scalar_type_v<fp8_e4m3> ? ElemTrait<fp8_e4m3>::kFiniteMax
                                           : ElemTrait<fp8_e5m2>::kFiniteMax;
 }
 
-inline bool is_fp8(at::ScalarType dt) {
-    return dt == scalar_type_v<fp8_e4m3> || dt == scalar_type_v<fp8_e5m2>;
-}
 
 /*
  * scale = (peak / fp8_max) / 2^margin, clamped — the host mirror of the

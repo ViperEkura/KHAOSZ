@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-#include "fp8_ring.h"
+#include "ring.h"
 
 namespace astrai {
 namespace fp8 {

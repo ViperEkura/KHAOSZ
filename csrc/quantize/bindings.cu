@@ -2,7 +2,7 @@
  * CUDA bindings for the stateless FP8 quantize primitives. The launcher,
  * the ring binding and the composed pass live in ``entry.cu`` (beside this
  * file, declared in api/torch/quantize.h) so the fp8-linear composition
- * (``gemm/fp8_linear.cu``, compiled into the gemm module where the GEMM
+ * (``gemm/fp8/linear.cu``, compiled into the gemm module where the GEMM
  * dispatch state lives) shares them instead of re-deriving them; this TU is
  * only the pybind surface.
  */
@@ -11,7 +11,7 @@
 #include <cstdint>
 #include <torch/extension.h>
 
-#include <api/torch/dtype.h>
+#include <api/torch/dispatch.cuh>
 #include <api/torch/quantize.h>
 
 using namespace astrai::quant;

@@ -11,7 +11,8 @@
 #include <unordered_map>
 #include <vector>
 
-#include "fp8_cache.h"
+#include "cache.h"
+#include <api/torch/dtype.h>
 
 namespace astrai {
 namespace fp8 {
@@ -107,45 +108,6 @@ inline void rebind_meta_locked(const std::shared_ptr<Fp8Meta>& meta, const Tenso
     meta->dtype = w.scalar_type();
     meta->cast = WeightCast{};
     st.by_key.emplace(meta->key, meta);
-}
-
-/*
- * The snapshot's dtype field uses Python's ``str(torch.dtype)`` spelling — the
- * format the checkpoint bridge established, so either side restores the other's.
- */
-inline std::string torch_dtype_str(at::ScalarType t) {
-    switch (t) {
-    case at::kBFloat16:
-        return "torch.bfloat16";
-    case at::kHalf:
-        return "torch.float16";
-    case at::kFloat:
-        return "torch.float32";
-    case at::kDouble:
-        return "torch.float64";
-    case at::kChar:
-        return "torch.int8";
-    case at::kByte:
-        return "torch.uint8";
-    case at::kShort:
-        return "torch.int16";
-    case at::kInt:
-        return "torch.int32";
-    case at::kLong:
-        return "torch.int64";
-    case at::kBool:
-        return "torch.bool";
-    case at::kFloat8_e4m3fn:
-        return "torch.float8_e4m3fn";
-    case at::kFloat8_e5m2:
-        return "torch.float8_e5m2";
-    default:
-        return c10::toString(t);
-    }
-}
-
-inline bool dtype_str_matches(const std::string& s, at::ScalarType t) {
-    return s == torch_dtype_str(t) || s == std::string(c10::toString(t));
 }
 
 /*

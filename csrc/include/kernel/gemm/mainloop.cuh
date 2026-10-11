@@ -17,7 +17,7 @@
 #include <memory/tma.cuh>
 #include <mma/ldmatrix.cuh>
 #include <mma/mma.cuh>
-#include <policy.cuh>
+#include <policy/gemm.cuh>
 #include <utils/define.cuh>
 #include <utils/tensor.cuh>
 
@@ -45,7 +45,7 @@ template <typename Policy> struct GemmCollectiveMainloop {
     static_assert(!kUseTma || (!Smem::kDirectA && !Smem::kDirectB),
                   "TMA staging is congruous-only");
     /*
-     * The mma runs on the promoted MmaT (policy/traits.cuh); a lone int8/fp8 side
+     * The mma runs on the promoted MmaT (policy/gemm/traits.cuh); a lone int8/fp8 side
      * expands in-register between smem read and mma (kDequant* marks the
      * insert, dequant.cuh). AccT rides the mma cell: fp32, int32 for s8.
      */

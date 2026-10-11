@@ -14,7 +14,7 @@ namespace astrai {
 namespace gemm {
 
 /*
- * Dtype-class derivation (returns plan_types.h's GemmPerfClass): the mma
+ * Dtype-class derivation (returns api/native/gemm_plan.h's GemmPerfClass): the mma
  * promotion rule plus operand widths (mixed bf16xfp8 lands with W8A16 —
  * same bytes, same promoted bf16 k16 mma). int8 is tested FIRST: it
  * promotes to an int8 mma, so the "not bf16 -> fp8" arm would swallow it
@@ -162,7 +162,7 @@ template <typename ElemA,
           typename ElemB = ElemA,
           typename OutT = __nv_bfloat16,
           typename Schedule = MmaSync>
-void gemm_dispatch(GemmParams p,
+void gemm_dispatch(const GemmParams& p,
                    cudaStream_t stream,
                    bool trans_a,
                    bool trans_b,
@@ -184,44 +184,35 @@ template <typename ElemA,
           typename ElemB = ElemA,
           typename OutT = __nv_bfloat16,
           typename Schedule = MmaSync>
-void gemm_dispatch(GemmParams p, cudaStream_t stream, bool trans_a, bool trans_b) {
+void gemm_dispatch(const GemmParams& p, cudaStream_t stream, bool trans_a, bool trans_b) {
     gemm_dispatch<ElemA, ElemB, OutT, Schedule>(p, stream, trans_a, trans_b, device_facts());
 }
 
 /*
  * Explicit-instantiation spelling shared by the per-pair TUs (bare) and
- * gemm.cu's extern block: one place names the signature.
+ * gemm/entry.cu's extern block: one place names the signature.
  */
 #ifndef ASTRAI_GEMM_SCHEDULE
 #define ASTRAI_GEMM_SCHEDULE MmaSync
 #endif
 
-#define ASTRAI_GEMM_INSTANTIATE(W, A)                                                              \
-    template void gemm_dispatch<W, A, __nv_bfloat16, ASTRAI_GEMM_SCHEDULE>(                        \
-        GemmParams, cudaStream_t, bool, bool, const DeviceFacts&);                                \
-    template void gemm_dispatch<W, A, __nv_bfloat16, ASTRAI_GEMM_SCHEDULE>(                        \
-        GemmParams, cudaStream_t, bool, bool);                                                     \
-    template std::pair<PlanDecision, PlanQuery> plan_probe_for<W, A, ASTRAI_GEMM_SCHEDULE>(        \
-        int64_t, int64_t, int64_t, int64_t, bool, bool, const DeviceFacts&)
+#define ASTRAI_GEMM_SPECIALIZATIONS(PREFIX, TA, TB, SCHEDULE)                                  \
+    PREFIX void gemm_dispatch<TA, TB, __nv_bfloat16, SCHEDULE>(                                \
+        const GemmParams&, cudaStream_t, bool, bool, const DeviceFacts&);                      \
+    PREFIX void gemm_dispatch<TA, TB, __nv_bfloat16, SCHEDULE>(                                \
+        const GemmParams&, cudaStream_t, bool, bool);                                          \
+    PREFIX std::pair<PlanDecision, PlanQuery> plan_probe_for<TA, TB, SCHEDULE>(                \
+        const GemmParams&, bool, bool, const DeviceFacts&)
+
+#define ASTRAI_GEMM_INSTANTIATE(TA, TB) \
+    ASTRAI_GEMM_SPECIALIZATIONS(template, TA, TB, ASTRAI_GEMM_SCHEDULE)
 
 /* Host-only probe: use the launch layout route without launching a kernel. */
 template <typename ElemA, typename ElemB, typename Schedule = MmaSync>
-std::pair<PlanDecision, PlanQuery> plan_probe_for(int64_t m,
-                                                  int64_t n,
-                                                  int64_t k,
-                                                  int64_t batch,
-                                                  bool trans_a,
-                                                  bool trans_b,
-                                                  const DeviceFacts& dev) {
-    GemmParams p{}; // contiguous operands with aligned base addresses
-    p.m = static_cast<int>(m);
-    p.n = static_cast<int>(n);
-    p.k = static_cast<int>(k);
-    p.batch = static_cast<int>(batch);
-    p.a_ld = trans_a ? m : k;
-    p.b_ld = trans_b ? k : n;
-    p.a_batch_stride = batch > 1 ? m * k : 0;
-    p.b_batch_stride = batch > 1 ? n * k : 0;
+std::pair<PlanDecision, PlanQuery> plan_probe_for(const GemmParams& p,
+                                                bool trans_a,
+                                                bool trans_b,
+                                                const DeviceFacts& dev) {
     return with_gemm_layout<ElemA, ElemB>(
         p, trans_a, trans_b, [&](const GemmParams& lowered, auto la, auto lb, auto lo) {
             PlanQuery q = plan_query<ElemA, ElemB, decltype(la), decltype(lb), __nv_bfloat16,

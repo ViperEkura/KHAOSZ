@@ -1,6 +1,6 @@
 #pragma once
 /* Cached occupancy and compiler resources for a typed kernel and device. */
-#include <launcher/plan_types.h>
+#include <policy/gemm/config.h>
 #include <utils/launch.cuh>
 
 #include <map>

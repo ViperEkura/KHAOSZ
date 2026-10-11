@@ -1,7 +1,7 @@
 #pragma once
 /*
  * Quantize's caller contract: the composed one-call pass shared by
- * quantize/bindings.cu and gemm/fp8_linear.cu; the implementation,
+ * quantize/bindings.cu and gemm/fp8/linear.cu; the implementation,
  * quantize/entry.cu, is listed in both modules' source lists. Torch-tensor
  * level, no pybind (the gemm.h header rules).
  */

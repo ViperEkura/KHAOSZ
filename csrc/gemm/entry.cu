@@ -2,14 +2,16 @@
 
 #include <c10/core/ScalarType.h>
 #include <cstdint>
-#include <stdexcept>
 #include <string>
 
-#include "entry.h"
-#include <api/torch/dtype.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAGuard.h>
+#include <api/torch/dispatch.cuh>
 #include <api/torch/gemm.h>
 #include <gemm_build.h>
 #include <launcher/gemm_dispatch.cuh>
+
+#include "params.h"
 
 using namespace astrai;
 using namespace astrai::quant;
@@ -31,13 +33,8 @@ namespace gemm {
 #endif
 #define ASTRAI_GEMM_PAIRS(X) ASTRAI_GEMM_BASE_PAIRS(X) ASTRAI_GEMM_FP8_PAIRS(X)
 
-#define GEMM_EXTERN_FOR(TA, TB, SCHEDULE)                                                          \
-    extern template void gemm_dispatch<TA, TB, __nv_bfloat16, SCHEDULE>(                           \
-        GemmParams, cudaStream_t, bool, bool, const DeviceFacts&);                                 \
-    extern template void gemm_dispatch<TA, TB, __nv_bfloat16, SCHEDULE>(GemmParams, cudaStream_t,  \
-                                                                        bool, bool);               \
-    extern template std::pair<PlanDecision, PlanQuery> plan_probe_for<TA, TB, SCHEDULE>(           \
-        int64_t, int64_t, int64_t, int64_t, bool, bool, const DeviceFacts&);
+#define GEMM_EXTERN_FOR(TA, TB, SCHEDULE) \
+    ASTRAI_GEMM_SPECIALIZATIONS(extern template, TA, TB, SCHEDULE);
 
 #define GEMM_EXTERN_BASE(TA, TB) GEMM_EXTERN_FOR(TA, TB, MmaSync)
 ASTRAI_GEMM_PAIRS(GEMM_EXTERN_BASE)
@@ -69,13 +66,13 @@ GemmCapabilities capabilities() { return capabilities_for(device_facts()); }
 namespace {
 
 /*
- * The lookup key both stamped switches below pack their case labels with:
+ * The shared typed visitor packs case labels with:
  * one u16 per pair, so every label is a compile-time constant and the switch
  * lowers to one indexed branch with no runtime-initialized state. An
  * unsupported pair raises with the actual operand dtypes in the message
  * instead of a hardcoded list that can drift.
  */
-using GemmDispatchFn = void (*)(GemmParams, cudaStream_t, bool, bool, const DeviceFacts&);
+using GemmDispatchFn = void (*)(const GemmParams&, cudaStream_t, bool, bool, const DeviceFacts&);
 
 /* The same pair list drives typed dispatch and unsupported-pair diagnostics. */
 std::string unsupported_pair_message(c10::ScalarType a, c10::ScalarType b) {
@@ -114,25 +111,31 @@ auto with_gemm_variant(c10::ScalarType a, c10::ScalarType b, const DeviceFacts& 
     });
 }
 
-GemmDispatchFn find_gemm_dispatch(c10::ScalarType a, c10::ScalarType b, const DeviceFacts& dev) {
-    return with_gemm_variant(a, b, dev, [](auto pair, auto schedule) -> GemmDispatchFn {
-        using Pair = decltype(pair);
-        return &gemm_dispatch<typename Pair::A, typename Pair::B, __nv_bfloat16,
-                              decltype(schedule)>;
-    });
-}
-
-/*
- * Host-only functions that run the planner without a launch (the
- * autotuner's coverage check).
- */
 using GemmProbeFn = std::pair<PlanDecision, PlanQuery> (*)(
-    int64_t, int64_t, int64_t, int64_t, bool, bool, const DeviceFacts&);
+    const GemmParams&, bool, bool, const DeviceFacts&);
 
-GemmProbeFn find_gemm_probe(c10::ScalarType a, c10::ScalarType b, const DeviceFacts& dev) {
-    return with_gemm_variant(a, b, dev, [](auto pair, auto schedule) -> GemmProbeFn {
+/* One selection binds both operations to the same dtype, schedule and device. */
+struct GemmVariant {
+    GemmDispatchFn dispatch;
+    GemmProbeFn probe;
+    DeviceFacts device;
+
+    void launch(const PreparedGemm& prepared, cudaStream_t stream) const {
+        dispatch(prepared.params, stream, prepared.a.transposed, prepared.b.transposed, device);
+    }
+
+    auto inspect(const GemmParams& params, bool trans_a, bool trans_b) const {
+        return probe(params, trans_a, trans_b, device);
+    }
+};
+
+GemmVariant select_gemm_variant(c10::ScalarType a, c10::ScalarType b) {
+    const DeviceFacts dev = device_facts();
+    return with_gemm_variant(a, b, dev, [&](auto pair, auto schedule) -> GemmVariant {
         using Pair = decltype(pair);
-        return &plan_probe_for<typename Pair::A, typename Pair::B, decltype(schedule)>;
+        using Schedule = decltype(schedule);
+        return {&gemm_dispatch<typename Pair::A, typename Pair::B, __nv_bfloat16, Schedule>,
+                &plan_probe_for<typename Pair::A, typename Pair::B, Schedule>, dev};
     });
 }
 
@@ -142,7 +145,7 @@ GemmProbeFn find_gemm_probe(c10::ScalarType a, c10::ScalarType b, const DeviceFa
  * Planner introspection: the Python tooling's C++ face. The heuristic reads
  * CUDA function metadata, but the probe launches nothing. Rows reach the planner
  * through configure()'s rows channel; injected rows rank BELOW the override
- * rows (plan_table.cpp), keeping the override tier authoritative.
+ * rows (plan/table.cpp), keeping the override tier authoritative.
  */
 
 PlanProbe plan_probe(int64_t m,
@@ -155,9 +158,17 @@ PlanProbe plan_probe(int64_t m,
                      int64_t batch) {
     TORCH_CHECK(m > 0 && n > 0 && k > 0, "GEMM probe: M, N and K must be greater than zero (got ",
                 m, ", ", n, ", ", k, ")");
-    const DeviceFacts dev = device_facts();
-    const auto [decision, query] =
-        find_gemm_probe(dt_a, dt_b, dev)(m, n, k, batch, trans_a, trans_b, dev);
+    GemmParams p{}; // Contiguous operands with aligned base addresses for the probe.
+    p.m = static_cast<int>(m);
+    p.n = static_cast<int>(n);
+    p.k = static_cast<int>(k);
+    p.batch = static_cast<int>(batch);
+    p.a_ld = trans_a ? m : k;
+    p.b_ld = trans_b ? k : n;
+    p.a_batch_stride = batch > 1 ? m * k : 0;
+    p.b_batch_stride = batch > 1 ? n * k : 0;
+    const auto variant = select_gemm_variant(dt_a, dt_b);
+    const auto [decision, query] = variant.inspect(p, trans_a, trans_b);
     PlanProbe r;
     r.source = decision.source;
     r.cta = decision.recipe.cta;
@@ -182,14 +193,7 @@ PlanProbe plan_probe(int64_t m,
     return r;
 }
 
-/*
- * quant_gemm's op entry: the ladder itself lives in entry.h (one kernel for
- * every cell, the only kernel-facing export); this wrapper is the one place
- * the family's dtype-pair lookup meets it — as a template argument, so the
- * header needs neither a forward declaration of a TU-internal symbol nor an
- * include-order contract. The scale contract is stated in the header and in
- * docs/developer/kernels/gemm.md, "Scales".
- */
+/* Torch entry owns the device guard, prepared storage and selected variant. */
 torch::Tensor quant_gemm_impl(torch::Tensor a,
                               torch::Tensor b,
                               c10::optional<torch::Tensor> a_scale,
@@ -197,7 +201,18 @@ torch::Tensor quant_gemm_impl(torch::Tensor a,
                               bool trans_a,
                               bool trans_b,
                               c10::optional<torch::Tensor> bias) {
-    return quant_gemm_ladder<&find_gemm_dispatch>(a, b, a_scale, b_scale, trans_a, trans_b, bias);
+    TORCH_CHECK(a.is_cuda() && b.is_cuda(), "CUDA tensors required");
+    TORCH_CHECK((a.dim() == 2 || a.dim() == 3) && (b.dim() == 2 || b.dim() == 3),
+                "a and b must be 2D or 3D (batched)");
+    TORCH_CHECK(a.device() == b.device(), "a and b must share device");
+    const at::cuda::OptionalCUDAGuard guard(a.device());
+    const GemmInputs inputs{std::move(a), std::move(b), std::move(a_scale), std::move(b_scale),
+                            trans_a, trans_b, std::move(bias)};
+    const auto prepared = prepare_gemm(inputs);
+    const auto variant = select_gemm_variant(inputs.a.scalar_type(), inputs.b.scalar_type());
+    variant.launch(prepared, at::cuda::getCurrentCUDAStream().stream());
+    C10_CUDA_CHECK(cudaGetLastError());
+    return prepared.output;
 }
 
 } // namespace gemm

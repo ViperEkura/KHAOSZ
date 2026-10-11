@@ -62,9 +62,9 @@ set(KERNEL_MODULES
     "gated_deltanet|gated_deltanet/gated_deltanet_fwd.cu
         gated_deltanet/gated_deltanet_bwd.cu gated_deltanet/bindings.cu"
     "quantize|quantize/bindings.cu quantize/entry.cu"
-    "gemm|gemm/gemm.cu gemm/bindings.cu gemm/planning.cpp
-        gemm/plan_table.cpp gemm/plan_table_builtin.cpp
-        gemm/fp8_linear.cu gemm/fp8_runtime.cu quantize/entry.cu")
+    "gemm|gemm/entry.cu gemm/bindings.cu gemm/plan/planner.cpp
+        gemm/plan/table.cpp gemm/plan/builtin.cpp
+        gemm/fp8/linear.cu gemm/fp8/runtime.cu quantize/entry.cu")
 
 foreach(entry IN LISTS KERNEL_MODULES)
     string(REPLACE "|" ";" parts "${entry}")
@@ -86,12 +86,12 @@ foreach(entry IN LISTS KERNEL_MODULES)
 endforeach()
 
 set(GEMM_BASE_SOURCES
-    gemm/gemm_bf16_bf16.cu
-    gemm/gemm_bf16_int8.cu
-    gemm/gemm_int8_int8.cu)
+    gemm/instantiations/bf16_bf16.cu
+    gemm/instantiations/bf16_int8.cu
+    gemm/instantiations/int8_int8.cu)
 set(GEMM_FP8_SOURCES
-    gemm/gemm_fp8_e4m3_fp8_e4m3.cu
-    gemm/gemm_fp8_e5m2_fp8_e5m2.cu)
+    gemm/instantiations/fp8_e4m3_fp8_e4m3.cu
+    gemm/instantiations/fp8_e5m2_fp8_e5m2.cu)
 
 function(astrai_gemm_objects name schedule arches)
     add_library(${name} OBJECT ${ARGN})

@@ -1,8 +1,8 @@
 /*
  * Quantized GEMM and planner pybind surface: None-tolerant argument
  * marshalling, introspection dicts, and module registration. FP8 training
- * bindings live in fp8_runtime.cu and are registered here through bind_fp8.
- * The typed C++ face is api/torch/gemm.h; gemm.cu holds its implementations.
+ * bindings live in fp8/runtime.cu and are registered here through bind_fp8.
+ * The typed C++ face is api/torch/gemm.h; entry.cu holds its implementations.
  *
  * Dictionaries are the wire here, in both directions: the state report and the
  * config patch. Each key set is spelled exactly once — the report's keys below,
@@ -17,7 +17,7 @@
 #include <string>
 #include <vector>
 
-#include "fp8_linear.h"
+#include "fp8/linear.h"
 #include <api/torch/gemm.h>
 #include <utils/device.cuh>
 

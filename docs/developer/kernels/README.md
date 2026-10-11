@@ -19,7 +19,7 @@ maps to one family of translation units under `csrc/` (headers live in the `csrc
 | `rotary_emb` | `rotary_emb.cu` | Fused rotary embedding (cos/sin lookup + rotation) |
 | `cross_entropy` | `cross_entropy.cu` | Fused cross-entropy and chunked linear cross-entropy |
 | `quantize` | `quantize/bindings.cu` + `quantize/entry.cu` | FP8 quantization kernels (sm_89+) |
-| `gemm` | `gemm/gemm.cu` + per-dtype-pair `gemm_*.cu` | dtype-generic tensor-core GEMM binding + one explicit `gemm_dispatch` instantiation per dtype pair (fp8 / W8A16 / W8A8 / W16A16, sm_89+) |
+| `gemm` | `gemm/entry.cu` + `gemm/instantiations/*.cu` | dtype-generic tensor-core GEMM binding + one explicit `gemm_dispatch` instantiation per dtype pair (fp8 / W8A16 / W8A8 / W16A16, sm_89+) |
 
 Additionally, optimized `.cuh` variants with tensor-core MMA (Matrix Multiply-Accumulate) exist:
 
@@ -42,10 +42,10 @@ Additionally, optimized `.cuh` variants with tensor-core MMA (Matrix Multiply-Ac
 | Cross-entropy | [cross_entropy.md](cross_entropy.md) | `csrc/cross_entropy.cu` | `astrai/extension/kernel/cross_entropy.py`; `astrai/trainer/strategy.py` |
 
 One entry the table does not spell out: `gemm/` also carries the **fp8
-training** linear — `fp8_linear.cu` (the composed forward *and* backward in
-one C++ `autograd::Function`) with scale rings in `gemm/fp8_ring.h`,
-cast caches in `gemm/fp8_cache.h`, and registry definitions in
-`gemm/fp8_state.h`. `gemm/fp8_runtime.cu` owns the single process state,
+training** linear — `gemm/fp8/linear.cu` (the composed forward *and* backward in
+one C++ `autograd::Function`) with scale rings in `gemm/fp8/ring.h`,
+cast caches in `gemm/fp8/cache.h`, and registry definitions in
+`gemm/fp8/state.h`. `gemm/fp8/runtime.cu` owns the single process state,
 checkpoint interface, and Python registration. Its Python entry is the strategy
 layer `astrai/extension/quantize.py` (`fp8_autocast`, recipe/format policy),
 and it ships inside the `gemm` module so the dispatch state — plan table,
@@ -334,11 +334,14 @@ csrc/
 ├── CMakeLists.txt                    # CMake build: the KERNEL_MODULES registry (module name | its source TUs) + torch/pybind11 linking
 ├── __init__.py                       # build-time marker only (keeps `csrc` a setuptools package)
 ├── include/                          # THE include root: every header, angle-bracket root-qualified (<kernel/gemm/kernel.cuh>)
-│   ├── policy.cuh                    #   composed GemmPolicy consumed by the kernel
-│   ├── policy/                      #   compile-time GEMM tile rules
-│   │   ├── traits.cuh              #     compute promotion, MMA traits and shared-memory budget
-│   │   ├── geometry.h             #     pure C++ geometry and ring-budget formulas
-│   │   └── manifest.cuh            #     named tile recipes, CTA classes and staging ladders
+│   ├── policy/                       # policy composition, grouped by operator
+│   │   ├── gemm.cuh                  # composed GemmPolicy consumed by the kernel
+│   │   └── gemm/
+│   │       ├── traits.cuh            # compute promotion, MMA traits and shared-memory budget
+│   │       ├── geometry.h            # pure C++ layout and ring-budget formulas
+│   │       ├── manifest.h            # pure C++ named tile recipes and staging ladders
+│   │       ├── cost.h                # geometry cost shared with SYRK/SYMM
+│   │       └── config.h              # process-wide GEMM switches and environment seeding
 │   ├── scheduler.cuh                 #   cross-cutting: grouped/plain raster mapping
 │   ├── kernel/                       # device kernels and launch helpers, grouped by operator
 │   │   ├── attention/
@@ -388,34 +391,35 @@ csrc/
 │   │       ├── attention.h           # attention Tensor entry declarations
 │   │       ├── gated_deltanet.h       # GDN Tensor entry declarations
 │   │       ├── quantize.h            # QuantizeOutputs and run_quantize
-│   │       ├── dtype.h               # ScalarType mapping, type tags and generated scalar/pair visitors
+│   │       ├── dtype.h               # CUDA-free Torch dtype names, matching and classification
+│   │       ├── dispatch.cuh          # CUDA element/ScalarType mapping and generated typed visitors
 │   │       └── fp8_checks.h          # ATen-cached device capability validation
 │   └── launcher/                     # GEMM CUDA launch and dispatch templates
 │       ├── gemm_launch.cuh           #     typed CUDA launch and TMA descriptor setup
 │       ├── gemm_tiles.cuh            #     manifest selection and staging resolution
-│       ├── gemm_dispatch.cuh         #     layout rewrite, typed entry and planner probe
-│       └── plan_types.h              #     internal config owner/helpers; imports api/native/gemm_plan.h
+│       └── gemm_dispatch.cuh         #     layout rewrite, typed entry and native planner probe
 ├── attention/                        # private dtype.h instantiates BF16/FP16; family translation units + one bindings.cu (→ module attention; kernels/launchers/dispatch in the shared kernel/ headers)
-│   ├── entry.h                       #   attention torch→POD marshalling (pack_*_params, split-partial allocation) — TU-local impl header, quoted-include (fp8_state.h shape)
+│   ├── entry.h                       #   attention torch→POD marshalling (pack_*_params, split-partial allocation) — TU-local impl header, quoted-include (gemm/fp8/state.h shape)
 │   ├── decode.cu                     #   → module attn_decode
 │   ├── prefill.cu                    #   → module attn_prefill
 │   ├── paged_decode.cu               #   → module attn_paged_decode
 │   └── paged_prefill.cu              #   → module attn_paged_prefill
-├── gemm/                             # family translation units and private headers (→ module gemm)
-│   ├── gemm.cu                       #   typed host layer: dtype-pair registry + its two lookups + the planner's C++ face
-│   ├── entry.h                       #   quant_gemm's op-entry ladder (dtype classify → device gate → scale contract → layout/shape validation → GemmParams pack → dispatch) + the empty-problem guard — TU-local impl header, quoted-include, included at the bottom of gemm.cu (the lookups it calls live there)
-│   ├── bindings.cu                   #   quant_gemm/planner pybind surface, PYBIND11_MODULE and FP8 registration
-│   ├── fp8_linear.cu                 #   fp8 training forward/backward as one C++ autograd::Function
-│   ├── fp8_linear.h                  #   internal declaration boundary shared with fp8_runtime.cu
-│   ├── fp8_runtime.cu                 #   one State instance, checkpoint/debug interface and pybind registration
-│   ├── fp8_ring.h                    #   scale recipe and delayed-scaling ring
-│   ├── fp8_cache.h                   #   versioned weight cast and bounded activation cache
-│   ├── fp8_state.h                   #   meta registry, slots and restore helpers used by both FP8 translation units
-│   ├── planning.cpp                 #   recipe enumeration, analytical model and raster selection
-│   ├── plan_table.cpp               #   host row parsing, storage, config and row selection
-│   ├── plan_table.h                 #   private row contract shared by the host planner TUs
-│   ├── gemm_*.cu                    #   per-pair explicit instantiations, compiled per schedule
-│   └── plan_table_builtin.cpp      #   generated measured and degraded rows
+├── gemm/                             # one module; each subdirectory has one responsibility
+│   ├── bindings.cu                   # Python argument marshalling and module registration
+│   ├── entry.cu                      # Tensor entry, shared dtype/schedule selection and probe
+│   ├── params.h                      # private operand/scale validation and lifetime-aware POD packing
+│   ├── plan/                         # ordinary C++ host planning
+│   │   ├── planner.cpp               # recipe ranking, geometry model and raster selection
+│   │   ├── table.cpp / table.h        # row parsing, storage, configuration and lookup
+│   │   └── builtin.cpp               # generated measured and degraded rows
+│   ├── fp8/                          # training composition and persistent state
+│   │   ├── linear.cu / linear.h       # forward/backward autograd and runtime declaration boundary
+│   │   ├── runtime.cu                # one State instance, checkpoint/debug interface and registration
+│   │   ├── ring.h                    # delayed-scaling recipe and rings
+│   │   ├── cache.h                   # versioned weight and bounded activation cast caches
+│   │   └── state.h                   # metadata registry, slots and restore helpers
+│   └── instantiations/               # per-pair explicit CUDA instantiations, compiled per schedule
+│       └── *.cu                      # BF16/BF16, BF16/INT8, INT8/INT8 and matching FP8 formats
 ├── symmetric/                        # BF16 SYRK/SYMM (→ module symmetric)
 │   ├── bindings.cu                   #   pybind surface
 │   ├── entry.cu                      #   tensor validation and GEMM parameter packing
@@ -438,7 +442,7 @@ csrc/
     ├── test_utils.cuh                # shared test utilities (now_ms, f2bf, bf2f, randf) — harness-local, outside the include root
     ├── attn_test.cu                  # decode + prefill kernels
     ├── attn_paged_test.cu            # paged decode/prefill kernels
-    └── quant_gemm_test.cu            # GEMM correctness + TFLOPS bench (links gemm/planning.cpp and plan_table.cpp)
+    └── quant_gemm_test.cu            # GEMM correctness + TFLOPS bench (links gemm/plan/{planner,table,builtin}.cpp)
 ```
 
 GEMM benchmark entry points:
@@ -461,21 +465,21 @@ planners and shared device headers must not transitively include Torch, ATen,
 c10, pybind11 or Python. Family-private host headers may use Torch. Tensor
 validation, allocation and packing stay in entries; Python marshalling stays
 in binding implementations. `api/native/gemm_plan.h` contains ordinary C++
-query/config/result types; `launcher/plan_types.h` retains the existing single
+query/config/result types; `policy/gemm/config.h` retains the existing single
 runtime config owner and helpers. Compute promotion lives in
-`policy/traits.cuh`; the manifest and shared geometry remain ordinary C++.
+`policy/gemm/traits.cuh`; the manifest and shared geometry remain ordinary C++.
 (2) Standalone harnesses stay outside the module registry and carry their own
-`nvcc` commands. GEMM harnesses link `planning.cpp`, `plan_table.cpp` and
-`plan_table_builtin.cpp`, without Torch headers or libraries. (3) One project
+`nvcc` commands. GEMM harnesses link `gemm/plan/planner.cpp`, `gemm/plan/table.cpp` and
+`gemm/plan/builtin.cpp`, without Torch headers or libraries. (3) One project
 include root, `csrc/include`, and root-qualified angle includes for shared
 headers, such as `<api/native/gemm.h>` and `<api/torch/gemm.h>`. Private
 same-family implementation headers and harness-local helpers use quoted
 includes.
 
 Dtype dispatch uses the shared `ASTRAI_DEFINE_DTYPE_VISITOR` and
-`ASTRAI_DEFINE_DTYPE_PAIR_VISITOR` generators in `api/torch/dtype.h`. Each
+`ASTRAI_DEFINE_DTYPE_PAIR_VISITOR` generators in `api/torch/dispatch.cuh`. Each
 family owns its X-macro instantiation list: attention's private `dtype.h`
-shares BF16/FP16 across four entries, while GEMM's list stays in `gemm.cu`.
+shares BF16/FP16 across four entries, while GEMM's list stays in `gemm/entry.cu`.
 Dispatch cases and unsupported-dtype diagnostics expand the same list; there
 is no separate native dtype-contract header or runtime registration table.
 
@@ -484,8 +488,8 @@ Check the dependency boundary and compile the host planners independently:
 ```bash
 .venv/bin/python -m pytest tests/unit/extension/test_csrc_api.py -q
 g++ -std=c++17 -I csrc/include -fsyntax-only \
-    csrc/gemm/planning.cpp csrc/gemm/plan_table.cpp \
-    csrc/gemm/plan_table_builtin.cpp
+    csrc/gemm/plan/planner.cpp csrc/gemm/plan/table.cpp \
+    csrc/gemm/plan/builtin.cpp
 ```
 
 The dependency test walks project includes transitively, including private
@@ -497,13 +501,13 @@ at the direct native entry. The BF16 computation is unchanged.
 A fourth convention, the mirror of the header fan-in rule: **implementation
 code lives in the TU territory of its consumers**. An implementation header
 whose every includer sits in one family directory lives beside them
-(`attention/entry.h`, `gemm/fp8_state.h` — quoted same-directory include);
+(`attention/entry.h`, `gemm/fp8/state.h` — quoted same-directory include);
 an implementation shared across modules becomes a .cu listed in each
 module's CMake sources (`quantize/entry.cu`, compiled into both the
 quantize and gemm modules), with its Tensor declaration in `api/torch/`.
 `launcher/` owns GEMM CUDA dispatch. `api/native/gemm_plan.h` carries the shared query
-and launch decision; `plan_types.h` owns internal configuration helpers. `gemm/planning.cpp` ranks recipes, while `gemm/plan_table.cpp`
-owns mutable row state and parsing; generated rows live in `gemm/plan_table_builtin.cpp`.
+and launch decision; `policy/gemm/config.h` owns internal configuration helpers. `gemm/plan/planner.cpp` ranks recipes, while `gemm/plan/table.cpp`
+owns mutable row state and parsing; generated rows live in `gemm/plan/builtin.cpp`.
 The dtype-pair
 instantiation units include neither planner nor table headers. A family
 gains a directory when it gains a second file; single-file families

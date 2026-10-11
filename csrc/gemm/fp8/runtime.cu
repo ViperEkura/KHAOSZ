@@ -10,8 +10,8 @@
 #include <unordered_map>
 #include <vector>
 
-#include "fp8_linear.h"
-#include "fp8_state.h"
+#include "linear.h"
+#include "state.h"
 
 namespace astrai {
 namespace fp8 {

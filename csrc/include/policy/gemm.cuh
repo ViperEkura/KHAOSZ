@@ -1,7 +1,7 @@
 #pragma once
 /* One GEMM kernel policy composed from compute traits and a tile recipe. */
-#include <policy/manifest.cuh>
-#include <policy/traits.cuh>
+#include <policy/gemm/manifest.h>
+#include <policy/gemm/traits.cuh>
 
 namespace astrai {
 namespace gemm {

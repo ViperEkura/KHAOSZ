@@ -1,5 +1,5 @@
 /* GEMM row parsing, storage, built-in data and runtime configuration. */
-#include "plan_table.h"
+#include "table.h"
 
 #include <algorithm>
 #include <array>
@@ -14,7 +14,7 @@
 #include <vector>
 
 #include <api/native/gemm_plan.h>
-#include <policy/manifest.cuh>
+#include <policy/gemm/manifest.h>
 
 namespace astrai {
 namespace gemm {
@@ -31,7 +31,7 @@ static constexpr int kRowFieldsWavePermille = 14;
 
 /*
  * Upper bound of the perf_class field, mirroring GemmPerfClass's last
- * enumerator (kF8A8, launcher/plan_types.h — where the enum lives).
+ * enumerator (kF8A8, policy/gemm/config.h — where the enum lives).
  */
 static constexpr int kMaxPerfClass = 3;
 
@@ -145,7 +145,7 @@ inline const TableRow* plan_row_for(const TableRow* rows, int count, const PlanQ
  *   m_min m_max n_min n_max perf_class crosswise cta k_stages raster
  *   [k_tile [k_min k_max [min_ctas_per_sm [min_wave_permille]]]]
  * '#' starts a comment; perf_class 0..3 or -1; crosswise 0..2 or -1; cta is the
- * TileClass ordinal (the policy/manifest.cuh enum order); k_stages 2..5 parse, but no
+ * TileClass ordinal (the policy/gemm/manifest.h enum order); k_stages 2..5 parse, but no
  * ladder instantiates a tile past s3 — plan_from_row rejects a deeper ring
  * outright, so a stale sweep row naming s4/s5 falls to the next source. The
  * trailing 'k_tile' defaults to kTableRowK, which is what the sweep
@@ -368,7 +368,7 @@ bool parse_planner_mode(const std::string& name, int& out) {
 
 /*
  * Resolved views (unset falls to the default, never to a later env read);
- * the three launch-side knobs' resolved views are plan_types.h's.
+ * the three launch-side knobs' resolved views are policy/gemm/config.h's.
  */
 int gemm_planner_mode() {
     gemm_config_seed_once();

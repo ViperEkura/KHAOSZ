@@ -6,7 +6,7 @@
 #include <epilogue/writer.cuh>
 #include <kernel/gemm/mainloop.cuh>
 #include <memory/pipeline.cuh>
-#include <policy.cuh>
+#include <policy/gemm.cuh>
 #include <scheduler.cuh>
 
 namespace astrai {

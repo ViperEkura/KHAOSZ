@@ -5,7 +5,7 @@
 /*
  * Pure POD/traits header — no .cuh/CUDA-kernel includes; raw __nv_* spellings
  * only. Quantize-side declarations; shared element traits live in
- * datatype/element.cuh and GEMM policy traits in policy/traits.cuh.
+ * datatype/element.cuh and GEMM policy traits in policy/gemm/traits.cuh.
  *
  * FP8 formats are the raw element types (__nv_fp8_e4m3 / __nv_fp8_e5m2), named
  * from the output dtype by the bindings — no format enum.

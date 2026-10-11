@@ -93,11 +93,11 @@ def priced(
     batch: int = 1,
 ) -> dict:
     g = geometry(name)
-    # widening: 2-byte operand, small CTA, k_tile=64 (policy.cuh warp_widened_t)
+    # widening: 2-byte operand, small CTA, k_tile=64 (policy/gemm/manifest.h warp_widened_t)
     widened = ba + bb >= 3 and g["bm"] == 64 and g["bn"] == 64 and g["k_tile"] == 64
     threads = 512 if widened else g["threads"]
     ring = (g["k_stages"] + 1) * g["k_tile"] * (g["bm"] * ba + g["bn"] * bb)
-    # policy.cuh: min_ctas_for_ring is bytes <= 48KB ? 2 : 1 — residency is
+    # policy/gemm/geometry.h: min_ctas_for_ring is bytes <= 48KB ? 2 : 1 — residency is
     # charged the TMA pad/barriers and otherwise smem-capped ONLY (no thread term). An earlier version of this file
     # added its own thread cap and simulated picks the kernel never makes,
     # which is how a rule that scored +2.6pp here regressed 8 cells
@@ -148,7 +148,7 @@ def rules() -> dict:
     model's own byte-pair floor does."""
 
     def shipped(p, q):
-        # planning.cpp model_plan, mirrored term for term. Two staging forms
+        # gemm/plan/planner.cpp model_plan, mirrored term for term. Two staging forms
         # (the residency sign flips with staging — 2026-09-16):
         # - cp.async (q["tma"] false): zero-constant L20 form — raw-floor
         #   residency in the wave denominator, the k-tail priced whole.

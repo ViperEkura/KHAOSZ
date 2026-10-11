@@ -1,5 +1,5 @@
 /* Compiled-in GEMM tuning rows; generated arrays stay private to this TU. */
-#include "plan_table.h"
+#include "table.h"
 
 #include <array>
 

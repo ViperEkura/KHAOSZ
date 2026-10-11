@@ -1,6 +1,6 @@
 #pragma once
 /* Attention entry dtype dispatch, shared by its four translation units. */
-#include <api/torch/dtype.h>
+#include <api/torch/dispatch.cuh>
 #include <cuda_runtime.h>
 
 namespace astrai {

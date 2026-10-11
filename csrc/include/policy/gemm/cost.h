@@ -1,6 +1,6 @@
 #pragma once
 /* Shared geometry cost for GEMM and symmetric matrix operations. */
-#include <launcher/plan_types.h>
+#include <api/native/gemm_plan.h>
 
 #include <algorithm>
 #include <array>

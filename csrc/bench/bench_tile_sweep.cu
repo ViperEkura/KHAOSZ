@@ -11,8 +11,8 @@ production classes, so a win is attributable to a single axis.
 Compiled standalone (no CMake target), like the C tests:
 
     nvcc -I csrc/include -I csrc/tests -arch=sm_89 -std=c++20 -O3 \
-        csrc/bench/bench_tile_sweep.cu csrc/gemm/planning.cpp \
-        csrc/gemm/plan_table.cpp csrc/gemm/plan_table_builtin.cpp -o /tmp/tile_sweep && /tmp/tile_sweep
+        csrc/bench/bench_tile_sweep.cu csrc/gemm/plan/planner.cpp \
+        csrc/gemm/plan/table.cpp csrc/gemm/plan/builtin.cpp -o /tmp/tile_sweep && /tmp/tile_sweep
     # also build and sweep the int8 candidate set (~2x compile):
     nvcc ... -DASTRAI_SWEEP_INT8=1 ... --dtype both
 

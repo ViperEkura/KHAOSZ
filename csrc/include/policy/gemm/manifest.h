@@ -4,7 +4,7 @@
 #include <type_traits>
 #include <utility>
 
-#include <policy/geometry.h>
+#include <policy/gemm/geometry.h>
 
 namespace astrai {
 namespace gemm {
@@ -46,7 +46,7 @@ using Tile_64x64x64_W16x32_S3 = GemmTileConfig<Shape<64, 64, 64>, Shape<16, 32>,
  * them a wash against s2..s3 (within 1-2% at this tile) and no compiled-in
  * row reaches past s3. The planner rejects k_stages > 3 outright, so a stale
  * row file naming one falls to the next source instead of silently
- * launching nothing (row_plan in gemm/planning.cpp).
+ * launching nothing (row_plan in gemm/plan/planner.cpp).
  * 16 warps per CTA on the small geometry (16x16 warp tiles, 512 threads):
  * the 8-warp small tile starves the tensor pipe on two-byte operands —
  * measured 1.36-1.66x for this twin on 11 of 13 shapes (NT and both
@@ -87,7 +87,7 @@ using Tile_128x128x128_W64x32_S2 = GemmTileConfig<Shape<128, 128, 128>, Shape<64
 
 /*
  * CTA class of a tile config, derived from its CTA geometry — one axis of
- * the dispatch key the launch ladders select on (PlanDecision in launcher/plan_types.h).
+ * the dispatch key the launch ladders select on (PlanDecision in policy/gemm/config.h).
  */
 enum class TileClass { kSmall64, kNarrow128x64, kBig128, kWide128x256, kTall64x128 };
 
@@ -116,7 +116,7 @@ using warp_widened_t =
 /*
  * CTA geometry per dispatch class — the inverse of tile_class, and the one
  * home for the class -> (M, N) numbers the host plan table prices rows with
- * (plan_row_geometry in gemm/plan_table.cpp). Indexed by TileClass, enum order.
+ * (plan_row_geometry in gemm/plan/table.cpp). Indexed by TileClass, enum order.
  */
 inline constexpr int kTileClassCta[][2] = {
     {64, 64},   // kSmall64
