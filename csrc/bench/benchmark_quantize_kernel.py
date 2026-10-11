@@ -1,4 +1,4 @@
-"""ncu target for the fp8 quantize kernels (versioned home of /tmp/qmerged_target.py).
+"""ncu target for FP8 casts through the shared quantize kernel (versioned home of /tmp/qmerged_target.py).
 
 Emits the three production modes at the canonical shapes so ncu can judge
 them under the only trustworthy metric on this box (see
@@ -6,7 +6,7 @@ notes/astrai-fp8.md): cold-cache duration with pinned
 clocks. Round 1 warms; ncu profiles round 2 via --launch-skip.
 
     CUDA_VISIBLE_DEVICES=0 ncu --clock-control base --cache-control all \
-        --kernel-name regex:fp8_quantize --launch-skip 3 --launch-count 3 \
+        --kernel-name regex:quantize_strided_kernel --launch-skip 3 --launch-count 3 \
         --metrics gpu__time_duration.sum,launch__registers_per_thread \
         .venv/bin/python csrc/bench/benchmark_quantize_kernel.py --mode all
 
@@ -50,7 +50,7 @@ def main() -> None:
                 dtype=torch.float8_e4m3fn,
                 hist_idx=0,
                 hist_len=HIST_LEN,
-                fp8_max=448.0,
+                quant_max=448.0,
             )
         if args.mode in ("t", "all"):
             quantize(x, s4, tdtype=torch.float8_e5m2)
@@ -63,7 +63,7 @@ def main() -> None:
                 tdtype=torch.float8_e5m2,
                 hist_idx=0,
                 hist_len=HIST_LEN,
-                fp8_max=448.0,
+                quant_max=448.0,
             )
 
     with fp8_autocast(enabled=True):

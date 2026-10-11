@@ -24,13 +24,14 @@ py::tuple quantize_scaled(const Tensor& x,
                           DType dtype,
                           DType tdtype,
                           int64_t margin,
-                          c10::optional<double> fp8_max,
+                          c10::optional<double> quant_max,
                           const c10::optional<Tensor>& next_scale,
                           const c10::optional<Tensor>& next_inv_scale) {
     TORCH_CHECK(dtype.has_value() || tdtype.has_value(),
                 "quantize_scaled requires dtype or tdtype");
-    const double max =
-        fp8_max.has_value() ? *fp8_max : astrai::fp8_max_of(dtype.has_value() ? *dtype : *tdtype);
+    const double max = quant_max.has_value()
+                           ? *quant_max
+                           : astrai::quant_max_of(dtype.has_value() ? *dtype : *tdtype);
     return result(astrai::quant::quantize_scaled(
         x, inv_scale, ring_state, hist_len, hist_idx, dtype, tdtype, margin, max,
         next_scale.value_or(Tensor()), next_inv_scale.value_or(Tensor())));
@@ -45,7 +46,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("quantize_scaled", &quantize_scaled, py::arg("x"), py::arg("inv_scale"),
           py::arg("ring_state"), py::kw_only(), py::arg("hist_len"), py::arg("hist_idx"),
           py::arg("dtype") = py::none(), py::arg("tdtype") = py::none(), py::arg("margin") = 0,
-          py::arg("fp8_max") = py::none(), py::arg("next_scale") = py::none(),
+          py::arg("quant_max") = py::none(), py::arg("next_scale") = py::none(),
           py::arg("next_inv_scale") = py::none(),
           "Quantize and publish the next scale; returns (out, out_t, amax)");
 }

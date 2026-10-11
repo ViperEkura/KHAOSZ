@@ -14,13 +14,16 @@ struct QuantizeOutputs {
     torch::Tensor amax;
 };
 
-/* Multiply by inv_scale and cast each explicitly requested orientation. */
+/* Multiply by inv_scale broadcast over flattened [rows, cols] and convert each
+ * requested orientation. A non-scalar 1D multiplier selects columns; a 2D
+ * [rows, 1] multiplier selects rows. Storage strides need not be contiguous.
+ */
 QuantizeOutputs quantize(const torch::Tensor& x,
                          const torch::Tensor& inv_scale,
                          c10::optional<at::ScalarType> dtype,
                          c10::optional<at::ScalarType> tdtype);
 
-/* Also fold raw amax and publish the next scale and reciprocal. No cursor
+/* With a scalar multiplier, fold raw amax and publish the next scale and reciprocal. No cursor
  * advance; undefined publication tensors select pair zero in ring_state.
  */
 QuantizeOutputs quantize_scaled(const torch::Tensor& x,
@@ -31,7 +34,7 @@ QuantizeOutputs quantize_scaled(const torch::Tensor& x,
                                 c10::optional<at::ScalarType> dtype,
                                 c10::optional<at::ScalarType> tdtype,
                                 int64_t margin,
-                                double fp8_max,
+                                double quant_max,
                                 const torch::Tensor& next_scale,
                                 const torch::Tensor& next_inv_scale);
 } // namespace quant

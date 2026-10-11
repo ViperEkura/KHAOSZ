@@ -52,10 +52,18 @@ constexpr bool is_fp8(at::ScalarType dtype) {
     return dtype == at::kFloat8_e4m3fn || dtype == at::kFloat8_e5m2;
 }
 
-/* Finite format range for quantization defaults and FP8 scale seeding. */
-inline float fp8_max_of(at::ScalarType dtype) {
-    TORCH_CHECK(is_fp8(dtype), "format must be float8_e4m3fn or float8_e5m2");
-    return dtype == at::kFloat8_e4m3fn ? 448.0f : 57344.0f;
+/* Symmetric quantization range; int8 reserves -128 to keep equal magnitudes. */
+inline float quant_max_of(at::ScalarType dtype) {
+    switch (dtype) {
+    case at::kFloat8_e4m3fn:
+        return 448.0f;
+    case at::kFloat8_e5m2:
+        return 57344.0f;
+    case at::kChar:
+        return 127.0f;
+    default:
+        TORCH_CHECK(false, "quantize output dtype must be float8_e4m3fn, float8_e5m2 or int8");
+    }
 }
 
 inline bool dtype_supported(at::ScalarType dtype, std::initializer_list<at::ScalarType> types) {

@@ -38,17 +38,21 @@ static_assert(RingLayout{0}.size(1) == 4 + kFoldSlots,
               "size(1) must stay the pre-double-buffer layout");
 
 struct QuantParams {
-    /* Contiguous input and independently requested output orientations. */
+    /* Contiguous input matrix extent. */
     const void* input_ptr;
-    const float* inv_scale;
-    void* output_ptr;
-    void* output_transposed_ptr;
-
-    /* Input matrix extent and primary output strides, in elements. */
     int rows;
     int cols;
+
+    /* Requested output orientations and primary element strides. */
+    void* output_ptr;
+    void* output_transposed_ptr;
     int out_row_stride;
     int out_col_stride;
+
+    /* Multiplier element strides in input coordinates; zero broadcasts an axis. */
+    const float* inv_scale;
+    int inv_scale_row_stride;
+    int inv_scale_col_stride;
 
     /* Null ring skips history publication; publication targets may be outside it. */
     float* ring_state;
@@ -57,8 +61,8 @@ struct QuantParams {
     float* next_scale;
     float* next_inv_scale;
 
-    /* next_scale = max(max(history) / fp8_max / pow2_margin, 1e-12). */
-    float fp8_max;
+    /* next_scale = max(max(history) / quant_max / pow2_margin, 1e-12). */
+    float quant_max;
     float pow2_margin;
 };
 

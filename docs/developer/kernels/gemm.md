@@ -136,7 +136,7 @@ Headers under `csrc/include` contain declarations and device templates;
 |------|------|
 | `api/native/quantize.h` | `QuantParams` and shared `RingLayout` slot offsets; no framework or CUDA dependency |
 | `datatype/element.cuh` | shared CUDA element traits: storage and native pair conversion |
-| `api/torch/dtype.h` | CUDA-free Torch dtype names, checkpoint-name matching, supported-type metadata and FP8 ranges |
+| `api/torch/dtype.h` | CUDA-free Torch dtype names, checkpoint-name matching, supported-type metadata and FP8/int8 ranges |
 | `api/torch/dispatch.cuh` | CUDA element/ScalarType mapping, type tags and shared scalar/pair type-list visitors |
 | `kernel/quantize/kernel.cuh` | CUDA cast, transpose and optional fused history update; derives ring pointers from its base and shared slot offsets |
 | `launcher/quantize.cuh` | Native quantize grid/block configuration, launch submission and error checking |
@@ -177,7 +177,9 @@ as the supported Torch version's `c10::optional`); configuration semantics and
 ownership remain unchanged. FP8 training still shares the one GEMM module and
 its planner/state instances.
 
-Scale semantics: `quantize` takes the quantization *multiplier*; the
+## Scales
+
+`quantize` takes the current quantization *multiplier*; the
 strategy layer passes `scale.reciprocal()` and the kernel multiplies by it.
 `quant_gemm` takes per-operand dequant scales (`a_scale`, `b_scale`;
 the fp8 training path passes `sa` / `sb` separately). `amax` is produced
@@ -185,12 +187,34 @@ only by the delayed-scaling ring fold (the in-kernel fused reduction) or
 measured by the caller — the plain no-ring quantize runs a pure scale+cast
 and returns `amax=None`.
 
+Both FP8 and int8 use `quantize`; there is no separate int8 helper. The
+multiplier is float32 on the input device and broadcasts over its logical
+`[rows, cols]` view: one element is scalar, `[cols]` or `[1, cols]` is per
+column, `[rows, 1]` is per row, and `[rows, cols]` is per element. Shape
+declares these axes and Tensor strides address storage, including expanded
+or non-contiguous views. `quantize_scaled` requires a scalar multiplier
+and publishes a global next scale using `quant_max`; its default range is 448, 57344 or 127
+for E4M3FN, E5M2 or int8, selecting `dtype` before `tdtype`.
+
+GEMM scales are contiguous CUDA float32 on the operand device. `a_scale`
+has one element or M elements, and `b_scale` has one or N. Each int8 operand
+requires its corresponding scale; FP8 scales are optional and BF16 operands
+do not accept scales. These factors run along output dimensions, never K.
+For W8A8 linear with x `[M, K]` and w `[N, K]`, caller-computed row scales
+map directly to `a_scale` and `b_scale` with `trans_b=True`. Pass their
+reciprocals to quantize with shapes `[M, 1]` and `[N, 1]`; keep the GEMM
+scale tensors flat. A multiplier stays tied to its original input element
+when a transposed copy is produced. Quantize also accepts column and matrix
+multipliers, while GEMM's scale inputs still vary only along M/N; scales
+varying along K cannot be folded into its epilogue.
+
 Python layer (two levels): `astrai/extension/kernel/quantize.py` and
 `kernel/gemm.py` are the stateless kernel adapters (`quantize` /
 `quantize_scaled` / `quant_gemm` wrappers, one adapter file per compiled kernel
-module), and `astrai/extension/quantize.py` is the strategy layer (fp8
-recipes, history / dynamic scaling and `fp8_autocast`). The shared int8
-primitive remains in the quantize kernel adapter. The composed fp8 linear —
+module). `astrai/extension/policy/quantization/autocast.py` owns the FP8
+strategy: recipes, history / dynamic scaling and `fp8_autocast`. The same quantize
+adapter executes FP8 and int8 casts with caller-provided multipliers.
+The composed fp8 linear —
 quantize, ring fold/advance, the weight-cast cache and all three GEMMs — lives in C++
 (`csrc/gemm/fp8/linear.cu`, compiled into the `gemm` module
 where the GEMM dispatch state lives) behind a single Python->C++ crossing;
@@ -198,7 +222,7 @@ the strategy layer routes `aten::linear` to it on CUDA. The aten override
 installs lazily on the first fp8 activation (autocast enter or the global
 enable), so importing the module is dispatcher-neutral.
 
-The two FP8 quantization interfaces and scale-publication math are described
+The shared quantization interfaces and scale-publication math are described
 in [quantize.md](quantize.md). Their execution layer depends only on
 `QuantParams`, `QuantizeOutputs` and `RingLayout`; cached-cast invalidation,
 metadata registration and checkpoint restoration belong to FP8 linear.
@@ -272,7 +296,7 @@ device launch needs a copy. Kernel parameters and layout remain unchanged.
 
 FP8 forward passes its recipe parameters explicitly to the composed
 implementation. Torch dtype names, checkpoint-name matching and
-`fp8_max_of` are shared in CUDA-free `api/torch/dtype.h`. Bindings and
+`quant_max_of` are shared in CUDA-free `api/torch/dtype.h`. Bindings and
 `ScaleRing` include that metadata without depending on CUDA dispatch.
 FP8 state owns its registry and restore logic.
 CUDA element mappings and type-list visitors live in

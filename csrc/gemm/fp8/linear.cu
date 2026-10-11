@@ -131,7 +131,7 @@ Fp8FwdOut fp8_forward_impl(const Tensor& x,
         if (update_rings) {
             const auto qw = quant::quantize_scaled(
                 w, meta->w.scale_recip(), meta->w.state, history_len, meta->w.idx, fmt_a, fmt_b,
-                margin, fp8_max_of(fmt_a), meta->w.pub_scale(), meta->w.pub_recip());
+                margin, quant_max_of(fmt_a), meta->w.pub_scale(), meta->w.pub_recip());
             w8 = qw.out;
             res.w8T = qw.out_t;
             meta->w.advance();
@@ -154,7 +154,7 @@ Fp8FwdOut fp8_forward_impl(const Tensor& x,
         } else {
             const auto qx = quant::quantize_scaled(
                 x, meta->x->scale_recip(), meta->x->state, history_len, meta->x->idx, fmt_a, fmt_b,
-                margin, fp8_max_of(fmt_a), meta->x->pub_scale(), meta->x->pub_recip());
+                margin, quant_max_of(fmt_a), meta->x->pub_scale(), meta->x->pub_recip());
             x8 = qx.out;
             res.x8T = qx.out_t;
             meta->x->advance();
@@ -205,7 +205,7 @@ tensor_list fp8_backward_impl(const Tensor& g, const Fp8BwdIn& in) {
     const auto qg = in.dynamic ? quant::quantize(g2, sg.reciprocal(), in.fmt_b, in.fmt_b)
                                : quant::quantize_scaled(g2, meta->g.scale_recip(), meta->g.state,
                                                         in.history_len, meta->g.idx, in.fmt_b,
-                                                        in.fmt_b, in.margin, fp8_max_of(in.fmt_b),
+                                                        in.fmt_b, in.margin, quant_max_of(in.fmt_b),
                                                         meta->g.pub_scale(), meta->g.pub_recip());
     Tensor x8T = in.x8T;
     if (!x8T.defined()) {

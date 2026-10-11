@@ -7,12 +7,20 @@ import torch
 
 from astrai.extension.kernel.quantize import quantize, quantize_scaled
 from astrai.extension.runtime.loader import get_module
-from tests.support.capabilities import skip_no_fp8
+from tests.support.capabilities import skip_no_fp8, skip_no_kernel
 
 F4 = torch.float8_e4m3fn
 F5 = torch.float8_e5m2
-OUTPUTS = [(F4, None), (F5, None), (None, F4), (None, F5)]
-OUTPUTS += list(itertools.product((F4, F5), repeat=2))
+I8 = torch.int8
+OUTPUTS = [(dtype, None) for dtype in (F4, F5, I8)]
+OUTPUTS += [(None, dtype) for dtype in (F4, F5, I8)]
+OUTPUTS += list(itertools.product((F4, F5, I8), repeat=2))
+
+
+def _cast(x, dtype):
+    if dtype == I8:
+        return torch.nan_to_num(x, nan=0.0).round().clamp(-127, 127).to(I8)
+    return x.to(dtype)
 
 
 def _ring(n=4):
@@ -35,11 +43,11 @@ def test_requested_outputs_match_cast(input_dtype, dtype, tdtype, shape):
         assert out is None
     else:
         assert out.shape == x.shape
-        assert torch.equal(out.view(torch.uint8), ref.to(dtype).view(torch.uint8))
+        assert torch.equal(out.view(torch.uint8), _cast(ref, dtype).view(torch.uint8))
     if tdtype is None:
         assert out_t is None
     else:
-        expected = ref.reshape(-1, x.shape[-1]).t().contiguous().to(tdtype)
+        expected = _cast(ref.reshape(-1, x.shape[-1]).t().contiguous(), tdtype)
         assert torch.equal(out_t.view(torch.uint8), expected.view(torch.uint8))
 
 
@@ -108,7 +116,7 @@ def test_transpose_only_default_range_and_margin():
     [
         ({}, "dtype or tdtype"),
         ({"dtype": torch.float32}, "output dtype"),
-        ({"tdtype": torch.int8}, "output dtype"),
+        ({"tdtype": torch.float64}, "output dtype"),
     ],
 )
 def test_invalid_output_requests(kwargs, match):
@@ -139,8 +147,8 @@ def test_invalid_output_requests(kwargs, match):
         ("next_scale_only", "provided together"),
         ("next_inv_scale_only", "provided together"),
         ("next_cpu", "next_scale"),
-        ("max_zero", "fp8_max"),
-        ("max_nan", "fp8_max"),
+        ("max_zero", "quant_max"),
+        ("max_nan", "quant_max"),
         ("margin_large", "margin"),
     ],
 )
@@ -187,9 +195,9 @@ def test_invalid_scaled_parameters(case, match):
     elif case == "next_cpu":
         args.update(next_scale=torch.ones(1), next_inv_scale=torch.ones(1))
     elif case == "max_zero":
-        args["fp8_max"] = 0
+        args["quant_max"] = 0
     elif case == "max_nan":
-        args["fp8_max"] = float("nan")
+        args["quant_max"] = float("nan")
     elif case == "margin_large":
         args["margin"] = 1024
     with pytest.raises(RuntimeError, match=match):
@@ -314,3 +322,372 @@ def test_invalid_extent_rejected_before_contiguous_copy(shape, match):
     x = torch.ones(1, 1, device="cuda").expand(shape)
     with pytest.raises(RuntimeError, match=match):
         quantize(x, torch.ones(1, device="cuda"), dtype=F4)
+
+
+@skip_no_kernel
+@pytest.mark.parametrize("input_dtype", [torch.bfloat16, torch.float16, torch.float32])
+@pytest.mark.parametrize("shape", [(7, 19), (2, 3, 19), (2, 3, 4, 19), (64, 128)])
+def test_int8_per_row_multipliers(input_dtype, shape):
+    torch.manual_seed(91)
+    x = torch.randn(*shape, device="cuda", dtype=input_dtype).transpose(-1, -2)
+    rows = x.float().reshape(-1, x.shape[-1])
+    scale = rows.abs().amax(-1).clamp_min(1e-12) / 127
+    inv_scale = scale.reciprocal().reshape(-1, 1)
+    out, out_t, amax = quantize(x, inv_scale, dtype=I8, tdtype=I8)
+    expected = _cast(rows * inv_scale, I8)
+    assert out.shape == x.shape and out.is_contiguous() and amax is None
+    assert torch.equal(out.reshape(rows.shape), expected)
+    assert torch.equal(out_t, expected.t().contiguous())
+    torch.testing.assert_close(
+        out.float().reshape(rows.shape) * scale[:, None],
+        rows,
+        rtol=0,
+        atol=float(scale.max()) * 0.501,
+    )
+
+
+@skip_no_fp8
+@pytest.mark.parametrize("dtype,tdtype", [(F4, I8), (I8, F5), (F5, F4)])
+@pytest.mark.parametrize("input_dtype", [torch.bfloat16, torch.float16, torch.float32])
+@pytest.mark.parametrize("shape", [(3, 5, 8), (64, 128)])
+def test_row_multipliers_apply_to_original_rows_for_mixed_outputs(
+    dtype, tdtype, input_dtype, shape
+):
+    numel = 1
+    for size in shape:
+        numel *= size
+    x = torch.linspace(-60, 60, numel, device="cuda").reshape(shape).to(input_dtype)
+    rows = x.numel() // x.shape[-1]
+    inv_scale = torch.linspace(0.125, 1.5, rows, device="cuda").reshape(-1, 1)
+    out, out_t, _ = quantize(x, inv_scale, dtype=dtype, tdtype=tdtype)
+    ref = x.float().reshape(rows, x.shape[-1]) * inv_scale
+    assert torch.equal(
+        out.view(torch.uint8).reshape(ref.shape), _cast(ref, dtype).view(torch.uint8)
+    )
+    assert torch.equal(
+        out_t.view(torch.uint8), _cast(ref.t().contiguous(), tdtype).view(torch.uint8)
+    )
+
+
+@skip_no_kernel
+def test_int8_rounding_saturation_and_nonfinite_values():
+    x = torch.tensor(
+        [
+            [
+                -1000,
+                -127.5,
+                -126.5,
+                -2.5,
+                -1.5,
+                -0.5,
+                0.5,
+                1.5,
+                2.5,
+                126.5,
+                127.5,
+                1000,
+                float("nan"),
+                float("inf"),
+                -float("inf"),
+            ]
+        ],
+        device="cuda",
+    )
+    out, out_t, _ = quantize(x, torch.ones(1, device="cuda"), dtype=I8, tdtype=I8)
+    expected = torch.tensor(
+        [[-127, -127, -126, -2, -2, 0, 0, 2, 2, 126, 127, 127, 0, 127, -127]],
+        device="cuda",
+        dtype=I8,
+    )
+    assert torch.equal(out, expected)
+    assert torch.equal(out_t, expected.t())
+
+
+@skip_no_kernel
+@pytest.mark.parametrize("shape", [(0,), (0, 17), (2, 0, 17), (3, 0)])
+@pytest.mark.parametrize("multiplier", ["scalar", "row", "column", "matrix"])
+def test_empty_int8_inputs(shape, multiplier):
+    x = torch.empty(shape, device="cuda")
+    rows = 1
+    for size in shape[:-1]:
+        rows *= size
+    cols = shape[-1]
+    inv_shape = {
+        "scalar": (1,),
+        "row": (rows, 1),
+        "column": (cols,),
+        "matrix": (rows, cols),
+    }[multiplier]
+    inv_scale = torch.ones(inv_shape, device="cuda")
+    kwargs = {"dtype": I8}
+    if x.ndim >= 2:
+        kwargs["tdtype"] = I8
+    out, out_t, amax = quantize(x, inv_scale, **kwargs)
+    assert out.shape == x.shape and out.numel() == 0 and amax is None
+    if out_t is not None:
+        assert out_t.shape == (1, 0) and out_t.numel() == 0
+
+
+@skip_no_kernel
+@pytest.mark.parametrize(
+    "case",
+    [
+        "length",
+        "row_extent",
+        "column_extent",
+        "matrix_extent",
+        "excess_rank",
+        "cpu",
+        "dtype",
+    ],
+)
+def test_invalid_multiplier_broadcasts(case):
+    x = torch.ones(2, 3, 5, device="cuda")
+    inv_scale = torch.ones(6, 1, device="cuda")
+    if case == "length":
+        inv_scale = inv_scale.flatten()
+    elif case == "row_extent":
+        inv_scale = inv_scale[:5]
+    elif case == "column_extent":
+        inv_scale = torch.ones(1, 6, device="cuda")
+    elif case == "matrix_extent":
+        inv_scale = torch.ones(6, 4, device="cuda")
+    elif case == "excess_rank":
+        inv_scale = inv_scale.reshape(2, 3, 1)
+    elif case == "cpu":
+        inv_scale = inv_scale.cpu()
+    elif case == "dtype":
+        inv_scale = inv_scale.half()
+    with pytest.raises(RuntimeError, match="inv_scale"):
+        quantize(x, inv_scale, dtype=I8)
+
+
+@skip_no_kernel
+@pytest.mark.parametrize("axis", ["row", "column"])
+def test_multiplier_stride_overflow_rejected_on_empty_views(axis):
+    shape = (3, 0) if axis == "row" else (0, 3)
+    stride = (2**31, 1) if axis == "row" else (3, 2**31)
+    x = torch.empty(shape, device="cuda")
+    inv_scale = torch.empty(0, device="cuda").as_strided(shape, stride)
+    with pytest.raises(RuntimeError, match="inv_scale"):
+        quantize(x, inv_scale, dtype=I8)
+
+
+@skip_no_kernel
+@pytest.mark.parametrize("transpose_only", [False, True])
+@pytest.mark.parametrize("external", [False, True])
+def test_scaled_int8_default_range_and_history(transpose_only, external):
+    ring = _ring()
+    ring[:4] = torch.tensor([12.0, 21.0, 7.0, 17.0], device="cuda")
+    scale = torch.zeros(1, device="cuda") if external else ring[4:5]
+    recip = torch.zeros(1, device="cuda") if external else ring[5:6]
+    x = torch.tensor([[-3.0, 31.75, 1.0], [9.0, -2.0, 0.0]], device="cuda")
+    kwargs = dict(hist_len=4, hist_idx=1, margin=1)
+    kwargs["tdtype" if transpose_only else "dtype"] = I8
+    if external:
+        kwargs.update(next_scale=scale, next_inv_scale=recip)
+    out, out_t, amax = quantize_scaled(
+        x, torch.tensor([2.0], device="cuda"), ring, **kwargs
+    )
+    expected = _cast(x * 2, I8)
+    assert torch.equal(
+        out_t if transpose_only else out, expected.t() if transpose_only else expected
+    )
+    if transpose_only:
+        assert out is None
+    else:
+        assert out_t is None
+    assert amax.data_ptr() == ring[6:7].data_ptr() and float(amax) == 31.75
+    torch.testing.assert_close(
+        ring[:4], torch.tensor([12.0, 31.75, 7.0, 17.0], device="cuda"), rtol=0, atol=0
+    )
+    torch.testing.assert_close(
+        scale, torch.tensor([0.125], device="cuda"), rtol=0, atol=0
+    )
+    torch.testing.assert_close(
+        recip, torch.tensor([8.0], device="cuda"), rtol=0, atol=0
+    )
+    next_out, _, _ = quantize(x, recip, dtype=I8)
+    assert torch.equal(next_out, _cast(x * recip, I8))
+    if external:
+        assert float(ring[4]) == 0 and float(ring[5]) == 0
+
+
+@skip_no_kernel
+def test_scaled_int8_range_override_empty_fold_and_scalar_only():
+    ring = _ring()
+    ring[:4].fill_(64)
+    _, _, amax = quantize_scaled(
+        torch.empty(0, 3, device="cuda"),
+        torch.ones(1, device="cuda"),
+        ring,
+        hist_len=4,
+        hist_idx=2,
+        dtype=I8,
+        tdtype=I8,
+        quant_max=128,
+    )
+    assert float(amax) == 0 and float(ring[2]) == 0
+    assert float(ring[4]) == 0.5 and float(ring[5]) == 2
+    with pytest.raises(RuntimeError, match="inv_scale"):
+        quantize_scaled(
+            torch.ones(2, 3, device="cuda"),
+            torch.ones(2, device="cuda"),
+            ring,
+            hist_len=4,
+            hist_idx=0,
+            dtype=I8,
+        )
+
+
+@skip_no_kernel
+@pytest.mark.parametrize("input_dtype", [torch.bfloat16, torch.float16, torch.float32])
+def test_int8_one_dimensional_input(input_dtype):
+    x = torch.linspace(-12, 12, 19, device="cuda").to(input_dtype)
+    inv_scale = torch.tensor([[0.5]], device="cuda")
+    out, out_t, amax = quantize(x, inv_scale, dtype=I8)
+    assert torch.equal(out, _cast(x.float() * 0.5, I8))
+    assert out.shape == x.shape and out_t is None and amax is None
+    with pytest.raises(RuntimeError, match="2D"):
+        quantize(x, inv_scale, tdtype=I8)
+
+
+@skip_no_kernel
+def test_int8_zero_rows_with_row_multipliers():
+    x = torch.zeros(2, 3, 17, device="cuda")
+    scale = torch.full((6,), 1e-12 / 127, device="cuda")
+    out, out_t, amax = quantize(
+        x, scale.reciprocal().reshape(-1, 1), dtype=I8, tdtype=I8
+    )
+    assert out.shape == x.shape and out_t.shape == (17, 6) and amax is None
+    assert torch.count_nonzero(out) == 0 and torch.count_nonzero(out_t) == 0
+
+
+@pytest.mark.parametrize("mode", ["pure", "row", "column", "matrix", "scaled"])
+@pytest.mark.parametrize(
+    "dtype,tdtype",
+    [
+        pytest.param(I8, I8, marks=skip_no_kernel),
+        pytest.param(F4, I8, marks=skip_no_fp8),
+    ],
+)
+def test_shared_quantize_stream_and_cuda_graph_replay(mode, dtype, tdtype):
+    stream = torch.cuda.Stream()
+    x = torch.linspace(-24, 24, 64 * 128, device="cuda").reshape(64, 128)
+    if mode == "row":
+        inv_scale = torch.linspace(0.25, 2, 64, device="cuda").reshape(-1, 1)
+    elif mode == "column":
+        inv_scale = torch.linspace(0.25, 2, 256, device="cuda")[::2]
+    elif mode == "matrix":
+        inv_scale = torch.linspace(0.25, 2, 64 * 256, device="cuda").reshape(64, 256)[
+            :, ::2
+        ]
+    else:
+        inv_scale = torch.tensor([0.5], device="cuda")
+    ring = _ring() if mode == "scaled" else None
+    stream.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(stream):
+        for _ in range(3):
+            if mode == "scaled":
+                quantize_scaled(
+                    x,
+                    inv_scale,
+                    ring,
+                    hist_len=4,
+                    hist_idx=0,
+                    dtype=dtype,
+                    tdtype=tdtype,
+                )
+            else:
+                quantize(x, inv_scale, dtype=dtype, tdtype=tdtype)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, stream=stream):
+            if mode == "scaled":
+                out, out_t, amax = quantize_scaled(
+                    x,
+                    inv_scale,
+                    ring,
+                    hist_len=4,
+                    hist_idx=0,
+                    dtype=dtype,
+                    tdtype=tdtype,
+                )
+            else:
+                out, out_t, amax = quantize(x, inv_scale, dtype=dtype, tdtype=tdtype)
+        x.fill_(4)
+        inv_scale.mul_(2)
+        graph.replay()
+    torch.cuda.current_stream().wait_stream(stream)
+    ref = x * inv_scale
+    assert torch.equal(out.view(torch.uint8), _cast(ref, dtype).view(torch.uint8))
+    assert torch.equal(
+        out_t.view(torch.uint8), _cast(ref.t().contiguous(), tdtype).view(torch.uint8)
+    )
+    if mode == "scaled":
+        assert float(amax) == 4 and float(ring[0]) == 4
+        expected_scale = torch.tensor(
+            [4.0 / (127 if dtype == I8 else 448)], device="cuda"
+        )
+        torch.testing.assert_close(ring[4:5], expected_scale, rtol=0, atol=0)
+        torch.testing.assert_close(
+            ring[5:6], expected_scale.reciprocal(), rtol=0, atol=0
+        )
+    else:
+        assert amax is None
+
+
+@pytest.mark.parametrize(
+    "dtype,tdtype",
+    [
+        pytest.param(I8, I8, marks=skip_no_kernel),
+        pytest.param(F4, I8, marks=skip_no_fp8),
+    ],
+)
+@pytest.mark.parametrize("shape", [(37, 67), (64, 128)])
+@pytest.mark.parametrize("layout", ["row", "column_1d", "column_2d", "matrix"])
+@pytest.mark.parametrize("storage", ["strided", "expanded"])
+def test_multiplier_tensor_shape_and_storage_strides(
+    dtype, tdtype, shape, layout, storage
+):
+    rows, cols = shape
+    x = torch.linspace(-60, 60, rows * cols, device="cuda").reshape(shape)
+    if layout == "row":
+        if storage == "strided":
+            inv_scale = torch.empty(rows * 2, 2, device="cuda")[::2, :1]
+            inv_scale.copy_(
+                torch.linspace(0.125, 1.5, rows, device="cuda").reshape(-1, 1)
+            )
+        else:
+            inv_scale = torch.tensor([[0.75]], device="cuda").expand(rows, 1)
+    elif layout == "column_1d":
+        if storage == "strided":
+            inv_scale = torch.empty(cols * 2, device="cuda")[::2]
+            inv_scale.copy_(torch.linspace(0.125, 1.5, cols, device="cuda"))
+        else:
+            inv_scale = torch.tensor([0.75], device="cuda").expand(cols)
+    elif layout == "column_2d":
+        if storage == "strided":
+            inv_scale = torch.empty(2, cols * 2, device="cuda")[:1, ::2]
+            inv_scale.copy_(
+                torch.linspace(0.125, 1.5, cols, device="cuda").reshape(1, -1)
+            )
+        else:
+            inv_scale = torch.tensor([[0.75]], device="cuda").expand(1, cols)
+    elif storage == "strided":
+        inv_scale = torch.empty(rows * 2, cols * 2, device="cuda")[::2, ::2]
+        inv_scale.copy_(
+            torch.linspace(0.125, 1.5, rows * cols, device="cuda").reshape(shape)
+        )
+    else:
+        inv_scale = (
+            torch.linspace(0.125, 1.5, cols, device="cuda")
+            .reshape(1, -1)
+            .expand(rows, cols)
+        )
+    out, out_t, amax = quantize(x, inv_scale, dtype=dtype, tdtype=tdtype)
+    ref = x * inv_scale
+    assert amax is None
+    assert torch.equal(out.view(torch.uint8), _cast(ref, dtype).view(torch.uint8))
+    assert torch.equal(
+        out_t.view(torch.uint8), _cast(ref.t().contiguous(), tdtype).view(torch.uint8)
+    )

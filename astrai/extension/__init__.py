@@ -41,7 +41,6 @@ from astrai.extension.kernel.gemm import (
 )
 from astrai.extension.kernel.quantize import (
     quantize,
-    quantize_int8,
     quantize_scaled,
 )
 from astrai.extension.policy.gemm import autotune, plan
@@ -111,7 +110,6 @@ __all__ = [
     "fp8_reset",
     "fp8_state_dict",
     "quantize",
-    "quantize_int8",
     "quantize_scaled",
     "Axes",
     "ExplicitSelectionError",

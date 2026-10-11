@@ -15,13 +15,14 @@ namespace fp8 {
 using torch::Tensor;
 
 /*
- * scale = (peak / fp8_max) / 2^margin, clamped — the host mirror of the
+ * scale = (peak / quant_max) / 2^margin, clamped — the host mirror of the
  * kernel's publish, used only where the host owns it (seed, dynamic recipe).
  */
 inline Tensor scale_from_amax(const Tensor& window_or_amax, at::ScalarType fmt, int64_t margin) {
+    TORCH_CHECK(is_fp8(fmt), "fp8 scale format must be float8_e4m3fn or float8_e5m2");
     const Tensor peak = window_or_amax.max();
     const double pow2 = std::pow(2.0, static_cast<double>(margin));
-    return (peak / fp8_max_of(fmt) / pow2).clamp_min(1e-12);
+    return (peak / quant_max_of(fmt) / pow2).clamp_min(1e-12);
 }
 
 /*

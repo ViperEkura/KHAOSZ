@@ -18,7 +18,7 @@ maps to one family of translation units under `csrc/` (headers live in the `csrc
 | `symmetric` | `symmetric.cu` | Generic BF16 SYRK/SYMM with measured tile dispatch |
 | `rotary_emb` | `rotary_emb.cu` | Fused rotary embedding (cos/sin lookup + rotation) |
 | `cross_entropy` | `cross_entropy.cu` | Fused cross-entropy and chunked linear cross-entropy |
-| `quantize` | `quantize/bindings.cu` + `quantize/entry.cu` | FP8 quantization kernels (sm_89+) |
+| `quantize` | `quantize/bindings.cu` + `quantize/entry.cu` | Shared FP8/int8 quantization kernels (sm_80+) |
 | `gemm` | `gemm/entry.cu` + `gemm/instantiations/*.cu` | dtype-generic tensor-core GEMM binding + one explicit `gemm_dispatch` instantiation per dtype pair (fp8 / W8A16 / W8A8 / W16A16, sm_89+) |
 
 Additionally, optimized `.cuh` variants with tensor-core MMA (Matrix Multiply-Accumulate) exist:
@@ -34,7 +34,7 @@ Additionally, optimized `.cuh` variants with tensor-core MMA (Matrix Multiply-Ac
 |---|---|---|---|
 | SYRK / SYMM | [symmetric.md](symmetric.md) | `csrc/newton_schulz/` | `astrai/extension/backend/newton_schulz.py`; adapter `astrai/extension/kernel/newton_schulz.py` |
 | Muon Newton-Schulz | [muon_ns.md](muon_ns.md) | SYRK/SYMM or Torch | `astrai/extension/backend/newton_schulz.py` |
-| Quantize (FP8) | [quantize.md](quantize.md) | `csrc/quantize/` (bindings + entry; headers: `csrc/include/`) | `astrai/extension/kernel/quantize.py`; strategy layer `astrai/extension/quantize.py` (`fp8_autocast`, aten::linear override) |
+| Quantize (FP8 / int8) | [quantize.md](quantize.md) | `csrc/quantize/` (bindings + entry; headers: `csrc/include/`) | `astrai/extension/kernel/quantize.py`; FP8 strategy `astrai/extension/policy/quantization/autocast.py` (`fp8_autocast`, aten::linear override) |
 | GEMM / Linear (bf16 · fp8 · w8a16 · w8a8) | [gemm.md](gemm.md) | `csrc/gemm/` (headers: `csrc/include/`) | adapter `astrai/extension/kernel/gemm.py` |
 | Attention (decode / paged / split-Q prefill, MMA variants) | [attention.md](attention.md) | `csrc/attention/` (module `attention`; headers: `csrc/include/`) | `astrai/extension/kernel/attention.py`; dispatch `astrai/extension/backend/attention.py` |
 | Gated DeltaNet (chunked fwd prep / bwd output stage) | [attention.md](attention.md) (§GDN) | `csrc/gated_deltanet/` (headers: `csrc/include/`) | `astrai/extension/kernel/gdn.py` |
@@ -47,7 +47,7 @@ one C++ `autograd::Function`) with scale rings in `gemm/fp8/ring.h`,
 cast caches in `gemm/fp8/cache.h`, and registry definitions in
 `gemm/fp8/state.h`. `gemm/fp8/runtime.cu` owns the single process state,
 checkpoint interface, and Python registration. Its Python entry is the strategy
-layer `astrai/extension/quantize.py` (`fp8_autocast`, recipe/format policy),
+layer `astrai/extension/policy/quantization/autocast.py` (`fp8_autocast`, recipe/format policy),
 and it ships inside the `gemm` module so the dispatch state — plan table,
 planner mode, staging switches — has exactly one owner.
 
@@ -391,7 +391,7 @@ csrc/
 │   │       ├── attention.h           # attention Tensor entry declarations
 │   │       ├── gated_deltanet.h       # GDN Tensor entry declarations
 │   │       ├── quantize.h            # QuantizeOutputs, quantize and quantize_scaled
-│   │       ├── dtype.h               # CUDA-free Torch dtype names, matching, classification and FP8 ranges
+│   │       ├── dtype.h               # CUDA-free Torch dtype names, matching, classification and quantization ranges
 │   │       ├── dispatch.cuh          # CUDA element/ScalarType mapping and type-list visitors
 │   └── launcher/                     # GEMM CUDA launch and dispatch templates
 │       ├── quantize.cuh              #     native fused quantize tile grid
@@ -494,7 +494,7 @@ quantize share `unsupported_dtype_message<List>`. Callback exceptions
 propagate unchanged. Compile-time recursion supplies the small
 runtime comparison chain, with no runtime registry or allocation.
 
-`api/torch/dtype.h` holds CUDA-free dtype names, metadata and FP8 range
+`api/torch/dtype.h` holds CUDA-free dtype names, metadata and FP8/int8 range
 queries. Quantize bindings and `ScaleRing` use that header directly; their
 range queries do not depend on CUDA dispatch. The typed visitors and CUDA
 element mapping stay in `api/torch/dispatch.cuh`. GEMM's

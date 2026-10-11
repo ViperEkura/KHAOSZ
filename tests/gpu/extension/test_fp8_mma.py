@@ -615,7 +615,7 @@ def test_quantize_amax_presence():
         ring_state=ring,
         hist_idx=2,
         hist_len=4,
-        fp8_max=448.0,
+        quant_max=448.0,
         margin=0,
     )
     assert amax_ring is not None
@@ -646,7 +646,7 @@ def test_quantize_empty_input_ring_still_publishes():
         ring_state=ring,
         hist_idx=idx,
         hist_len=n,
-        fp8_max=448.0,
+        quant_max=448.0,
         margin=0,
     )
     assert x8.shape == (0, 1536)
@@ -683,7 +683,7 @@ def test_quantize_ring_scratch_self_clean_across_reuse():
     big = torch.randn(64, 96, dtype=torch.bfloat16, device=dev) * 50
     small = torch.randn(64, 96, dtype=torch.bfloat16, device=dev) * 0.05
     mult = torch.tensor([1.0], device=dev)
-    kw = dict(ring_state=ring, hist_idx=idx, hist_len=n, fp8_max=448.0, margin=0)
+    kw = dict(ring_state=ring, hist_idx=idx, hist_len=n, quant_max=448.0, margin=0)
 
     quantize_scaled(big, mult, dtype=torch.float8_e4m3fn, **kw)
     assert float(ring[n + 4 :].abs().sum()) == 0.0
