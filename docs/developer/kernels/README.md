@@ -385,16 +385,16 @@ csrc/
 │   │   │   ├── gemm_plan.h           # query/decision, config, capabilities and probe results
 │   │   │   ├── device.h              # DeviceFacts value contract; querying stays in utils/device.cuh
 │   │   │   ├── attention.h           # AttentionParams, tensor layouts and workspace constants
-│   │   │   └── quantize.h            # capability constants, QuantLayout, RingLayout and QuantParams
+│   │   │   └── quantize.h            # QuantParams and shared RingLayout slot offsets
 │   │   └── torch/                    # Tensor/ScalarType interfaces and framework adapters
 │   │       ├── gemm.h                # quant_gemm_impl and ScalarType-based plan_probe
 │   │       ├── attention.h           # attention Tensor entry declarations
 │   │       ├── gated_deltanet.h       # GDN Tensor entry declarations
-│   │       ├── quantize.h            # QuantizeOutputs and run_quantize
-│   │       ├── dtype.h               # CUDA-free Torch dtype names, matching and classification
+│   │       ├── quantize.h            # QuantizeOutputs, quantize and quantize_scaled
+│   │       ├── dtype.h               # CUDA-free Torch dtype names, matching, classification and FP8 ranges
 │   │       ├── dispatch.cuh          # CUDA element/ScalarType mapping and type-list visitors
-│   │       └── fp8_checks.h          # ATen-cached device capability validation
 │   └── launcher/                     # GEMM CUDA launch and dispatch templates
+│       ├── quantize.cuh              #     native fused quantize tile grid
 │       ├── gemm_launch.cuh           #     typed CUDA launch and TMA descriptor setup
 │       ├── gemm_tiles.cuh            #     manifest selection and staging resolution
 │       └── gemm_dispatch.cuh         #     definitions, layout rewrite and native planner probe
@@ -414,10 +414,10 @@ csrc/
 │   │   └── builtin.cpp               # generated measured and degraded rows
 │   ├── fp8/                          # training composition and persistent state
 │   │   ├── linear.cu / linear.h       # forward/backward autograd and runtime declaration boundary
-│   │   ├── runtime.cu                # one State instance, checkpoint/debug interface and registration
+│   │   ├── runtime.cu                # registry implementation, one State instance and checkpoint boundary
 │   │   ├── ring.h                    # delayed-scaling recipe and rings
 │   │   ├── cache.h                   # versioned weight and bounded activation cast caches
-│   │   └── state.h                   # metadata registry, slots and restore helpers
+│   │   └── state.h                   # typed registry, slots and checkpoint snapshots
 │   └── instantiations/               # per-pair explicit CUDA instantiations, compiled per schedule
 │       └── *.cu                      # BF16/BF16, BF16/INT8, INT8/INT8 and matching FP8 formats
 ├── symmetric/                        # BF16 SYRK/SYMM (→ module symmetric)
@@ -426,8 +426,8 @@ csrc/
 │   ├── entry.h                       #   private host/launcher declarations
 │   └── kernels.cu                    #   typed CUDA kernels, launch dispatch and resource planning
 ├── quantize/                         # family translation units (→ module quantize; entry.cu also compiled into gemm to share the chain)
-│   ├── bindings.cu                   #   pybind surface only (quantize / quantize_dual)
-│   └── entry.cu                      #   the entry implementation: run_quantize + ring binding + dtype dispatch (QuantInputTypes lives here)
+│   ├── bindings.cu                   #   named pybind functions (quantize / quantize_scaled)
+│   └── entry.cu                      #   shared validation, allocation, ring binding and dtype dispatch
 ├── gated_deltanet/                   # chunked GDN fwd/bwd kernels written in-TU + bindings.cu (→ module gated_deltanet)
 ├── rotary_emb.cu                     # rotary embedding (kernel + binding in one file) → module rotary_emb
 ├── bench/                            # measurement + dispatch-analysis tooling, run from the repo root as `python csrc/bench/<tool>.py`
@@ -494,8 +494,10 @@ quantize share `unsupported_dtype_message<List>`. Callback exceptions
 propagate unchanged. Compile-time recursion supplies the small
 runtime comparison chain, with no runtime registry or allocation.
 
-`api/torch/dtype.h` holds CUDA-free dtype names and metadata. The typed
-visitors and CUDA element mapping stay in `api/torch/dispatch.cuh`. GEMM's
+`api/torch/dtype.h` holds CUDA-free dtype names, metadata and FP8 range
+queries. Quantize bindings and `ScaleRing` use that header directly; their
+range queries do not depend on CUDA dispatch. The typed visitors and CUDA
+element mapping stay in `api/torch/dispatch.cuh`. GEMM's
 Torch entry includes `launcher/gemm_dispatch.cuh` for native launch and probe,
 with no local forward declarations. That header owns definitions, defaults,
 and the external instantiations selected by the extension's `gemm_build.h`

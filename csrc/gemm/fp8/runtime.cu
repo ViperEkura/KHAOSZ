@@ -12,6 +12,7 @@
 
 #include "linear.h"
 #include "state.h"
+#include <api/torch/dtype.h>
 
 namespace astrai {
 namespace fp8 {
@@ -19,6 +20,175 @@ namespace fp8 {
 State& state() {
     static State s;
     return s;
+}
+
+namespace {
+std::string meta_key(const Tensor& w) {
+    std::string key = std::to_string(reinterpret_cast<uintptr_t>(w.data_ptr()));
+    key += '|';
+    for (const auto s : w.sizes()) {
+        key += std::to_string(s);
+        key += ',';
+    }
+    key += '|';
+    key += std::to_string(static_cast<int>(w.scalar_type()));
+    return key;
+}
+
+/*
+ * Drop a meta from every registry view — a leftover in ``order`` would shift the
+ * fallback binding of later unslotted metas. The identity checks matter: a key is
+ * claimed by only one meta (first ``emplace`` wins), so never erase another's.
+ */
+void drop_meta(State& st, const std::shared_ptr<Fp8Meta>& meta) {
+    auto it = st.by_key.find(meta->key);
+    if (it != st.by_key.end() && it->second == meta)
+        st.by_key.erase(it);
+    if (meta->slot >= 0) {
+        auto sit = st.by_slot.find(meta->slot);
+        if (sit != st.by_slot.end() && sit->second == meta)
+            st.by_slot.erase(sit);
+    }
+    st.order.erase(std::remove(st.order.begin(), st.order.end(), meta), st.order.end());
+}
+
+/*
+ * Re-point a slot's meta at a new weight tensor, keeping the rings: TP/FSDP swap
+ * the Parameter, not the module. The cast cache must still go — it keys on the
+ * version counter, and a fresh parameter starts at a version its predecessor may
+ * have been cast at. A kept ring means the first fold after the swap still uses
+ * the previous scale (a wild magnitude change clips for one step).
+ */
+void rebind_meta_locked(const std::shared_ptr<Fp8Meta>& meta, const Tensor& w) {
+    State& st = state();
+    auto it = st.by_key.find(meta->key);
+    if (it != st.by_key.end() && it->second == meta)
+        st.by_key.erase(it);
+    meta->key = meta_key(w);
+    meta->weight_ptr = w.data_ptr();
+    meta->anchor = c10::weak_intrusive_ptr<c10::TensorImpl>(w.getIntrusivePtr());
+    meta->shape.assign(w.sizes().begin(), w.sizes().end());
+    meta->dtype = w.scalar_type();
+    meta->cast = WeightCast{};
+    st.by_key.emplace(meta->key, meta);
+}
+
+/* A changed recipe leaves its fresh ring uninitialized for the next seed. */
+void restore_ring(ScaleRing& ring, const c10::optional<RingSnapshot>& saved) {
+    if (!saved.has_value() || saved->state.numel() != ring.state.numel())
+        return;
+    TORCH_CHECK(saved->idx < ring.hist.numel(), "snapshot ring idx out of range");
+    ring.state.copy_(saved->state.to(ring.state.device()));
+    ring.cur = saved->cur;
+    ring.publish_recip();
+    ring.idx = saved->idx;
+    ring.initialized = saved->initialized;
+}
+
+void restore_pending_locked(const std::shared_ptr<Fp8Meta>& meta) {
+    auto& pending = state().pending;
+    const auto restore = [&](size_t i) {
+        const auto& entry = pending[i];
+        restore_ring(meta->w, entry.w);
+        restore_ring(*meta->x, entry.x);
+        restore_ring(meta->g, entry.g);
+        pending.erase(pending.begin() + static_cast<long>(i));
+    };
+    if (!meta->slot_name.empty()) {
+        for (size_t i = 0; i < pending.size(); ++i) {
+            if (pending[i].slot_name == meta->slot_name) {
+                restore(i);
+                return;
+            }
+        }
+    }
+    for (size_t i = 0; i < pending.size(); ++i) {
+        const auto& entry = pending[i];
+        if (!entry.slot_name.empty() || entry.shape != meta->shape ||
+            !dtype_str_matches(entry.dtype, meta->dtype))
+            continue;
+        restore(i);
+        return;
+    }
+}
+} // namespace
+
+/*
+ * Find or create a weight's rings. A slot survives a replaced weight tensor —
+ * only the identity is re-pointed (rebind_meta_locked). A recipe change, or a
+ * failed ownership check on the address path, rebuilds with a generation bump
+ * that invalidates the cast caches; fresh rings re-seed on the next forward.
+ * Without a slot the address-keyed path runs unchanged (bare calls, benches, and
+ * the backward pass, which reaches its meta through the weight forward saved).
+ */
+std::shared_ptr<Fp8Meta>
+get_meta(const Tensor& w, int64_t history_len, int64_t margin, int64_t slot) {
+    State& st = state();
+    std::lock_guard<std::mutex> lock(st.mu);
+    /*
+     * Slot names and roles come from the published module table.
+     */
+    std::string name, role_glob;
+    if (slot >= 0) {
+        auto rit = st.slots.find(slot);
+        if (rit != st.slots.end()) {
+            name = rit->second.name;
+            role_glob = rit->second.role;
+        }
+    }
+    const auto recipe_ok = [&](const std::shared_ptr<Fp8Meta>& meta) {
+        return meta->w.hist.numel() == history_len && meta->margin == margin;
+    };
+    if (slot >= 0) {
+        auto sit = st.by_slot.find(slot);
+        if (sit != st.by_slot.end()) {
+            auto meta = sit->second;
+            if (recipe_ok(meta)) {
+                if (!meta->owns(w))
+                    rebind_meta_locked(meta, w);
+                meta->slot_name = name;
+                meta->role = role_glob;
+                return meta;
+            }
+            drop_meta(st, meta);
+            st.generation.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    const std::string key = meta_key(w);
+    auto it = st.by_key.find(key);
+    if (it != st.by_key.end()) {
+        auto meta = it->second;
+        if (recipe_ok(meta) && meta->owns(w)) {
+            // A weight first reached bare (address path) adopts the slot here.
+            if (slot >= 0) {
+                if (meta->slot < 0) {
+                    meta->slot = slot;
+                    st.by_slot.emplace(slot, meta);
+                }
+                meta->slot_name = name;
+                meta->role = role_glob;
+            }
+            return meta;
+        }
+        drop_meta(st, meta);
+        st.generation.fetch_add(1, std::memory_order_relaxed);
+    }
+    const auto opts = torch::TensorOptions().dtype(at::kFloat).device(w.device());
+    auto meta = std::make_shared<Fp8Meta>(w);
+    meta->key = key;
+    meta->slot = slot;
+    meta->slot_name = name;
+    meta->role = role_glob;
+    meta->w = ScaleRing(opts, history_len);
+    meta->x = std::make_shared<ScaleRing>(opts, history_len);
+    meta->g = ScaleRing(opts, history_len);
+    meta->margin = margin;
+    st.by_key.emplace(key, meta);
+    if (slot >= 0)
+        st.by_slot.emplace(slot, meta);
+    st.order.push_back(meta);
+    restore_pending_locked(meta);
+    return meta;
 }
 
 /*
@@ -92,13 +262,56 @@ py::dict fp8_state_dict() {
     return out;
 }
 
+namespace {
+
+/* Decode completely before replacing live state; malformed entries fail here. */
+c10::optional<RingSnapshot> decode_ring(py::handle obj) {
+    if (obj.is_none())
+        return c10::nullopt;
+    TORCH_CHECK(py::isinstance<py::dict>(obj), "snapshot ring must be a dict or None");
+    auto d = py::reinterpret_borrow<py::dict>(obj);
+    TORCH_CHECK(d.contains("state") && d.contains("idx") && d.contains("initialized"),
+                "snapshot ring requires state, idx and initialized");
+    RingSnapshot ring{d["state"].cast<Tensor>(), d["idx"].cast<int64_t>(),
+                      d.contains("cur") ? d["cur"].cast<int>() : 0, d["initialized"].cast<bool>()};
+    TORCH_CHECK(ring.state.defined() && ring.state.dim() == 1 &&
+                    ring.state.scalar_type() == at::kFloat,
+                "snapshot ring state must be a 1D float32 tensor");
+    TORCH_CHECK(ring.cur == 0 || ring.cur == 1, "snapshot ring cur must be 0 or 1");
+    // Both the old single-pair extent and the double-buffer extent remain valid.
+    TORCH_CHECK(ring.state.numel() >= quant::RingLayout{1}.size(1) && ring.idx >= 0 &&
+                    ring.idx < ring.state.numel() - quant::RingLayout{0}.size(1),
+                "snapshot ring idx out of range or state too small");
+    return ring;
+}
+
+MetaSnapshot decode_meta(py::handle obj) {
+    TORCH_CHECK(py::isinstance<py::dict>(obj), "snapshot entry must be a dict");
+    auto d = py::reinterpret_borrow<py::dict>(obj);
+    TORCH_CHECK(d.contains("shape") && d.contains("dtype") && d.contains("w") && d.contains("x") &&
+                    d.contains("g"),
+                "snapshot entry requires shape, dtype and w/x/g rings");
+    MetaSnapshot entry;
+    entry.shape = d["shape"].cast<std::vector<int64_t>>();
+    entry.dtype = d["dtype"].cast<std::string>();
+    entry.slot_name = d.contains("slot_name") ? d["slot_name"].cast<std::string>() : "";
+    entry.role = d.contains("role") ? d["role"].cast<std::string>() : "";
+    entry.w = decode_ring(d["w"]);
+    entry.x = decode_ring(d["x"]);
+    entry.g = decode_ring(d["g"]);
+    return entry;
+}
+} // namespace
+
 void fp8_load_state_dict(py::dict sd) {
+    TORCH_CHECK(sd.contains("entries"), "FP8 snapshot requires entries");
+    std::vector<MetaSnapshot> pending;
+    for (auto entry : sd["entries"].cast<py::list>())
+        pending.push_back(decode_meta(entry));
     State& st = state();
     std::lock_guard<std::mutex> lock(st.mu);
-    st.pending.clear();
-    for (auto entry : sd["entries"].cast<py::list>())
-        st.pending.push_back(entry.cast<py::dict>());
-    st.generation += 1; // the cast cache keys on it
+    st.pending = std::move(pending);
+    st.generation.fetch_add(1, std::memory_order_relaxed);
     for (auto& meta : st.order)
         restore_pending_locked(meta);
 }
@@ -131,7 +344,7 @@ void fp8_reset() {
     st.by_slot.clear();
     st.order.clear();
     st.pending.clear();
-    st.generation += 1;
+    st.generation.fetch_add(1, std::memory_order_relaxed);
     st.act_cache.clear();
 }
 
@@ -145,7 +358,7 @@ void fp8_set_act_cache(bool enabled) {
 void fp8_clear_act_cache() { state().act_cache.clear(); }
 
 py::dict fp8_debug_meta(const Tensor& w, int64_t history_len, int64_t margin, int64_t slot) {
-    auto meta = get_meta(w, history_len, margin, false, slot);
+    auto meta = get_meta(w, history_len, margin, slot);
     auto ring = [](const ScaleRing& r) {
         py::dict d;
         d["state"] = r.state;
@@ -162,36 +375,11 @@ py::dict fp8_debug_meta(const Tensor& w, int64_t history_len, int64_t margin, in
     out["x"] = ring(*meta->x);
     out["g"] = ring(meta->g);
     out["cast_version"] = meta->cast.version;
-    out["has_cast"] = meta->cast.w8.defined();
+    out["has_cast"] = meta->cast.out.defined();
     out["slot"] = meta->slot;
     out["slot_name"] = meta->slot_name;
     out["role"] = meta->role;
     return out;
-}
-
-py::dict fp8_debug_stats() {
-    State& st = state();
-    py::dict d;
-    d["quantize"] = st.n_quantize.load(std::memory_order_relaxed);
-    d["gemm"] = st.n_gemm.load(std::memory_order_relaxed);
-    d["cast_hit"] = st.n_cast_hit.load(std::memory_order_relaxed);
-    d["cast_miss"] = st.n_cast_miss.load(std::memory_order_relaxed);
-    d["act_hit"] = st.n_act_hit.load(std::memory_order_relaxed);
-    d["act_miss"] = st.n_act_miss.load(std::memory_order_relaxed);
-    d["act_entries"] = static_cast<int64_t>(st.act_cache.size());
-    d["act_cache_bytes"] = st.act_cache.byte_size();
-    d["metas"] = static_cast<int64_t>(st.order.size());
-    return d;
-}
-
-void fp8_debug_reset_stats() {
-    State& st = state();
-    st.n_quantize = 0;
-    st.n_gemm = 0;
-    st.n_cast_hit = 0;
-    st.n_cast_miss = 0;
-    st.n_act_hit = 0;
-    st.n_act_miss = 0;
 }
 
 void bind_fp8(py::module& m) {
@@ -208,8 +396,6 @@ void bind_fp8(py::module& m) {
     m.def("fp8_clear_act_cache", &fp8_clear_act_cache);
     m.def("fp8_debug_meta", &fp8_debug_meta, py::arg("w"), py::arg("history_len") = 16,
           py::arg("margin") = 0, py::arg("slot") = -1);
-    m.def("fp8_debug_stats", &fp8_debug_stats);
-    m.def("fp8_debug_reset_stats", &fp8_debug_reset_stats);
 }
 
 } // namespace fp8

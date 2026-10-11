@@ -134,11 +134,12 @@ Headers under `csrc/include` contain declarations and device templates;
 
 | File | Role |
 |------|------|
-| `api/native/quantize.h` | capability constants, `QuantLayout`, `RingLayout` and `QuantParams`; no framework or CUDA instruction dependency |
-| `datatype/element.cuh` | shared CUDA element traits: storage, native pair conversion, FP8 limits |
-| `api/torch/dtype.h` | CUDA-free Torch dtype names, checkpoint-name matching and supported-type metadata |
+| `api/native/quantize.h` | `QuantParams` and shared `RingLayout` slot offsets; no framework or CUDA dependency |
+| `datatype/element.cuh` | shared CUDA element traits: storage and native pair conversion |
+| `api/torch/dtype.h` | CUDA-free Torch dtype names, checkpoint-name matching, supported-type metadata and FP8 ranges |
 | `api/torch/dispatch.cuh` | CUDA element/ScalarType mapping, type tags and shared scalar/pair type-list visitors |
-| `kernel/quantize/kernel.cuh` | pure-CUDA device code: vectorized `fp8_quantize_kernel` + 64×32-tile transpose kernel (out_layout 0/1/2, Dual orientation a template param), `ElemTrait<T>` conversion and pair unpack from `datatype/element.cuh` — no torch |
+| `kernel/quantize/kernel.cuh` | CUDA cast, transpose and optional fused history update; derives ring pointers from its base and shared slot offsets |
+| `launcher/quantize.cuh` | Native quantize grid/block configuration, launch submission and error checking |
 | `datatype/dequant.cuh` | in-register dequantization functors (`DequantPair<SrcT, MmaT>`): the exact int8→bf16 expansion quantized-GEMM operands fold between the smem read and the mma |
 | `api/native/gemm.h` | GEMM layout tags and unchanged `GemmParams` POD; no Torch or CUDA instruction dependency |
 | `policy/gemm/traits.cuh` | Compute promotion (`gemm_mma_traits`), promoted MMA traits and shared-memory policy (`GemmTraits`, `GemmSmem`) |
@@ -162,10 +163,10 @@ Headers under `csrc/include` contain declarations and device templates;
 | `gemm/entry.cu` | Typed host dispatch using the launcher header: one dtype-pair visitor feeds launch and probe; the schedule visitor selects the compiled architecture variant. Holds no `py::` type |
 | `gemm/fp8/linear.cu` | Composed fp8 training linear (forward and backward) in one C++ `autograd::Function` |
 | `gemm/fp8/runtime.cu` / `gemm/fp8/linear.h` | Single `State` owner, checkpoint/debug and pybind interface; internal declarations connecting the runtime to the autograd entry |
-| `gemm/fp8/ring.h` / `gemm/fp8/cache.h` / `gemm/fp8/state.h` | Delayed-scaling ring and recipe; weight/activation cast caches; meta registry and restore helpers |
+| `gemm/fp8/ring.h` / `gemm/fp8/cache.h` / `gemm/fp8/state.h` | Scale-ring lifecycle; reusable weight/activation casts; typed metadata registry and checkpoint snapshots |
 | `gemm/bindings.cu` | Quantized GEMM and planner pybind surface: None-tolerant argument marshalling, state/config dict contracts and `PYBIND11_MODULE`; calls `bind_fp8` from `gemm/fp8/runtime.cu` |
 | `csrc/quantize/bindings.cu` | pybind surface only → module `quantize` |
-| `csrc/quantize/entry.cu` | the entry implementation: run_quantize + ring binding + dtype dispatch (also compiled into the gemm module so fp8_linear shares the chain) |
+| `csrc/quantize/entry.cu` | the entry implementation: quantize / quantize_scaled validation, allocation and dtype dispatch (also compiled into the gemm module so fp8_linear shares the chain) |
 
 `api/torch/` may include `api/native/`; native contracts and shared device
 headers must never include the Torch adapters. The planner implementations
@@ -185,23 +186,59 @@ measured by the caller — the plain no-ring quantize runs a pure scale+cast
 and returns `amax=None`.
 
 Python layer (two levels): `astrai/extension/kernel/quantize.py` and
-`kernel/gemm.py` are the stateless kernel adapters (plain `quantize` /
-`quantize_dual` / `quant_gemm` wrappers, one adapter file per compiled kernel
+`kernel/gemm.py` are the stateless kernel adapters (`quantize` /
+`quantize_scaled` / `quant_gemm` wrappers, one adapter file per compiled kernel
 module), and `astrai/extension/quantize.py` is the strategy layer (fp8
-recipes, delayed / dynamic scaling, `fp8_autocast`, plus the int8
-quantizers). The composed fp8 linear — quantize, ring fold/advance, the
-weight-cast cache and all three GEMMs — lives in C++
+recipes, history / dynamic scaling and `fp8_autocast`). The shared int8
+primitive remains in the quantize kernel adapter. The composed fp8 linear —
+quantize, ring fold/advance, the weight-cast cache and all three GEMMs — lives in C++
 (`csrc/gemm/fp8/linear.cu`, compiled into the `gemm` module
 where the GEMM dispatch state lives) behind a single Python->C++ crossing;
 the strategy layer routes `aten::linear` to it on CUDA. The aten override
 installs lazily on the first fp8 activation (autocast enter or the global
 enable), so importing the module is dispatcher-neutral.
 
-The fp8 training math contract — the scaled-cast formula, the delayed vs
-dynamic scaling recipes, `quantize_dual`, and the forward/backward dataflow
-formulas that consume these operands — lives in
-[quantize.md](quantize.md); the sm_120 block_scale mma cell is covered in
-the design notes below.
+The two FP8 quantization interfaces and scale-publication math are described
+in [quantize.md](quantize.md). Their execution layer depends only on
+`QuantParams`, `QuantizeOutputs` and `RingLayout`; cached-cast invalidation,
+metadata registration and checkpoint restoration belong to FP8 linear.
+
+## FP8 training composition
+
+Master weights, gradients and optimizer state stay BF16/FP32. FP8 is used
+for GEMM operands. Forward casts the original operands and, when backward
+needs them, transposed copies in the same pass:
+
+```text
+out = bf16((x8 @ w8^T) * sx * sw + bias)
+grad_x = bf16((g8 @ w8T) * sg * sw)
+grad_w = bf16((g8T @ x8T) * sg * sx)
+grad_b = bf16(sum_rows(g))
+```
+
+The GEMMs accumulate in float32 and fold dequantization scales into the
+epilogue. Backward quantizes the gradient once for both GEMMs and reuses
+the saved transposed forward casts. Hybrid recipes request E4M3 original
+outputs and E5M2 transposes explicitly.
+
+Dequantization scales vary only along the GEMM output dimension: `a_scale`
+has one or M values and `b_scale` one or N. The training path uses per-tensor
+scales for every operand because the weight's output dimension changes in
+backward; per-channel weight scaling is a forward-only choice.
+
+Dynamic scaling measures the current input before calling `quantize`.
+History scaling calls `quantize_scaled` with the current reciprocal and
+the other publication pair. `ScaleRing` owns seeding, the history cursor
+and double buffering; linear controls their forward/backward timing.
+Versioned weight casts retain a scale snapshot and become invalid after an
+in-place weight update. Shared activation casts retain their associated
+ring. Cache hits skip both quantization and ring advancement, and no-grad
+calls do not update history. These caches and registry snapshots are not
+dependencies of either quantization entry.
+
+The runtime owns registration, reset and restoration. Python checkpoint
+dictionaries are converted to typed snapshots at its boundary; checkpoint
+v2, legacy defaults and named/FIFO matching keep their existing behavior.
 
 ## Entry and parameter ownership
 
@@ -233,10 +270,11 @@ the public probe fills a contiguous hypothetical problem before calling it.
 The native launch passes the POD by const reference until layout lowering or
 device launch needs a copy. Kernel parameters and layout remain unchanged.
 
-FP8 forward passes its existing `Fp8Cfg` recipe through the implementation
-without repeating five scalar fields. Torch dtype names and checkpoint-name
-matching are shared in `api/torch/dtype.h`; FP8 state owns only its registry
-and restore logic. The metadata header has no CUDA dependency.
+FP8 forward passes its recipe parameters explicitly to the composed
+implementation. Torch dtype names, checkpoint-name matching and
+`fp8_max_of` are shared in CUDA-free `api/torch/dtype.h`. Bindings and
+`ScaleRing` include that metadata without depending on CUDA dispatch.
+FP8 state owns its registry and restore logic.
 CUDA element mappings and type-list visitors live in
 `api/torch/dispatch.cuh`, shared by GEMM, attention and quantize. Each family
 declares its supported list locally, for example:

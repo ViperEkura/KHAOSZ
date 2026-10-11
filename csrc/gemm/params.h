@@ -3,12 +3,11 @@
 #include <algorithm>
 #include <utility>
 
-#include <torch/extension.h>
+#include <torch/types.h>
 
 #include <api/native/gemm.h>
 
 #include <api/torch/dtype.h>
-#include <api/torch/fp8_checks.h>
 
 namespace astrai {
 namespace gemm {
@@ -93,16 +92,11 @@ PreparedGemm prepare_gemm(const GemmInputs& inputs) {
     const bool trans_a = inputs.trans_a, trans_b = inputs.trans_b;
     const auto dt_a = a.scalar_type(), dt_b = b.scalar_type();
     const bool i8a = dt_a == torch::kChar, i8b = dt_b == torch::kChar;
-    const bool f8a = is_fp8(dt_a);
-    const bool f8b = is_fp8(dt_b);
     const bool b16a = dt_a == torch::kBFloat16, b16b = dt_b == torch::kBFloat16;
     /*
      * The supported-pair set is validated once, by the dispatch switch's
      * default arm in entry.cu, with the operand dtypes in the message.
      */
-    if (f8a || f8b) {
-        astrai::quant::check_fp8_device(a.device().index());
-    }
     const int64_t m = trans_a ? a.size(-1) : a.size(-2);
     const int64_t n = trans_b ? b.size(-2) : b.size(-1);
     const int64_t k = trans_a ? a.size(-2) : a.size(-1);

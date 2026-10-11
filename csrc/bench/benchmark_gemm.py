@@ -31,7 +31,7 @@ import click
 import torch
 import torch.nn.functional as F
 
-from astrai.extension import is_available, quantize_act_int8, quantize_weight_int8
+from astrai.extension import is_available, quantize_int8
 from astrai.extension.kernel.gemm import probe, quant_gemm, set_planner
 from astrai.performance import measure_operations
 
@@ -147,11 +147,11 @@ def benchmark_gemm(
     w = (torch.randn(n, k, device="cuda") * 0.05).to(torch.bfloat16)
     acts: dict[str, tuple[torch.Tensor, torch.Tensor | None]] = {
         "bf16": (x, None),
-        "int8": quantize_act_int8(x),
+        "int8": quantize_int8(x),
     }
     weights: dict[str, tuple[torch.Tensor, torch.Tensor | None]] = {
         "bf16": (w, None),
-        "int8": quantize_weight_int8(w),
+        "int8": quantize_int8(w),
     }
     for label, dtype, max_val in FP8_FORMATS:
         acts[label] = quantize_fp8(x, dtype, max_val, per_channel=False)

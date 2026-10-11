@@ -1,6 +1,7 @@
 #pragma once
 /* CUDA element/ScalarType mapping and type-list visitors. */
 #include <array>
+#include <c10/util/Exception.h>
 #include <c10/util/StringUtil.h>
 #include <cstdint>
 #include <stdexcept>

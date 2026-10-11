@@ -1,33 +1,18 @@
 #pragma once
 /* FP8 scale recipe and delayed-scaling ring. */
-#include <torch/extension.h>
+#include <torch/types.h>
 
+#include <climits>
 #include <cmath>
 #include <cstdint>
 
-#include <api/torch/dispatch.cuh>
 #include <api/native/quantize.h>
+#include <api/torch/dtype.h>
 
 namespace astrai {
 namespace fp8 {
 
 using torch::Tensor;
-
-/*
- * Recipe constants
- */
-
-/*
- * The fp8 format range: one source for the host-side seed formula (the kernel
- * publishes with the same number, passed through QuantParams).
- */
-inline float fp8_max_of(at::ScalarType fmt) {
-    TORCH_CHECK(is_fp8(fmt),
-                "fp8 linear: format must be float8_e4m3fn or float8_e5m2");
-    return fmt == scalar_type_v<fp8_e4m3> ? ElemTrait<fp8_e4m3>::kFiniteMax
-                                          : ElemTrait<fp8_e5m2>::kFiniteMax;
-}
-
 
 /*
  * scale = (peak / fp8_max) / 2^margin, clamped — the host mirror of the
@@ -70,8 +55,9 @@ struct ScaleRing {
 
     ScaleRing(const torch::TensorOptions& opts, int64_t history_len) {
         const int64_t n = history_len;
-        TORCH_CHECK(n > 0, "fp8 linear: history_len must be positive");
-        const quant::RingLayout layout{n};
+        TORCH_CHECK(n > 0 && n <= INT_MAX - quant::kFoldSlots - 6,
+                    "fp8 linear: history_len must be positive");
+        const quant::RingLayout layout{static_cast<int>(n)};
         state = torch::zeros({layout.size()}, opts);
         hist = state.narrow(0, 0, n);
         pscale[0] = state.narrow(0, layout.scale(0), 1);

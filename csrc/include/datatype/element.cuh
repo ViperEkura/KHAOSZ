@@ -68,13 +68,11 @@ template <> struct ElemTrait<float> {
 
 template <> struct ElemTrait<fp8_e4m3> {
     static constexpr int kBytes = 1;
-    static constexpr float kFiniteMax = 448.0f;
     static DEVICE_FORCEINLINE uint8_t cvt_byte(float x) { return fp8_e4m3(x).__x; }
 };
 
 template <> struct ElemTrait<fp8_e5m2> {
     static constexpr int kBytes = 1;
-    static constexpr float kFiniteMax = 57344.0f;
     static DEVICE_FORCEINLINE uint8_t cvt_byte(float x) { return fp8_e5m2(x).__x; }
 };
 

@@ -14,24 +14,19 @@
  * Python, and the per-linear host cost of the old Python chain is gone.
  *
  * Not here by design: the autocast region and recipe/format policy
- * (astrai/extension/quantize.py), the module slot table
+ * (astrai/extension/policy/quantization/autocast.py), the module slot table
  * (astrai/extension/policy/quantization/autocast.py), and the rings / cast caches / snapshot
  * (ring.h, cache.h, state.h). The state owner and checkpoint
  * interface live in runtime.cu in this module.
  */
 
-#include <ATen/cuda/CUDAContext.h>
-#include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Optional.h>
 #include <torch/extension.h>
 
-#include <algorithm>
 #include <atomic>
-#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <mutex>
-#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -65,117 +60,59 @@ struct Fp8FwdOut {
     Tensor x8T, w8T; // K-contiguous transposed casts (undefined when absent)
 };
 
-/*
- * The recipe as resolved for one call; the policy layer reads its region config
- * once and passes the fields down.
- */
-struct Fp8Cfg {
-    bool dynamic = false;
-    int64_t history_len = 16;
-    int64_t margin = 0;
-    at::ScalarType fmt_a = at::kFloat8_e4m3fn;
-    at::ScalarType fmt_b = at::kFloat8_e5m2;
-};
-
-/*
- * One quantize pass through the shared launcher, with the counters tests and
- * benches read. ``pub_scale``/``pub_recip`` redirect the fold's publication into
- * the double buffer's other pair; undefined with no ring.
- */
-quant::QuantizeOutputs run_quant(const Tensor& t,
-                                 const Tensor& scale,
-                                 quant::QuantLayout layout,
-                                 at::ScalarType fmt_a,
-                                 c10::optional<at::ScalarType> fmt_b,
-                                 const c10::optional<Tensor>& ring,
-                                 int64_t idx,
-                                 const Fp8Cfg& cfg,
-                                 const Tensor& pub_scale = Tensor(),
-                                 const Tensor& pub_recip = Tensor()) {
-    state().n_quantize.fetch_add(1, std::memory_order_relaxed);
-    return quant::run_quantize(
-        t, scale, layout, fmt_a, fmt_b, ring, idx, fp8_max_of(fmt_a),
-        std::pow(2.0, static_cast<double>(cfg.margin)),
-        pub_scale.defined() ? c10::optional<Tensor>(pub_scale) : c10::nullopt,
-        pub_recip.defined() ? c10::optional<Tensor>(pub_recip) : c10::nullopt,
-        /*
-         * The composed ring's state trails a double-buffered scale pair, so the
-         * history length is stated, never derived from numel.
-         */
-        cfg.history_len);
-}
-
-Tensor run_gemm(const Tensor& a,
-                const Tensor& b,
-                const c10::optional<Tensor>& a_scale,
-                const c10::optional<Tensor>& b_scale,
-                const c10::optional<Tensor>& bias,
-                bool trans_b) {
-    state().n_gemm.fetch_add(1, std::memory_order_relaxed);
-    return gemm::quant_gemm_impl(a, b, a_scale, b_scale, false, trans_b, bias);
-}
-
 Fp8FwdOut fp8_forward_impl(const Tensor& x,
                            const Tensor& w,
                            const c10::optional<Tensor>& bias,
                            bool update_rings,
-                           const Fp8Cfg& cfg,
+                           bool dynamic,
+                           int64_t history_len,
+                           int64_t margin,
+                           at::ScalarType fmt_a,
+                           at::ScalarType fmt_b,
                            int64_t slot) {
     Fp8FwdOut res;
     std::vector<int64_t> out_shape(x.sizes().begin(), x.sizes().end() - 1);
     out_shape.push_back(w.size(0));
 
-    if (cfg.dynamic) {
+    State& st = state();
+    if (dynamic) {
         // Current-amax scaling: measure, then quantize — no rings, no cache.
         const auto dyn = [&](const Tensor& t) {
-            return scale_from_amax(amax_of(t), cfg.fmt_a, cfg.margin);
+            return scale_from_amax(amax_of(t), fmt_a, margin);
         };
         res.sx = dyn(x.reshape({-1, w.size(1)}));
         res.sw = dyn(w);
-        const auto qx = run_quant(x, res.sx.reciprocal(), quant::QuantLayout::RowMajor, cfg.fmt_a,
-                                  c10::nullopt, c10::nullopt, 0, cfg);
-        const Tensor w8 = is_fp8(w.scalar_type())
-                              ? w
-                              : run_quant(w, res.sw.reciprocal(), quant::QuantLayout::RowMajor,
-                                          cfg.fmt_a, c10::nullopt, c10::nullopt, 0, cfg)
-                                    .out;
-        res.out = run_gemm(qx.out.reshape({-1, qx.out.size(-1)}), w8, res.sx, res.sw, bias, true)
+        const auto qx = quant::quantize(x, res.sx.reciprocal(), fmt_a, c10::nullopt);
+        const Tensor w8 = quant::quantize(w, res.sw.reciprocal(), fmt_a, c10::nullopt).out;
+        res.out = gemm::quant_gemm_impl(qx.out.reshape({-1, qx.out.size(-1)}), w8, res.sx, res.sw,
+                                        false, true, bias)
                       .reshape(out_shape);
         return res;
     }
 
-    State& st = state();
     /*
      * Slot-addressed when the dispatcher knows the module (``slot >= 0``): the
      * meta then belongs to the module path and survives a replaced weight
      * parameter. Bare calls, benches and every existing test pass no slot and
      * keep the address-keyed lookup byte for byte.
      */
-    auto meta = get_meta(w, cfg.history_len, cfg.margin, false, slot);
+    auto meta = get_meta(w, history_len, margin, slot);
     /*
      * Host-side seed only when a ring has never been used: both branches need
      * a valid scale to cast with.
      */
     if (!meta->w.initialized)
-        meta->w.seed(w, cfg.fmt_a, cfg.margin);
+        meta->w.seed(w, fmt_a, margin);
     const bool cache_activation =
         update_rings && st.act_cache_enabled.load(std::memory_order_relaxed);
     c10::optional<ActivationCast> cached_activation;
     if (cache_activation) {
-        cached_activation = st.act_cache.find(x, cfg.fmt_a, cfg.fmt_b, cfg.history_len, cfg.margin);
+        cached_activation = st.act_cache.find(x, fmt_a, fmt_b, history_len, margin);
         if (cached_activation.has_value())
             meta->x = cached_activation->ring;
     }
     if (!meta->x->initialized)
-        meta->x->seed(x, cfg.fmt_a, cfg.margin);
-    /*
-     * Pre-quantized fp8 weights: this branch takes w as-is, but the entry check
-     * admits bf16 only — and the ring seed off fp8 values is not the scale the
-     * weight was quantized with. Enabling it needs an explicit ``w_scale``
-     * argument, not a relaxed check.
-     */
-    const bool w_pre = is_fp8(w.scalar_type());
-
+        meta->x->seed(x, fmt_a, margin);
     /*
      * Ring view of the current scale pair: the fold publishes into the other
      * pair, so this slot still holds the multiplier the cast used when the GEMM
@@ -184,63 +121,53 @@ Fp8FwdOut fp8_forward_impl(const Tensor& x,
      */
     res.sx = meta->x->scale();
     Tensor w8;
-    if (!w_pre && meta->cast.valid(w, cfg.fmt_a, cfg.fmt_b, st.generation)) {
-        st.n_cast_hit.fetch_add(1, std::memory_order_relaxed);
-        w8 = meta->cast.w8;
-        res.sw = meta->cast.sw;
-        res.w8T = meta->cast.w8T;
+    const auto generation = st.generation.load(std::memory_order_relaxed);
+    if (meta->cast.valid(w, fmt_a, fmt_b, generation)) {
+        w8 = meta->cast.out;
+        res.sw = meta->cast.scale;
+        res.w8T = meta->cast.out_t;
     } else {
-        st.n_cast_miss.fetch_add(1, std::memory_order_relaxed);
         res.sw = meta->w.scale();
-        if (w_pre) {
-            w8 = w;
-        } else if (update_rings) {
-            const auto qw = run_quant(w, meta->w.scale_recip(), quant::QuantLayout::Dual, cfg.fmt_a,
-                                      cfg.fmt_b, meta->w.state, meta->w.idx, cfg, meta->w.pub_scale(),
-                                      meta->w.pub_recip());
+        if (update_rings) {
+            const auto qw = quant::quantize_scaled(
+                w, meta->w.scale_recip(), meta->w.state, history_len, meta->w.idx, fmt_a, fmt_b,
+                margin, fp8_max_of(fmt_a), meta->w.pub_scale(), meta->w.pub_recip());
             w8 = qw.out;
             res.w8T = qw.out_t;
             meta->w.advance();
             // The entry must outlive the ring pair it came from: immutable copy.
-            meta->cast.fill(w, cfg.fmt_a, cfg.fmt_b, st.generation, w8, res.w8T, res.sw.clone());
+            meta->cast = {w8, res.w8T, res.sw.clone(), version_of(w), generation};
         } else {
             /*
              * Ring-free cast (no-grad): folding here would advance the window a
              * second time per step and desynchronize the recompute.
              */
-            w8 = run_quant(w, meta->w.scale_recip(), quant::QuantLayout::RowMajor, cfg.fmt_a,
-                           c10::nullopt, c10::nullopt, 0, cfg)
-                     .out;
+            w8 = quant::quantize(w, meta->w.scale_recip(), fmt_a, c10::nullopt).out;
         }
     }
 
     Tensor x8;
     if (update_rings) {
         if (cached_activation.has_value()) {
-            st.n_act_hit.fetch_add(1, std::memory_order_relaxed);
-            x8 = cached_activation->x8;
-            res.x8T = cached_activation->x8T;
+            x8 = cached_activation->out;
+            res.x8T = cached_activation->out_t;
         } else {
-            if (cache_activation)
-                st.n_act_miss.fetch_add(1, std::memory_order_relaxed);
-            const auto qx = run_quant(x, meta->x->scale_recip(), quant::QuantLayout::Dual, cfg.fmt_a,
-                                      cfg.fmt_b, meta->x->state, meta->x->idx, cfg,
-                                      meta->x->pub_scale(), meta->x->pub_recip());
+            const auto qx = quant::quantize_scaled(
+                x, meta->x->scale_recip(), meta->x->state, history_len, meta->x->idx, fmt_a, fmt_b,
+                margin, fp8_max_of(fmt_a), meta->x->pub_scale(), meta->x->pub_recip());
             x8 = qx.out;
             res.x8T = qx.out_t;
             meta->x->advance();
             if (cache_activation) {
-                st.act_cache.insert(x, cfg.fmt_a, cfg.fmt_b, cfg.history_len, cfg.margin, qx.out, qx.out_t,
-                                    meta->x);
+                st.act_cache.insert(x, qx.out, qx.out_t, meta->x, margin);
             }
         }
     } else {
-        x8 = run_quant(x, meta->x->scale_recip(), quant::QuantLayout::RowMajor, cfg.fmt_a, c10::nullopt,
-                       c10::nullopt, 0, cfg)
-                 .out;
+        x8 = quant::quantize(x, meta->x->scale_recip(), fmt_a, c10::nullopt).out;
     }
     res.out =
-        run_gemm(x8.reshape({-1, x8.size(-1)}), w8, res.sx, res.sw, bias, true).reshape(out_shape);
+        gemm::quant_gemm_impl(x8.reshape({-1, x8.size(-1)}), w8, res.sx, res.sw, false, true, bias)
+            .reshape(out_shape);
     return res;
 }
 
@@ -253,11 +180,8 @@ struct Fp8BwdIn {
 };
 
 tensor_list fp8_backward_impl(const Tensor& g, const Fp8BwdIn& in) {
-    const Fp8Cfg cfg{in.dynamic, in.history_len, in.margin, in.fmt_b, in.fmt_b};
     const Tensor g2 = g.reshape({-1, g.size(-1)});
     Tensor sx = in.sx, sw = in.sw, sg;
-    c10::optional<Tensor> g_ring = c10::nullopt;
-    int64_t g_idx = 0;
     std::shared_ptr<Fp8Meta> meta;
     if (in.dynamic) {
         const auto dyn = [&](const Tensor& t) {
@@ -267,12 +191,10 @@ tensor_list fp8_backward_impl(const Tensor& g, const Fp8BwdIn& in) {
         sw = dyn(in.w);
         sx = dyn(in.x);
     } else {
-        meta = get_meta(in.w, in.history_len, in.margin, false);
+        meta = get_meta(in.w, in.history_len, in.margin, -1);
         if (!meta->g.initialized)
             meta->g.seed(g2, in.fmt_b, in.margin);
         sg = meta->g.scale(); // ring view: g's fold publishes the other pair
-        g_ring = meta->g.state;
-        g_idx = meta->g.idx;
     }
     /*
      * NT fast path via transposed quantize outputs: g8 + w8T gives grad_x, g8T +
@@ -280,35 +202,24 @@ tensor_list fp8_backward_impl(const Tensor& g, const Fp8BwdIn& in) {
      * both); x8T/w8T came from the forward or the weight cast cache, so the
      * backward re-reads neither x nor w.
      */
-    const bool delayed = !in.dynamic;
-    const auto qg = run_quant(g2, delayed ? meta->g.scale_recip() : sg.reciprocal(),
-                              quant::QuantLayout::Dual, in.fmt_b, c10::nullopt, g_ring, g_idx, cfg,
-                              delayed ? meta->g.pub_scale() : Tensor(),
-                              delayed ? meta->g.pub_recip() : Tensor());
+    const auto qg = in.dynamic ? quant::quantize(g2, sg.reciprocal(), in.fmt_b, in.fmt_b)
+                               : quant::quantize_scaled(g2, meta->g.scale_recip(), meta->g.state,
+                                                        in.history_len, meta->g.idx, in.fmt_b,
+                                                        in.fmt_b, in.margin, fp8_max_of(in.fmt_b),
+                                                        meta->g.pub_scale(), meta->g.pub_recip());
     Tensor x8T = in.x8T;
     if (!x8T.defined()) {
-        x8T =
-            run_quant(in.x.reshape({-1, in.x.size(-1)}), sx.reciprocal(),
-                      quant::QuantLayout::Transposed, in.fmt_b, c10::nullopt, c10::nullopt, 0, cfg)
-                .out_t;
+        x8T = quant::quantize(in.x.reshape({-1, in.x.size(-1)}), sx.reciprocal(), c10::nullopt,
+                              in.fmt_b)
+                  .out_t;
     }
-    Tensor grad_x;
-    if (is_fp8(in.w.scalar_type())) {
-        /*
-         * Pre-quantized weight has no transposed copy (grad_w unaffected).
-         * Unreachable through the entry check today — see w_pre above.
-         */
-        grad_x = run_gemm(qg.out, in.w, sg, sw, c10::nullopt, false).reshape(in.x.sizes());
-    } else {
-        Tensor w8T = in.w8T;
-        if (!w8T.defined()) {
-            w8T = run_quant(in.w, sw.reciprocal(), quant::QuantLayout::Transposed, in.fmt_b,
-                            c10::nullopt, c10::nullopt, 0, cfg)
-                      .out_t;
-        }
-        grad_x = run_gemm(qg.out, w8T, sg, sw, c10::nullopt, true).reshape(in.x.sizes());
+    Tensor w8T = in.w8T;
+    if (!w8T.defined()) {
+        w8T = quant::quantize(in.w, sw.reciprocal(), c10::nullopt, in.fmt_b).out_t;
     }
-    Tensor grad_w = run_gemm(qg.out_t, x8T, sg, sx, c10::nullopt, true);
+    Tensor grad_x =
+        gemm::quant_gemm_impl(qg.out, w8T, sg, sw, false, true, c10::nullopt).reshape(in.x.sizes());
+    Tensor grad_w = gemm::quant_gemm_impl(qg.out_t, x8T, sg, sx, false, true, c10::nullopt);
     // A bias-free linear must not pay g2.sum(0) — another full gradient read.
     Tensor grad_b;
     if (in.need_bias_grad)
@@ -354,8 +265,8 @@ class Fp8Linear : public torch::autograd::Function<Fp8Linear> {
         c10::optional<Tensor> bias_opt = c10::nullopt;
         if (bias.numel() > 0)
             bias_opt = bias;
-        const Fp8Cfg cfg{dynamic, history_len, margin, fmt_a, fmt_b};
-        const Fp8FwdOut res = fp8_forward_impl(x, w, bias_opt, update_rings, cfg, slot);
+        const Fp8FwdOut res = fp8_forward_impl(x, w, bias_opt, update_rings, dynamic, history_len,
+                                               margin, fmt_a, fmt_b, slot);
         ctx->save_for_backward({x, w});
         if (res.x8T.defined())
             ctx->saved_data["x8T"] = res.x8T;

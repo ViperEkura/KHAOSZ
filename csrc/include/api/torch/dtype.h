@@ -2,6 +2,7 @@
 /* Torch dtype metadata; usable by ordinary C++ without CUDA headers. */
 
 #include <c10/core/ScalarType.h>
+#include <c10/util/Exception.h>
 #include <c10/util/StringUtil.h>
 #include <initializer_list>
 #include <string>
@@ -49,6 +50,12 @@ inline bool dtype_str_matches(const std::string& s, at::ScalarType t) {
 
 constexpr bool is_fp8(at::ScalarType dtype) {
     return dtype == at::kFloat8_e4m3fn || dtype == at::kFloat8_e5m2;
+}
+
+/* Finite format range for quantization defaults and FP8 scale seeding. */
+inline float fp8_max_of(at::ScalarType dtype) {
+    TORCH_CHECK(is_fp8(dtype), "format must be float8_e4m3fn or float8_e5m2");
+    return dtype == at::kFloat8_e4m3fn ? 448.0f : 57344.0f;
 }
 
 inline bool dtype_supported(at::ScalarType dtype, std::initializer_list<at::ScalarType> types) {

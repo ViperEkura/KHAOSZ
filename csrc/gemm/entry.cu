@@ -58,6 +58,8 @@ std::string unsupported_pair_message(c10::ScalarType a, c10::ScalarType b) {
 /* All kernel variants have distinct schedule types and architecture images. */
 template <typename A, typename B, typename F> auto with_schedule(const DeviceFacts& dev, F&& fn) {
     constexpr bool fp8 = sizeof(A) == 1 && !std::is_same_v<A, int8_t>;
+    if constexpr (fp8)
+        TORCH_CHECK(dev.cc >= 89, "FP8 MMA requires compute capability 8.9+");
     const GemmCapabilities caps = capabilities_for(dev);
     TORCH_CHECK(fp8 ? caps.fp8 : caps.mma, "GEMM kernels were not built for this device/dtype (SM",
                 caps.cc, ", compiled targets: ", caps.targets, ")");

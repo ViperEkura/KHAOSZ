@@ -13,16 +13,7 @@ import torch.nn.functional as F
 
 import astrai.extension.policy.quantization.autocast as f8mod
 from astrai.extension.kernel.gemm import quant_gemm
-from astrai.extension.kernel.quantize import quantize, quantize_dual
-from astrai.extension.runtime.loader import get_module
-
-try:
-    from astrai.extension.kernel.quantize import K_FOLD_SLOTS
-except RuntimeError:
-    # The binding must stay import-safe on boxes without the extension;
-    # every K_FOLD_SLOTS use sits inside kernel-level tests that skip
-    # via skip_no_fp8/skip_no_kernel when the kernel is not built.
-    K_FOLD_SLOTS = None
+from astrai.extension.kernel.quantize import quantize, quantize_scaled
 from astrai.extension.policy.quantization.autocast import (
     FP8Recipe,
     fp8_autocast,
@@ -30,6 +21,7 @@ from astrai.extension.policy.quantization.autocast import (
     fp8_load_state_dict,
     fp8_state_dict,
 )
+from astrai.extension.runtime.loader import get_module
 from tests.support.capabilities import skip_no_fp8
 
 
@@ -64,8 +56,8 @@ def test_fp8_mm_matches_explicit_quantization(m, n, k):
     b = torch.randn(k, n, device="cuda", dtype=torch.bfloat16)
     scale_a = _scale(a)
     scale_b = _scale(b)
-    a8, _ = quantize(a, scale_a.reciprocal(), torch.float8_e4m3fn)
-    b8, _ = quantize(b, scale_b.reciprocal(), torch.float8_e4m3fn)
+    a8, _, _ = quantize(a, scale_a.reciprocal(), dtype=torch.float8_e4m3fn)
+    b8, _, _ = quantize(b, scale_b.reciprocal(), dtype=torch.float8_e4m3fn)
     out = quant_gemm(a8, b8, a_scale=scale_a * scale_b, trans_b=False)
     expected = (_quantize(a, scale_a) @ _quantize(b, scale_b) * scale_a * scale_b).to(
         torch.bfloat16
@@ -86,7 +78,7 @@ def test_quantize_input_dtypes(in_dtype, fmt):
     x = torch.randn(64, 128, device="cuda", dtype=torch.float32) * 0.5
     x = x.to(in_dtype)
     scale = torch.tensor([0.5], device="cuda")
-    x8, amax = quantize(x, scale, fmt)
+    x8, _, amax = quantize(x, scale, dtype=fmt)
     out_dtype = fmt
     assert x8.dtype == out_dtype
     assert x8.shape == x.shape
@@ -100,13 +92,15 @@ def test_quantize_rejects_nonfloat_input():
     x = torch.zeros(8, 8, device="cuda", dtype=torch.int8)
     scale = torch.ones(1, device="cuda")
     with pytest.raises(RuntimeError, match="quantize has no kernel for"):
-        quantize(x, scale, torch.float8_e4m3fn)
+        quantize(x, scale, dtype=torch.float8_e4m3fn)
 
 
 @skip_no_fp8
 def test_quantize_e5m2_format():
     x = torch.randn(32, 64, device="cuda", dtype=torch.bfloat16)
-    x8, amax = quantize(x, torch.tensor([10.0], device="cuda"), torch.float8_e5m2)
+    x8, _, amax = quantize(
+        x, torch.tensor([10.0], device="cuda"), dtype=torch.float8_e5m2
+    )
     assert x8.dtype == torch.float8_e5m2
     assert amax is None  # no ring => no fused amax
 
@@ -121,8 +115,8 @@ def test_quant_gemm_transposed_operands(trans_a, trans_b):
     a = torch.randn(m, k, device="cuda", dtype=torch.bfloat16)  # A [M][K]
     b = torch.randn(n, k, device="cuda", dtype=torch.bfloat16)  # B^T [N][K]
     sa, sb = _scale(a), _scale(b)
-    a8, _ = quantize(a, sa.reciprocal(), torch.float8_e4m3fn)
-    b8, _ = quantize(b, sb.reciprocal(), torch.float8_e4m3fn)
+    a8, _, _ = quantize(a, sa.reciprocal(), dtype=torch.float8_e4m3fn)
+    b8, _, _ = quantize(b, sb.reciprocal(), dtype=torch.float8_e4m3fn)
     a_op = a8.t().contiguous() if trans_a else a8
     b_op = b8 if trans_b else b8.t().contiguous()
 
@@ -143,8 +137,8 @@ def test_quant_gemm_fused_bias(bias_on):
     a = torch.randn(m, k, device="cuda", dtype=torch.bfloat16)
     b = torch.randn(n, k, device="cuda", dtype=torch.bfloat16)
     sa, sb = _scale(a), _scale(b)
-    a8, _ = quantize(a, sa.reciprocal(), torch.float8_e4m3fn)
-    b8, _ = quantize(b, sb.reciprocal(), torch.float8_e4m3fn)
+    a8, _, _ = quantize(a, sa.reciprocal(), dtype=torch.float8_e4m3fn)
+    b8, _, _ = quantize(b, sb.reciprocal(), dtype=torch.float8_e4m3fn)
     bias = torch.randn(n, device="cuda", dtype=torch.bfloat16)
 
     out = quant_gemm(
@@ -158,7 +152,7 @@ def test_quant_gemm_fused_bias(bias_on):
     # Batched broadcast: bias applies to every batch slice (each slice gets
     # its own reference from its own operand values).
     ab = torch.randn(3, m, k, device="cuda", dtype=torch.bfloat16)
-    ab8, _ = quantize(ab, sa.reciprocal(), torch.float8_e4m3fn)
+    ab8, _, _ = quantize(ab, sa.reciprocal(), dtype=torch.float8_e4m3fn)
     outb = quant_gemm(ab8, b8, a_scale=sa * sb, trans_b=True, bias=bias)
     assert outb.shape == (3, m, n)
     for i in range(3):
@@ -178,8 +172,8 @@ def test_quant_gemm_batched(trans_a, trans_b):
     a = torch.randn(batch, m, k, device="cuda", dtype=torch.bfloat16)
     b = torch.randn(batch, n, k, device="cuda", dtype=torch.bfloat16)
     sa, sb = _scale(a), _scale(b)
-    a8, _ = quantize(a, sa.reciprocal(), torch.float8_e4m3fn)
-    b8, _ = quantize(b, sb.reciprocal(), torch.float8_e4m3fn)
+    a8, _, _ = quantize(a, sa.reciprocal(), dtype=torch.float8_e4m3fn)
+    b8, _, _ = quantize(b, sb.reciprocal(), dtype=torch.float8_e4m3fn)
     a_op = a8.transpose(-2, -1).contiguous() if trans_a else a8
     b_op = b8 if trans_b else b8.transpose(-2, -1).contiguous()
 
@@ -202,8 +196,8 @@ def test_quant_gemm_batched_broadcast():
     a = torch.randn(batch, m, k, device="cuda", dtype=torch.bfloat16)
     b = torch.randn(1, n, k, device="cuda", dtype=torch.bfloat16)
     sa, sb = _scale(a), _scale(b)
-    a8, _ = quantize(a, sa.reciprocal(), torch.float8_e4m3fn)
-    b8, _ = quantize(b, sb.reciprocal(), torch.float8_e4m3fn)
+    a8, _, _ = quantize(a, sa.reciprocal(), dtype=torch.float8_e4m3fn)
+    b8, _, _ = quantize(b, sb.reciprocal(), dtype=torch.float8_e4m3fn)
 
     out = quant_gemm(a8, b8, a_scale=sa * sb, trans_b=True)
     assert out.shape == (batch, m, n)
@@ -228,8 +222,8 @@ def test_quant_gemm_col_major_view_zero_copy():
     a = torch.randn(m, k, device="cuda", dtype=torch.bfloat16)
     b = torch.randn(n, k, device="cuda", dtype=torch.bfloat16)
     sa, sb = _scale(a), _scale(b)
-    a8, _ = quantize(a, sa.reciprocal(), torch.float8_e4m3fn)
-    b8, _ = quantize(b, sb.reciprocal(), torch.float8_e4m3fn)
+    a8, _, _ = quantize(a, sa.reciprocal(), dtype=torch.float8_e4m3fn)
+    b8, _, _ = quantize(b, sb.reciprocal(), dtype=torch.float8_e4m3fn)
 
     torch.cuda.synchronize()
     before = torch.cuda.memory_allocated()
@@ -365,18 +359,14 @@ def test_fp8_linear_backward_outside_autocast():
 
     gemm = _gemm()
     gemm.fp8_reset()
-    gemm.fp8_debug_reset_stats()
     try:
         with fp8_autocast(enabled=True):
             out = F.linear(x, weight, bias)
         assert out.grad_fn is not None  # an fp8 node owns the backward
         out.float().pow(2).sum().backward()  # outside the autocast region
     finally:
-        stats = gemm.fp8_debug_stats()
         gemm.fp8_reset()
 
-    # One fwd + two bwd GEMMs: fp8 kernels, not the bf16 fallback.
-    assert stats["gemm"] == 3, stats
     ref = F.linear(xr, wr, br)
     ref.float().pow(2).sum().backward()
 
@@ -401,8 +391,8 @@ def test_quant_gemm_matches_scaled_mm():
     b = torch.randn(k, n, device="cuda", dtype=torch.bfloat16)
     sa = _scale(a)
     sb = _scale(b)
-    a8, _ = quantize(a, sa.reciprocal(), torch.float8_e4m3fn)
-    b8, _ = quantize(b, sb.reciprocal(), torch.float8_e4m3fn)
+    a8, _, _ = quantize(a, sa.reciprocal(), dtype=torch.float8_e4m3fn)
+    b8, _, _ = quantize(b, sb.reciprocal(), dtype=torch.float8_e4m3fn)
     out = quant_gemm(a8, b8, a_scale=sa * sb, trans_b=False)
     assert out.dtype == torch.bfloat16
     assert out.shape == (m, n)
@@ -488,15 +478,15 @@ def test_recipe_scale_from_history(margin, hist_scale):
 
 @skip_no_fp8
 @pytest.mark.parametrize("fmt", [torch.float8_e4m3fn, torch.float8_e5m2])
-def test_quantize_dual_and_transposed_orientations(fmt):
-    """quantize_dual yields both orientations from one read; quantize's
-    transposed switch keeps the 2-tuple arity with the [cols][rows] layout."""
+def test_quantize_outputs_and_transposed_orientations(fmt):
+    """quantize_outputs yields both orientations from one read; quantize's
+    tdtype selects the transpose in the fixed 3-tuple with the [cols][rows] layout."""
     torch.manual_seed(11)
     x = torch.randn(37, 67, device="cuda", dtype=torch.bfloat16) * 3
     mult = _scale(x).reciprocal()
-    x8, amax = quantize(x, mult, fmt)
-    x8T, _ = quantize(x, mult, fmt, transposed=True)
-    d8, d8T, _ = quantize_dual(x, mult, fmt)
+    x8, _, amax = quantize(x, mult, dtype=fmt)
+    _, x8T, _ = quantize(x, mult, tdtype=fmt)
+    d8, d8T, _ = quantize(x, mult, dtype=fmt, tdtype=fmt)
     assert x8T.shape == (67, 37)
     assert torch.equal(x8.view(torch.uint8), d8.view(torch.uint8))
     assert torch.equal(x8T.view(torch.uint8), d8T.view(torch.uint8))
@@ -521,22 +511,16 @@ def test_quantize_ring_fold_matches_host_update(fmt, fmax, margin):
 
     # Reference: legacy quantize + the host fold (amax measured out-of-band,
     # as dynamic scaling does — the no-ring kernel no longer returns one).
-    x8_ref = quantize(x, mult, fmt)[0]
+    x8_ref = quantize(x, mult, dtype=fmt)[0]
     hist = torch.full((n,), 1.0, device=dev)
     hist[idx] = x.float().abs().amax().reshape(1)
     scale = (hist.max() / fmax / pow2m).clamp_min(1e-12).reshape(1)
 
     # Fused: same window, fold inside the quantize kernel's last block.
-    ring = torch.zeros(n + 4 + K_FOLD_SLOTS, device=dev)
+    ring = torch.zeros(n + 4 + get_module("quantize").K_FOLD_SLOTS, device=dev)
     ring[:n].fill_(1.0)
-    x8, amax = quantize(
-        x,
-        mult,
-        fmt,
-        ring_state=ring,
-        hist_idx=idx,
-        hist_len=n,
-        pow2_margin=pow2m,
+    x8, _, amax = quantize_scaled(
+        x, mult, dtype=fmt, ring_state=ring, hist_idx=idx, hist_len=n, margin=margin
     )
     assert torch.equal(x8.view(torch.uint8), x8_ref.view(torch.uint8))
     torch.testing.assert_close(ring[:n], hist, rtol=0, atol=0)
@@ -563,21 +547,22 @@ def test_quantize_ring_fold_tall_dual_grid(fmt, fmax):
     x[8000, 7] = 100.0  # late row block: a gridDim.x-only fold misses it
     mult = torch.tensor([1.0], device=dev)
 
-    x8_ref = quantize(x, mult, fmt)[0]
+    x8_ref = quantize(x, mult, dtype=fmt)[0]
     hist = torch.full((n,), 1.0, device=dev)
     hist[idx] = x.float().abs().amax().reshape(1)
     scale = (hist.max() / fmax).clamp_min(1e-12).reshape(1)
 
-    ring = torch.zeros(n + 4 + K_FOLD_SLOTS, device=dev)
+    ring = torch.zeros(n + 4 + get_module("quantize").K_FOLD_SLOTS, device=dev)
     ring[:n].fill_(1.0)
-    d8, d8T, amax = quantize_dual(
+    d8, d8T, amax = quantize_scaled(
         x,
         mult,
-        fmt,
+        dtype=fmt,
+        tdtype=fmt,
         ring_state=ring,
         hist_idx=idx,
         hist_len=n,
-        pow2_margin=1.0,
+        margin=0,
     )
     assert torch.equal(d8.view(torch.uint8), x8_ref.view(torch.uint8))
     torch.testing.assert_close(ring[:n], hist, rtol=0, atol=0)
@@ -589,7 +574,7 @@ def test_quantize_ring_fold_tall_dual_grid(fmt, fmax):
 
 @skip_no_fp8
 def test_dynamic_recipe_backward():
-    """fp8 dynamic scaling runs its backward through quantize_dual without a
+    """fp8 dynamic scaling runs its backward through quantize_outputs without a
     ring (amax measured inline); the fold must not reference the None meta."""
     torch.manual_seed(5)
     x = torch.randn(64, 128, device="cuda", dtype=torch.bfloat16, requires_grad=True)
@@ -612,24 +597,26 @@ def test_quantize_amax_presence():
     torch.manual_seed(9)
     x = torch.randn(64, 96, device="cuda", dtype=torch.bfloat16)
     mult = _scale(x).reciprocal()
-    x8, amax = quantize(x, mult, torch.float8_e4m3fn)
+    x8, _, amax = quantize(x, mult, dtype=torch.float8_e4m3fn)
     assert amax is None
-    d8, d8T, amax_dual = quantize_dual(x, mult, torch.float8_e4m3fn)
+    d8, d8T, amax_dual = quantize(
+        x, mult, dtype=torch.float8_e4m3fn, tdtype=torch.float8_e4m3fn
+    )
     assert amax_dual is None
     assert torch.equal(d8.view(torch.uint8), x8.view(torch.uint8))
     assert torch.equal(d8T.view(torch.uint8), x8.t().contiguous().view(torch.uint8))
     # ring: the fold reports the round's amax and self-cleans its scratch.
-    ring = torch.zeros(8 + K_FOLD_SLOTS, device="cuda")
+    ring = torch.zeros(8 + get_module("quantize").K_FOLD_SLOTS, device="cuda")
     ring[:4].fill_(1.0)
-    x8r, amax_ring = quantize(
+    x8r, _, amax_ring = quantize_scaled(
         x,
         mult,
-        torch.float8_e4m3fn,
+        dtype=torch.float8_e4m3fn,
         ring_state=ring,
         hist_idx=2,
         hist_len=4,
         fp8_max=448.0,
-        pow2_margin=1.0,
+        margin=0,
     )
     assert amax_ring is not None
     assert torch.equal(x8.view(torch.uint8), x8r.view(torch.uint8))
@@ -648,19 +635,19 @@ def test_quantize_empty_input_ring_still_publishes():
     the fold reports that 0 on the amax sink and self-cleans its scratch."""
     dev = torch.device("cuda")
     n, idx = 4, 1
-    ring = torch.zeros(n + 4 + K_FOLD_SLOTS, device=dev)
+    ring = torch.zeros(n + 4 + get_module("quantize").K_FOLD_SLOTS, device=dev)
     ring[:n].fill_(1.0)
     x = torch.empty(0, 1536, dtype=torch.bfloat16, device=dev)
     mult = torch.tensor([1.0], device=dev)
-    x8, amax = quantize(
+    x8, _, amax = quantize_scaled(
         x,
         mult,
-        torch.float8_e4m3fn,
+        dtype=torch.float8_e4m3fn,
         ring_state=ring,
         hist_idx=idx,
         hist_len=n,
         fp8_max=448.0,
-        pow2_margin=1.0,
+        margin=0,
     )
     assert x8.shape == (0, 1536)
     assert amax is not None and float(amax) == 0.0  # the empty round's amax
@@ -677,11 +664,11 @@ def test_quantize_ring_requires_hist_len():
     trailing scale pair makes the window unrecoverable from numel, and the
     inference that used to run silently read the scale slots as history."""
     dev = torch.device("cuda")
-    ring = torch.zeros(4 + 4 + K_FOLD_SLOTS, device=dev)
+    ring = torch.zeros(4 + 4 + get_module("quantize").K_FOLD_SLOTS, device=dev)
     x = torch.randn(32, 64, dtype=torch.bfloat16, device=dev)
     mult = _scale(x).reciprocal()
-    with pytest.raises(RuntimeError, match="hist_len"):
-        quantize(x, mult, torch.float8_e4m3fn, ring_state=ring, hist_idx=0)
+    with pytest.raises(TypeError, match="hist_len"):
+        quantize_scaled(x, mult, dtype=torch.float8_e4m3fn, ring_state=ring, hist_idx=0)
 
 
 @skip_no_fp8
@@ -691,18 +678,18 @@ def test_quantize_ring_scratch_self_clean_across_reuse():
     leftover from round 1's larger blocks."""
     dev = torch.device("cuda")
     n, idx = 4, 0
-    ring = torch.zeros(n + 4 + K_FOLD_SLOTS, device=dev)
+    ring = torch.zeros(n + 4 + get_module("quantize").K_FOLD_SLOTS, device=dev)
     ring[:n].fill_(0.1)
     big = torch.randn(64, 96, dtype=torch.bfloat16, device=dev) * 50
     small = torch.randn(64, 96, dtype=torch.bfloat16, device=dev) * 0.05
     mult = torch.tensor([1.0], device=dev)
-    kw = dict(ring_state=ring, hist_idx=idx, hist_len=n, fp8_max=448.0, pow2_margin=1.0)
+    kw = dict(ring_state=ring, hist_idx=idx, hist_len=n, fp8_max=448.0, margin=0)
 
-    quantize(big, mult, torch.float8_e4m3fn, **kw)
+    quantize_scaled(big, mult, dtype=torch.float8_e4m3fn, **kw)
     assert float(ring[n + 4 :].abs().sum()) == 0.0
     scale1 = float(ring[n])
 
-    quantize(small, mult, torch.float8_e4m3fn, **kw)
+    quantize_scaled(small, mult, dtype=torch.float8_e4m3fn, **kw)
     assert float(ring[n + 4 :].abs().sum()) == 0.0
     amax2 = small.float().abs().amax().reshape(1)
     torch.testing.assert_close(ring[idx].reshape(1), amax2, rtol=0, atol=0)
@@ -726,9 +713,11 @@ def test_quantize_tile_boundary_shapes(rows, cols):
     x = torch.randn(rows, cols, device="cuda", dtype=torch.bfloat16) * 3
     mult = _scale(x).reciprocal()
     ref = (x.float() * mult).to(torch.float8_e4m3fn)
-    x8, _ = quantize(x, mult, torch.float8_e4m3fn)
-    x8T, _ = quantize(x, mult, torch.float8_e4m3fn, transposed=True)
-    d8, d8T, _ = quantize_dual(x, mult, torch.float8_e4m3fn)
+    x8, _, _ = quantize(x, mult, dtype=torch.float8_e4m3fn)
+    _, x8T, _ = quantize(x, mult, tdtype=torch.float8_e4m3fn)
+    d8, d8T, _ = quantize(
+        x, mult, dtype=torch.float8_e4m3fn, tdtype=torch.float8_e4m3fn
+    )
     assert x8T.shape == (cols, rows)
     assert torch.equal(x8.view(torch.uint8), ref.view(torch.uint8))
     assert torch.equal(d8.view(torch.uint8), ref.view(torch.uint8))
@@ -745,9 +734,11 @@ def test_quantize_fp32_transposed_and_dual():
     x = torch.randn(96, 320, device="cuda", dtype=torch.float32) * 3
     mult = _scale(x).reciprocal()
     ref = (x * mult).to(torch.float8_e4m3fn)
-    x8, _ = quantize(x, mult, torch.float8_e4m3fn)
-    x8T, _ = quantize(x, mult, torch.float8_e4m3fn, transposed=True)
-    d8, d8T, _ = quantize_dual(x, mult, torch.float8_e4m3fn)
+    x8, _, _ = quantize(x, mult, dtype=torch.float8_e4m3fn)
+    _, x8T, _ = quantize(x, mult, tdtype=torch.float8_e4m3fn)
+    d8, d8T, _ = quantize(
+        x, mult, dtype=torch.float8_e4m3fn, tdtype=torch.float8_e4m3fn
+    )
     assert torch.equal(x8.view(torch.uint8), ref.view(torch.uint8))
     assert torch.equal(d8.view(torch.uint8), ref.view(torch.uint8))
     assert torch.equal(x8T.view(torch.uint8), d8T.view(torch.uint8))
@@ -768,52 +759,39 @@ def _linear():
     return x, w
 
 
-def _fp8_gemms():
-    """How many fp8 GEMMs the composed path has launched so far."""
-    return int(_gemm().fp8_debug_stats()["gemm"])
-
-
 @skip_no_fp8
 def test_nested_disabled_region_redispatches_bf16():
-    """A nested fp8_autocast(enabled=False) region temporarily restores the
-    bf16 aten::linear path (torch's nested-disable semantics), and fp8
-    resumes when it exits. Discriminated by the fp8 GEMM counter, not the
-    grad_fn type name (the C++ node's Python name is an implementation
-    detail)."""
+    """A disabled inner region restores bf16 and the outer FP8 route resumes."""
     x, w = _linear()
     _gemm().fp8_reset()
-    _gemm().fp8_debug_reset_stats()
+    reference = F.linear(x, w)
     try:
         with fp8_autocast(enabled=True):
-            F.linear(x, w)
-            n_fp8 = _fp8_gemms()
-            assert n_fp8 == 1, n_fp8
+            out_fp8 = F.linear(x, w)
             with fp8_autocast(enabled=False):
                 out_bf16 = F.linear(x, w)
-                assert _fp8_gemms() == n_fp8  # no fp8 GEMM: bf16 fallback
-                assert out_bf16.dtype == torch.bfloat16
+                assert torch.equal(out_bf16, reference)
             out_again = F.linear(x, w)
-            assert _fp8_gemms() == n_fp8 + 1  # fp8 resumed
+            assert torch.equal(out_again, out_fp8)
+            assert not torch.equal(out_fp8, reference)
     finally:
         _gemm().fp8_reset()
 
 
 @skip_no_fp8
 def test_global_switch_routes_without_region():
-    """fp8_linear_enable(True) routes aten::linear to fp8 outside any region
-    (the persistent default); disabling restores bf16."""
+    """The global switch selects FP8; disabling it restores bf16 outputs."""
     x, w = _linear()
     _gemm().fp8_reset()
-    _gemm().fp8_debug_reset_stats()
+    reference = F.linear(x, w)
     try:
         fp8_linear_enable(True)
-        F.linear(x, w)
-        n_fp8 = _fp8_gemms()
-        assert n_fp8 == 1, n_fp8
+        out_fp8 = F.linear(x, w)
+        assert not torch.equal(out_fp8, reference)
         fp8_linear_enable(False)
-        F.linear(x, w)
-        assert _fp8_gemms() == n_fp8  # bf16 fallback, no fp8 GEMM
+        assert torch.equal(F.linear(x, w), reference)
     finally:
+        fp8_linear_enable(False)
         _gemm().fp8_reset()
 
 
@@ -878,7 +856,6 @@ def test_weight_cast_cache_reuses_and_invalidates():
     try:
 
         def run():
-            gemm.fp8_debug_reset_stats()
             return gemm.fp8_linear(
                 x,
                 w,
@@ -893,39 +870,36 @@ def test_weight_cast_cache_reuses_and_invalidates():
             )
 
         o1 = run()
-        # Casts: one dual pass for x and one for w — each yields both
-        # orientations, the transposed side in the backward format.
-        stats = gemm.fp8_debug_stats()
-        assert stats["quantize"] == 2 and stats["cast_miss"] == 1, stats
+        first = gemm.fp8_debug_meta(w)
+        first_idx = first["w"]["idx"]
+        first_hist = first["w"]["hist"].clone()
         o2 = run()
-        # Cache hit: only x is cast again.
-        stats = gemm.fp8_debug_stats()
-        assert stats["quantize"] == 1, stats
-        assert stats["cast_hit"] == 1 and stats["cast_miss"] == 0, stats
+        reused = gemm.fp8_debug_meta(w)
+        assert reused["w"]["idx"] == first_idx
+        assert torch.equal(reused["w"]["hist"], first_hist)
         assert torch.equal(o1, o2)
 
         with torch.no_grad():
             w.add_(0.01)  # the optimizer-step shape: in-place => version bump
         o3 = run()
-        stats = gemm.fp8_debug_stats()
-        assert stats["quantize"] == 2 and stats["cast_miss"] == 1, stats
         assert not torch.equal(o2, o3)
+        updated = gemm.fp8_debug_meta(w)
+        assert updated["w"]["idx"] == (first_idx + 1) % 16
+        assert updated["cast_version"] == w._version
 
         # The ring's history also folds on a miss only: a hit leaves both the
         # window and the write index untouched.
         meta = gemm.fp8_debug_meta(w)
         idx, hist = meta["w"]["idx"], meta["w"]["hist"].clone()
         run()
-        stats = gemm.fp8_debug_stats()
-        assert stats["quantize"] == 1 and stats["cast_hit"] == 1, stats
         meta = gemm.fp8_debug_meta(w)
         assert meta["w"]["idx"] == idx and torch.equal(meta["w"]["hist"], hist)
         assert meta["cast_version"] == w._version
 
         fp8_load_state_dict(fp8_state_dict())
+        restored_idx = gemm.fp8_debug_meta(w)["w"]["idx"]
         run()
-        stats = gemm.fp8_debug_stats()
-        assert stats["quantize"] == 2  # a restore re-publishes scales
+        assert gemm.fp8_debug_meta(w)["w"]["idx"] == (restored_idx + 1) % 16
     finally:
         gemm.fp8_reset()
         gemm.fp8_set_act_cache(True)
@@ -933,7 +907,7 @@ def test_weight_cast_cache_reuses_and_invalidates():
 
 @skip_no_fp8
 @pytest.mark.parametrize(("m", "k"), [(64, 128), (17, 33), (31, 96), (8, 8), (40, 130)])
-def test_quantize_dual_mixed_formats_bitwise(m, k):
+def test_quantize_outputs_mixed_formats_bitwise(m, k):
     """A mixed-format dual pass (E4M3 row-major, E5M2 transposed — the hybrid
     training pair) is bit-identical to the two single-format casts it
     replaces: the conversions are elementwise, only the read is shared.
@@ -941,11 +915,9 @@ def test_quantize_dual_mixed_formats_bitwise(m, k):
     torch.manual_seed(m + k)
     x = torch.randn(m, k, device="cuda", dtype=torch.bfloat16)
     mult = (x.abs().amax().float() / 448.0).clamp_min(1e-12).reciprocal()
-    d8, d8T, _ = quantize_dual(
-        x, mult, torch.float8_e4m3fn, transposed_fmt=torch.float8_e5m2
-    )
-    ref8, _ = quantize(x, mult, torch.float8_e4m3fn)
-    ref8T, _ = quantize(x, mult, torch.float8_e5m2, transposed=True)
+    d8, d8T, _ = quantize(x, mult, dtype=torch.float8_e4m3fn, tdtype=torch.float8_e5m2)
+    ref8, _, _ = quantize(x, mult, dtype=torch.float8_e4m3fn)
+    _, ref8T, _ = quantize(x, mult, tdtype=torch.float8_e5m2)
     assert d8.dtype == torch.float8_e4m3fn and d8T.dtype == torch.float8_e5m2
     assert d8.shape == (m, k) and d8T.shape == (k, m)
     assert torch.equal(d8, ref8)

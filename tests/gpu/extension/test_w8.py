@@ -9,7 +9,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from astrai.extension import plan, quantize_act_int8, quantize_weight_int8
+from astrai.extension import plan, quantize_int8
 from astrai.extension.kernel.gemm import quant_gemm
 from tests.support.capabilities import skip_no_kernel
 
@@ -28,7 +28,7 @@ def _rand(m, n, k, seed=0):
 
 
 def _quant_weight(w):
-    w8, ws = quantize_weight_int8(w)
+    w8, ws = quantize_int8(w)
     w_ref = (w8.float() * ws.unsqueeze(1)).to(torch.bfloat16)
     return w8, ws, w_ref
 
@@ -80,7 +80,7 @@ class TestQuantGemm:
     def test_w8a8(self, m, n, k):
         x, w = _rand(m, n, k)
         w8, ws, w_ref = _quant_weight(w)
-        x8, xs = quantize_act_int8(x)
+        x8, xs = quantize_int8(x)
         x_ref = (x8.float() * xs.unsqueeze(1)).reshape(x.shape).to(torch.bfloat16)
         out = quant_gemm(x8.reshape(m, k), w8, a_scale=xs, b_scale=ws)
         ref = F.linear(x_ref, w_ref)
@@ -200,7 +200,7 @@ class TestQuantGemmValidation:
 class TestQuantizers:
     def test_weight_quantizer_contract(self):
         w = (torch.randn(64, 128, device="cuda") * 0.5).to(torch.bfloat16)
-        w8, ws = quantize_weight_int8(w)
+        w8, ws = quantize_int8(w)
         assert w8.dtype == torch.int8 and w8.shape == w.shape
         assert w8.is_contiguous()
         assert ws.dtype == torch.float32 and ws.shape == (64,)
@@ -212,7 +212,7 @@ class TestQuantizers:
 
     def test_act_quantizer_contract(self):
         x = (torch.randn(3, 5, 64, device="cuda") * 0.5).to(torch.bfloat16)
-        q, s = quantize_act_int8(x)
+        q, s = quantize_int8(x)
         assert q.dtype == torch.int8 and q.shape == x.shape
         assert s.dtype == torch.float32 and s.shape == (15,)
         assert q.int().abs().max().item() <= 127

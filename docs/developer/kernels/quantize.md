@@ -1,76 +1,156 @@
-# Quantize (FP8)
+# Quantize
 
-> Kernel module `csrc/quantize/` (bindings.cu + entry.cu); python adapters in
-> `astrai/extension/kernel/quantize.py`, strategy layer (recipes,
-> `fp8_autocast`, aten::linear override) in
-> `astrai/extension/quantize.py`.
+FP8 quantization has two explicit entrypoints. `quantize` scales and casts
+the requested output orientations. `quantize_scaled` also measures the raw
+input amax, updates a history window and publishes the next scale in the
+same kernel. Neither entry owns a cache, history cursor or training state.
 
-## FP8 training dataflow (math contract)
+## Interfaces and math
 
-One linear layer, one optimizer step. Master weights, gradients and
-optimizer state stay bf16/fp32 — FP8 exists only inside the GEMM operands
-and is never persisted. `FP8_max` is 448 for e4m3, 57344 for e5m2.
+```python
+quantize(x, inv_scale, *, dtype=None, tdtype=None)
+quantize_scaled(x, inv_scale, ring_state, *, hist_len, hist_idx,
+                dtype=None, tdtype=None, margin=0, fp8_max=None,
+                next_scale=None, next_inv_scale=None)
+```
 
-**Scaled cast** (`quantize` / `quantize_dual`). With `amax = max|x_i|`
-(clamped >= 1e-12) and the tensor scale `s = amax / FP8_max / 2^margin`:
+Both return `(out, out_t, amax)`. `dtype` requests an output with x's shape;
+`tdtype` requests the contiguous `[cols, rows]` transpose after folding the
+leading axes into rows. At least one dtype is required. An absent dtype
+produces `None`; it does not inherit the other dtype. Input types are BF16,
+FP16 and FP32; output types are E4M3FN and E5M2, independently selected.
+Transposed output requires a 2D+ input. Empty inputs preserve the original
+output shape and use the existing `[1, 0]` empty transpose convention.
 
-    x8_i = satfinite_rn(x_i * s^-1)      # e4m3 forward, e5m2 gradients (hybrid)
+`inv_scale` is a float32 device scalar. Both operations compute
+`cast(x * inv_scale)`; mixed output formats use the same multiplier.
+Pure `quantize` returns `amax=None`.
 
-The kernel is handed the *multiplier* `s^-1` and saturates at the format's
-range. Delayed scaling derives `s` from the amax history window (max over
-the last `history_len` entries, default 16): the quantize kernel folds the
-current amax into the ring (`[hist n | scale | recip | amax | done | 32-slot
-scratch]`, fp32, plus the composed ring's trailing double-buffered
-`scale | recip` pair) and publishes the next step's scale *and its
-reciprocal* (`__frcp_rn`, bit-identical to the host's `1/x`) in its own last
-block — one tensor read per step, and the policy hands the published recip
-straight to the next call instead of materializing one. The same block
-reports that round's amax on the ring's `amax` slot, and the window length is
-an explicit argument (`hist_len`): it is not recoverable from the buffer's
-`numel`. Dynamic scaling measures the current amax instead (two reads, no
-window, exact on the first step).
-`quantize_dual(g)` yields `(g8, g8T)` in a single read: the training path
-consumes the gradient in both orientations (dgrad takes `g`, wgrad takes
-`g^T`). No-grad calls read the rings without folding or advancing
-(checkpointing recompute stays numerically identical).
+```python
+out, _, _ = quantize(x, inv_scale, dtype=torch.float8_e4m3fn)
+_, out_t, _ = quantize(x, inv_scale, tdtype=torch.float8_e5m2)
+out, out_t, _ = quantize(x, inv_scale,
+                         dtype=torch.float8_e4m3fn, tdtype=torch.float8_e5m2)
+```
 
-**Forward** (layout NT — both operands K-major, the only orientation that
-reaches full tensor-core rate; crosswise layouts land at 230-380 TFLOPS):
+`quantize_scaled` requires a contiguous float32 CUDA ring on x's device.
+Its last finishing block performs the history update and publication:
 
-    out = bf16( (x8 @ w8^T) * sx*sw + bias )
+```text
+hist[hist_idx] = max(abs(x))                 # zero for an empty input
+next_scale = max(max(hist) / fp8_max / 2**margin, 1e-12)
+next_inv_scale = reciprocal(next_scale)     # correctly rounded __frcp_rn
+```
 
-fp32 accumulation in the mma; the dequant scales and the bias fold into the
-epilogue (fp32 add, one bf16 rounding at the end). `w8`/`w8T` are cached per
-weight version: the optimizer's in-place update bumps the version counter, so
-one cast serves a whole gradient-accumulation loop and the ring folds once
-per optimizer step rather than once per micro-batch (an unchanged weight has
-an unchanged amax — the fold would republish the same scale).
+The range defaults to 448 for E4M3FN or 57344 for E5M2, following `dtype`,
+or `tdtype` for a transpose-only request. An explicit `fp8_max` overrides
+that choice. Margin retains AstrAI's division by `2**margin` and the kernel
+retains the existing calculation order and reciprocal rounding.
 
-**Backward** (both GEMMs NT via transposed quantized copies; the gradient
-is quantized once and shared):
+Provide `next_scale` and `next_inv_scale` together to publish into external
+scalar tensors; otherwise publication uses ring pair zero. Scalar tensors
+and publication slots must share the input device. The returned amax aliases
+the ring slot and changes on subsequent updates. The entry does not advance
+`hist_idx` or switch the current scale pair.
 
-    grad_x = bf16( (g8  @ w8T) * sg*sw )   # dgrad, B = transposed weight copy
-    grad_w = bf16( (g8T @ x8T) * sg*sx )   # wgrad, both operands transposed
-    grad_b = bf16( sum_rows(g) )           # plain reduce, never fp8
+The ring layout remains:
 
-The transposed operands are cast by the *forward* (the weight pair rides the
-version cache; under a symmetric format pair one dual pass yields `x8T` too)
-and saved on the autograd node — the backward re-reads neither `x` nor `w`.
-Both sides of a backward GEMM must share one format, so under hybrid
-(E4M3 fwd / E5M2 bwd) the casts are E5M2 and `x8T` is left to the backward.
+```text
+[hist n | scale0 | recip0 | amax | done | scratch 32 | scale1 | recip1]
+```
 
-**Scale extents** (`resolve_quant_scale`): `a_scale` holds 1 or `m` floats
-and `b_scale` 1 or `n` — per-row/per-channel factors run along the *output*
-dimension only. Per-channel weight scaling is therefore a forward-only
-option (in dgrad the weight plays B and its output dim is K); the training
-path uses per-tensor for every operand.
+A standalone ring may omit the final pair. `hist_len` is explicit because
+the optional publication pair makes it ambiguous from numel. The Torch
+boundary validates shape, dtype, device, capacity and integer range before
+converting geometry and history indices to native `int`. Casting needs
+sm_80+; FP8 tensor-core GEMM separately requires sm_89+.
 
-**sm_120 mma cell.** Production symmetric-fp8 GEMMs dispatch through
-`mma.sync...kind::mxf8f6f4.block_scale.scale_vec::1X` with constant unit
-scales (ue8m0 bytes 0x7f = 2^0, selectors inert — the scale-factored product
-is the plain product): the plain fp8 `mma.sync` decodes at half rate on
-consumer Blackwell (measured 506 vs 1011 TFLOPS issue rate), while the
-block_scale form runs full rate with the same register contract. The cell
-gates on cc == 120 (kill switch `kernel.gemm.set_staging(mx=False)`; its inert scale
-operands are also the seam where real per-block (MX) scaling would attach.
+## Parameters and dependencies
 
+The two entries use three data structures:
+
+| Structure | Responsibility |
+|---|---|
+| `QuantParams` | Data required by one CUDA execution |
+| `QuantizeOutputs` | The `out`, `out_t` and `amax` result tensors |
+| `RingLayout` | Ring extents and shared relative slot offsets |
+
+`api/native/quantize.h` contains the native parameter contract and ring
+layout, with no Torch, Python or CUDA dependency. `QuantParams` has fifteen
+fields and no member defaults; the entry starts with `QuantParams p{}` and
+fills the fields needed for the requested operation:
+
+```cpp
+struct QuantParams {
+    const void* input_ptr;
+    const float* inv_scale;
+    void* output_ptr;
+    void* output_transposed_ptr;
+
+    int rows;
+    int cols;
+    int out_row_stride;
+    int out_col_stride;
+
+    float* ring_state;
+    int hist_len;
+    int hist_idx;
+    float* next_scale;
+    float* next_inv_scale;
+
+    float fp8_max;
+    float pow2_margin;
+};
+```
+
+Output pointer presence selects the written orientations. Native original
+output strides retain their element-based row/column semantics; transposed
+placement is derived from rows. `ring_state == nullptr` selects pure
+quantization. With a ring, the kernel derives history, amax, scratch and
+completion-counter pointers from its base and `RingLayout` constants.
+There is no separate fold flag or per-slot pointer set. Publication pointers
+remain independent so a caller can publish outside the ring.
+
+`api/torch/dtype.h` owns the CUDA-free `fp8_max_of` query for the two FP8
+ranges. Bindings and `ScaleRing` use this metadata without including CUDA
+dispatch. The entry uses shared Torch dtype visitors to select
+`<InT, OutT, TransposedOutT = OutT>`; the input, original output and
+transposed output types keep the same order through launch and kernel.
+
+## Execution ownership
+
+- `api/torch/quantize.h` declares the complete Tensor interfaces and result.
+  `csrc/quantize/entry.cu` checks parameters, makes input storage contiguous,
+  allocates requested outputs, binds the native parameters and dispatches
+  dtypes. It keeps the input Tensor alive until launch submission.
+- `csrc/quantize/bindings.cu` registers named functions directly. It resolves
+  Python defaults and converts the result to a tuple; C++ interfaces have no
+  default arguments or options containers.
+- `launcher/quantize.cuh` configures the grid/block and checks the launch.
+  `kernel/quantize/kernel.cuh` performs the cast, transpose and optional
+  fused ring update. Empty inputs still launch one block for a ring update.
+
+Both outputs and the optional history update share one input read and one
+kernel launch. Execution uses the current stream; argument checking does
+not read GPU values back to the CPU.
+
+FP8 linear owns `ScaleRing`, caches, metadata registration and checkpoint
+restoration. It calls `quantize` for dynamic scaling and `quantize_scaled`
+for history scaling, passing the current reciprocal and next publication
+pair. `version_of` belongs to cached-cast invalidation in that caller layer.
+Cache hits, no-grad calls and forward/backward transitions retain their
+existing ring behavior. See [gemm.md](gemm.md) for the training composition.
+
+## Interface migration and int8
+
+Old `quantize`/`transposed` and `quantize_dual` calls are replaced by explicit
+`dtype`/`tdtype` requests and the fixed three-element result. A history update
+uses `quantize_scaled`; the public margin is an integer exponent. There are
+no compatibility wrappers. The Python adapter does not forward native
+scratch constants through module `__getattr__`.
+
+`quantize_int8(x)` is the shared Torch implementation for `[N, K]` weights
+and `[..., K]` activations. It returns contiguous int8 data with x's shape
+and flat float32 last-axis row scales, using the unchanged
+`clamp_min(amax, 1e-12) / 127` and round/clamp arithmetic. It is detached
+from autograd and does not require the compiled quantize module.
