@@ -166,7 +166,7 @@ Headers under `csrc/include` contain declarations and device templates;
 | `gemm/fp8/ring.h` / `gemm/fp8/cache.h` / `gemm/fp8/state.h` | Scale-ring lifecycle; reusable weight/activation casts; typed metadata registry and checkpoint snapshots |
 | `gemm/bindings.cu` | Quantized GEMM and planner pybind surface: None-tolerant argument marshalling, state/config dict contracts and `PYBIND11_MODULE`; calls `bind_fp8` from `gemm/fp8/runtime.cu` |
 | `csrc/quantize/bindings.cu` | pybind surface only → module `quantize` |
-| `csrc/quantize/entry.cu` | the entry implementation: quantize / quantize_scaled validation, allocation and dtype dispatch (also compiled into the gemm module so fp8_linear shares the chain) |
+| `csrc/quantize/entry.cu` | the entry implementation: quantize / quantize_scaled validation, allocation and dtype dispatch (compiled once as the `quantize_entry` object target and linked into both modules) |
 
 `api/torch/` may include `api/native/`; native contracts and shared device
 headers must never include the Torch adapters. The planner implementations
@@ -272,20 +272,24 @@ in `api/native/gemm.h`. Private packing types never enter the native API.
 | Location | Responsibility |
 |---|---|
 | `gemm/bindings.cu` | Python arguments and planner dictionaries |
-| `gemm/entry.cu` | Device guard, Tensor entry, dtype/schedule selection, probe |
-| `gemm/params.h` | Scale/bias validation, operand layout resolution, output allocation and POD packing |
+| `gemm/entry.cu` | Device guard, metadata validation, operand/output ownership, dtype/schedule selection and probe |
 | `gemm/plan/` | Ordinary C++ planner, row table and generated builtin rows |
 | `gemm/fp8/` | Training autograd, scale rings, cast caches and runtime state |
 | `gemm/instantiations/` | One heavy CUDA compilation unit per dtype pair; CMake compiles each schedule |
 | `policy/gemm/` | Tile manifest, traits, geometry, cost model and shared runtime switches |
 | `launcher/gemm_*.cuh` | Native layout lowering, recipe selection and CUDA launch |
 
-`GemmInputs` owns the original operands, scales and bias during the call.
+The Tensor function arguments retain the original operands, scales and bias.
 `resolve_operand` returns a `GemmOperand` with its Tensor storage, leading
 dimension, batch stride and effective transpose flag, with no output-reference
 arguments. `PreparedGemm` keeps both resolved operands and the output alive
 alongside `GemmParams` until the asynchronous launch has been submitted.
-The CUDA device guard encloses packing, allocation and launch.
+The CUDA device guard encloses packing, allocation and launch. Problem extents
+and leading strides are checked before narrowing to native `int`; batch
+must be in `[1, 65535]` for both launch and probe; empty operand batches
+are rejected before broadcast resolution. Shape/scale/bias errors
+are rejected before contiguous fallback copies and output allocation.
+Grid ceil division uses quotient and remainder to avoid signed overflow.
 
 `select_gemm_variant` selects the dtype pair and compiled schedule once,
 binding launch and probe functions to the same `DeviceFacts` snapshot. The

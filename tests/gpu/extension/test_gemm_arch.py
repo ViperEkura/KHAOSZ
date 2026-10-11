@@ -10,6 +10,83 @@ from tests.support.capabilities import skip_no_kernel
 
 
 @skip_no_kernel
+@pytest.mark.parametrize("axis", ["m", "n", "k"])
+@pytest.mark.parametrize("value", [0, -1, 2**31, 2**32 + 17])
+def test_probe_rejects_invalid_native_extents(axis, value):
+    shape = dict(m=17, n=23, k=33)
+    shape[axis] = value
+    with pytest.raises(RuntimeError, match="greater than zero|fit native int"):
+        kernel.gemm.probe(**shape)
+
+
+@skip_no_kernel
+@pytest.mark.parametrize("batch", [0, -1, 65536, 2**32 + 1])
+def test_probe_rejects_invalid_batch(batch):
+    with pytest.raises(RuntimeError, match="batch"):
+        kernel.gemm.probe(17, 23, 33, batch=batch)
+
+
+@skip_no_kernel
+@pytest.mark.parametrize("axis", ["m", "n", "k"])
+def test_launch_rejects_oversized_expanded_extents(axis):
+    shape = dict(m=1, n=1, k=1)
+    shape[axis] = 2**32 + 17
+    storage = torch.ones(1, device="cuda", dtype=torch.bfloat16)
+    a = storage.as_strided((shape["m"], shape["k"]), (0, 0))
+    b = storage.as_strided((shape["n"], shape["k"]), (0, 0))
+    with pytest.raises(RuntimeError, match="fit native int"):
+        kernel.gemm.quant_gemm(a, b)
+
+
+@skip_no_kernel
+@pytest.mark.parametrize("side", ["a", "b"])
+def test_launch_rejects_empty_operand_batches(side):
+    a = torch.ones(1, 17, 33, device="cuda", dtype=torch.bfloat16)
+    b = torch.ones(1, 23, 33, device="cuda", dtype=torch.bfloat16)
+    if side == "a":
+        a = a[:0]
+    else:
+        b = b[:0]
+    with pytest.raises(RuntimeError, match="batch dimensions must be positive"):
+        kernel.gemm.quant_gemm(a, b)
+
+
+@skip_no_kernel
+@pytest.mark.parametrize("side", ["a", "b"])
+def test_launch_rejects_leading_stride_overflow(side):
+    a = torch.ones(1, 33, device="cuda", dtype=torch.bfloat16)
+    b = torch.ones_like(a)
+    if side == "a":
+        a = a.as_strided(a.shape, (2**31, 1))
+    else:
+        b = b.as_strided(b.shape, (2**31, 1))
+    with pytest.raises(RuntimeError, match="leading stride"):
+        kernel.gemm.quant_gemm(a, b)
+
+
+@skip_no_kernel
+@pytest.mark.parametrize("case", ["inner", "bias"])
+def test_invalid_metadata_rejected_before_operand_copies(case):
+    a = torch.ones(34, 66, device="cuda", dtype=torch.bfloat16)[::2, ::2]
+    b = torch.ones(46, 66, device="cuda", dtype=torch.bfloat16)[::2, ::2]
+    bias = None
+    if case == "inner":
+        b = b[:, :-1]
+    else:
+        bias = torch.zeros(23, device="cuda", dtype=torch.float32)
+    with torch.profiler.profile(
+        activities=[torch.profiler.ProfilerActivity.CPU]
+    ) as prof:
+        with pytest.raises(RuntimeError, match="inner dim|bias"):
+            kernel.gemm.quant_gemm(a, b, bias=bias)
+    assert not {event.key for event in prof.key_averages()} & {
+        "aten::contiguous",
+        "aten::clone",
+        "aten::copy_",
+    }
+
+
+@skip_no_kernel
 @pytest.mark.parametrize(
     "dtype", [torch.bfloat16, torch.int8, torch.float8_e4m3fn, torch.float8_e5m2]
 )

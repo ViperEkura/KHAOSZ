@@ -17,6 +17,29 @@ OUTPUTS += [(None, dtype) for dtype in (F4, F5, I8)]
 OUTPUTS += list(itertools.product((F4, F5, I8), repeat=2))
 
 
+@skip_no_kernel
+@pytest.mark.parametrize("case", ["history", "margin"])
+def test_scaled_validation_precedes_input_copy(case):
+    x = torch.ones(17, 33, device="cuda").t()
+    inv_scale = torch.ones(1, device="cuda")
+    ring = _ring()
+    kwargs = dict(hist_len=4, hist_idx=0, dtype=I8)
+    if case == "history":
+        kwargs["hist_idx"] = 4
+    else:
+        kwargs["margin"] = 1024
+    with torch.profiler.profile(
+        activities=[torch.profiler.ProfilerActivity.CPU]
+    ) as prof:
+        with pytest.raises(RuntimeError, match="hist_idx|margin"):
+            quantize_scaled(x, inv_scale, ring, **kwargs)
+    assert not {event.key for event in prof.key_averages()} & {
+        "aten::contiguous",
+        "aten::clone",
+        "aten::copy_",
+    }
+
+
 def _cast(x, dtype):
     if dtype == I8:
         return torch.nan_to_num(x, nan=0.0).round().clamp(-127, 127).to(I8)

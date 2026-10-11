@@ -51,38 +51,42 @@ if(NOT ASTRAI_CUDA_ARCH_LIST)
     return()
 endif()
 
-# One Python module per operator family.
-set(KERNEL_MODULES
-    "attention|attention/decode.cu attention/prefill.cu attention/paged_decode.cu
+# Target name, library kind, and sources; modules declare shared object dependencies here.
+set(KERNEL_TARGETS
+    "quantize_entry|OBJECT|quantize/entry.cu"
+    "attention|MODULE|attention/decode.cu attention/prefill.cu attention/paged_decode.cu
         attention/paged_prefill.cu attention/bindings.cu"
-    "rotary_emb|rotary_emb.cu"
-    "cross_entropy|cross_entropy.cu"
-    "newton_schulz|newton_schulz/entry.cu newton_schulz/kernels.cu
+    "rotary_emb|MODULE|rotary_emb.cu"
+    "cross_entropy|MODULE|cross_entropy.cu"
+    "newton_schulz|MODULE|newton_schulz/entry.cu newton_schulz/kernels.cu
         newton_schulz/bindings.cu"
-    "gated_deltanet|gated_deltanet/gated_deltanet_fwd.cu
+    "gated_deltanet|MODULE|gated_deltanet/gated_deltanet_fwd.cu
         gated_deltanet/gated_deltanet_bwd.cu gated_deltanet/bindings.cu"
-    "quantize|quantize/bindings.cu quantize/entry.cu"
-    "gemm|gemm/entry.cu gemm/bindings.cu gemm/plan/planner.cpp
+    "quantize|MODULE|quantize/bindings.cu $<TARGET_OBJECTS:quantize_entry>"
+    "gemm|MODULE|gemm/entry.cu gemm/bindings.cu gemm/plan/planner.cpp
         gemm/plan/table.cpp gemm/plan/builtin.cpp
-        gemm/fp8/linear.cu gemm/fp8/runtime.cu quantize/entry.cu")
+        gemm/fp8/linear.cu gemm/fp8/runtime.cu $<TARGET_OBJECTS:quantize_entry>")
 
-foreach(entry IN LISTS KERNEL_MODULES)
+foreach(entry IN LISTS KERNEL_TARGETS)
     string(REPLACE "|" ";" parts "${entry}")
     list(GET parts 0 name)
-    list(GET parts 1 sources)
+    list(GET parts 1 kind)
+    list(GET parts 2 sources)
     separate_arguments(sources NATIVE_COMMAND "${sources}")
-    add_library(${name} MODULE ${sources})
+    add_library(${name} ${kind} ${sources})
     astrai_compile_target(${name})
     astrai_target_arches(${name} ${ASTRAI_CUDA_ARCH_LIST})
-    target_compile_definitions(${name} PRIVATE TORCH_EXTENSION_NAME=_C_${name})
-    astrai_platform_link_options(${name})
-    if(name STREQUAL "cross_entropy")
-        target_link_libraries(${name} PRIVATE CUDA::cublas)
+    if(kind STREQUAL "MODULE")
+        target_compile_definitions(${name} PRIVATE TORCH_EXTENSION_NAME=_C_${name})
+        astrai_platform_link_options(${name})
+        if(name STREQUAL "cross_entropy")
+            target_link_libraries(${name} PRIVATE CUDA::cublas)
+        endif()
+        set_target_properties(${name} PROPERTIES PREFIX "" OUTPUT_NAME "_C_${name}"
+            SUFFIX ".${PY_SOABI}${ASTRAI_EXTENSION_SUFFIX}"
+            LIBRARY_OUTPUT_DIRECTORY "${ASTRAI_KERNEL_OUTPUT_DIRECTORY}"
+            RUNTIME_OUTPUT_DIRECTORY "${ASTRAI_KERNEL_OUTPUT_DIRECTORY}")
     endif()
-    set_target_properties(${name} PROPERTIES PREFIX "" OUTPUT_NAME "_C_${name}"
-        SUFFIX ".${PY_SOABI}${ASTRAI_EXTENSION_SUFFIX}"
-        LIBRARY_OUTPUT_DIRECTORY "${ASTRAI_KERNEL_OUTPUT_DIRECTORY}"
-        RUNTIME_OUTPUT_DIRECTORY "${ASTRAI_KERNEL_OUTPUT_DIRECTORY}")
 endforeach()
 
 set(GEMM_BASE_SOURCES

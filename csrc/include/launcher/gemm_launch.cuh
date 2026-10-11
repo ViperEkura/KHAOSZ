@@ -19,8 +19,8 @@ namespace gemm {
 
 // Grid for one Policy's tile: N x M blocks, batch on z.
 template <typename Traits> dim3 gemm_grid(const GemmParams& p) {
-    return dim3((p.n + Traits::kBlockN - 1) / Traits::kBlockN,
-                (p.m + Traits::kBlockM - 1) / Traits::kBlockM, p.batch);
+    return dim3(p.n / Traits::kBlockN + (p.n % Traits::kBlockN != 0),
+                p.m / Traits::kBlockM + (p.m % Traits::kBlockM != 0), p.batch);
 }
 
 // One plan-log line per launch (" mx" marks the block_scale cell).

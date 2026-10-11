@@ -1,7 +1,9 @@
 /* GEMM typed entry, dtype/schedule selection, and planner probe. */
 
+#include <algorithm>
 #include <c10/core/ScalarType.h>
 #include <c10/util/StringUtil.h>
+#include <climits>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -14,8 +16,6 @@
 #include <launcher/gemm_dispatch.cuh>
 #include <policy/gemm/config.h>
 #include <utils/device.cuh>
-
-#include "params.h"
 
 using namespace astrai;
 using namespace astrai::quant;
@@ -45,6 +45,147 @@ static GemmCapabilities capabilities_for(const DeviceFacts& dev) {
 GemmCapabilities capabilities() { return capabilities_for(device_facts()); }
 
 namespace {
+
+/*
+ * Inner-layout resolution for one GEMM operand. The user flag names the math
+ * (0 = last two dims are [rows][contract], 1 = transposed); the storage may
+ * independently be a col-major view (.t() of a contiguous buffer), which
+ * folds into the returned dispatch flag at zero copy — the kernel's
+ * LayoutA/LayoutB tags cover both storages. m/n/k derive from the user flag
+ * only. Tensors whose inner dims are neither natural layout fall back to
+ * .contiguous().
+ */
+struct GemmOperand {
+    torch::Tensor storage;
+    int ld;
+    int64_t batch_stride;
+    bool transposed;
+};
+
+GemmOperand resolve_operand(const torch::Tensor& input, bool transposed) {
+    torch::Tensor storage = input;
+    bool col_major = false;
+    if (storage.stride(-1) != 1) {
+        if (storage.stride(-2) == 1) {
+            col_major = true;
+        } else {
+            storage = storage.contiguous();
+        }
+    }
+    const int64_t ld = col_major ? storage.stride(-1) : storage.stride(-2);
+    TORCH_CHECK(ld >= 0 && ld <= INT_MAX, "operand leading stride must fit native int");
+    const int64_t batch_stride = storage.dim() == 3 ? storage.stride(0) : 0;
+    return {std::move(storage), static_cast<int>(ld), batch_stride, transposed != col_major};
+}
+
+// A resolved dequant scale: n == 0 marks the per-tensor device scalar.
+struct QuantScale {
+    const float* ptr = nullptr;
+    int n = 0;
+};
+
+QuantScale resolve_quant_scale(const torch::Tensor& s,
+                               int64_t extent,
+                               const char* name,
+                               const c10::Device& device) {
+    TORCH_CHECK(s.defined(), name, " is required");
+    TORCH_CHECK(s.is_cuda() && s.scalar_type() == torch::kFloat32 && s.is_contiguous(), name,
+                " must be a contiguous CUDA float32 tensor");
+    TORCH_CHECK(s.device() == device, name, " must be on the same device as operands");
+    TORCH_CHECK(s.numel() == 1 || s.numel() == extent, name,
+                " must hold 1 element (per-tensor) or ", extent, " (per-row/per-channel)");
+    return {s.data_ptr<float>(), s.numel() == 1 ? 0 : (int)extent};
+}
+
+/* Resolved storage must outlive the launch, including contiguous fallbacks. */
+struct PreparedGemm {
+    GemmOperand a;
+    GemmOperand b;
+    torch::Tensor output;
+    GemmParams params;
+};
+
+/* Launch and probe share the same native integer contract. */
+void check_gemm_geometry(int64_t m, int64_t n, int64_t k, int64_t batch) {
+    TORCH_CHECK(m > 0 && n > 0 && k > 0, "GEMM: M, N and K must be greater than zero (got ", m,
+                ", ", n, ", ", k, ")");
+    TORCH_CHECK(m <= INT_MAX && n <= INT_MAX && k <= INT_MAX,
+                "GEMM: M, N and K must fit native int");
+    TORCH_CHECK(batch > 0 && batch <= 65535, "GEMM: batch must be in [1, 65535]");
+}
+
+/* Check problem, scales and bias before materializing operand storage. */
+PreparedGemm prepare_gemm(const torch::Tensor& a,
+                          const torch::Tensor& b,
+                          const c10::optional<torch::Tensor>& a_scale,
+                          const c10::optional<torch::Tensor>& b_scale,
+                          bool trans_a,
+                          bool trans_b,
+                          const c10::optional<torch::Tensor>& bias) {
+    const auto dt_a = a.scalar_type(), dt_b = b.scalar_type();
+    const int64_t m = trans_a ? a.size(-1) : a.size(-2);
+    const int64_t n = trans_b ? b.size(-2) : b.size(-1);
+    const int64_t k = trans_a ? a.size(-2) : a.size(-1);
+    const int64_t batch_a = a.dim() == 3 ? a.size(0) : 1;
+    const int64_t batch_b = b.dim() == 3 ? b.size(0) : 1;
+    TORCH_CHECK(batch_a > 0 && batch_b > 0, "GEMM: input batch dimensions must be positive");
+    TORCH_CHECK(batch_a == batch_b || batch_a == 1 || batch_b == 1, "batch dim mismatch (got ",
+                batch_a, " and ", batch_b, ")");
+    const int64_t batch = std::max(batch_a, batch_b);
+    check_gemm_geometry(m, n, k, batch);
+    TORCH_CHECK(k == (trans_b ? b.size(-1) : b.size(-2)), "inner dim mismatch");
+    const auto opt_scale = [&](const c10::optional<torch::Tensor>& s, int64_t extent,
+                               const char* name, at::ScalarType dtype) -> QuantScale {
+        if (!s.has_value()) {
+            TORCH_CHECK(dtype != at::kChar, "quant_gemm: ", name,
+                        " is required for an int8 operand");
+            return {nullptr, 0};
+        }
+        TORCH_CHECK(dtype != at::kBFloat16, "quant_gemm: ", name,
+                    " given for a bf16 operand (nothing to dequant)");
+        return resolve_quant_scale(*s, extent, name, a.device());
+    };
+    const QuantScale sa = opt_scale(a_scale, m, "a_scale", dt_a);
+    const QuantScale sb = opt_scale(b_scale, n, "b_scale", dt_b);
+    const void* bias_ptr = nullptr;
+    if (bias.has_value() && bias->defined() && bias->numel() > 0) {
+        TORCH_CHECK(bias->is_cuda() && bias->scalar_type() == at::kBFloat16,
+                    "quantized gemm bias must be a CUDA bf16 tensor");
+        TORCH_CHECK(bias->device() == a.device(),
+                    "quantized gemm bias must be on the same device as operands");
+        TORCH_CHECK(bias->dim() == 1 && bias->size(0) == n,
+                    "quantized gemm bias must be 1D of length n=", n);
+        TORCH_CHECK(bias->is_contiguous(), "bias must be contiguous");
+        bias_ptr = bias->data_ptr();
+    }
+
+    auto resolved_a = resolve_operand(a, trans_a);
+    auto resolved_b = resolve_operand(b, trans_b);
+    const bool batched_out = a.dim() == 3 || b.dim() == 3;
+    torch::Tensor output = batched_out
+                               ? torch::empty({batch, m, n}, a.options().dtype(at::kBFloat16))
+                               : torch::empty({m, n}, a.options().dtype(at::kBFloat16));
+    GemmParams p{};
+    p.a_ptr = resolved_a.storage.data_ptr();
+    p.b_ptr = resolved_b.storage.data_ptr();
+    p.out_ptr = output.data_ptr();
+    p.bias_ptr = bias_ptr;
+    p.a_scale = sa.ptr;
+    p.a_scale_m = sa.n;
+    p.b_scale = sb.ptr;
+    p.b_scale_n = sb.n;
+    p.m = static_cast<int>(m);
+    p.n = static_cast<int>(n);
+    p.k = static_cast<int>(k);
+    p.a_ld = resolved_a.ld;
+    p.b_ld = resolved_b.ld;
+    p.batch = static_cast<int>(batch);
+    p.a_batch_stride = (batch_a == 1 && batch > 1) ? 0 : resolved_a.batch_stride;
+    p.b_batch_stride = (batch_b == 1 && batch > 1) ? 0 : resolved_b.batch_stride;
+    p.out_batch_stride = m * n;
+    p.out_ld = static_cast<int>(n);
+    return {std::move(resolved_a), std::move(resolved_b), std::move(output), p};
+}
 
 /* The launcher header binds these addresses to per-pair compiled specializations. */
 using GemmDispatchFn = void (*)(const GemmParams&, cudaStream_t, bool, bool, const DeviceFacts*);
@@ -135,8 +276,7 @@ PlanProbe plan_probe(int64_t m,
                      bool trans_a,
                      bool trans_b,
                      int64_t batch) {
-    TORCH_CHECK(m > 0 && n > 0 && k > 0, "GEMM probe: M, N and K must be greater than zero (got ",
-                m, ", ", n, ", ", k, ")");
+    check_gemm_geometry(m, n, k, batch);
     GemmParams p{}; // Contiguous operands with aligned base addresses for the probe.
     p.m = static_cast<int>(m);
     p.n = static_cast<int>(n);
@@ -185,10 +325,8 @@ torch::Tensor quant_gemm_impl(torch::Tensor a,
                 "a and b must be 2D or 3D (batched)");
     TORCH_CHECK(a.device() == b.device(), "a and b must share device");
     const at::cuda::OptionalCUDAGuard guard(a.device());
-    const GemmInputs inputs{std::move(a), std::move(b), std::move(a_scale), std::move(b_scale),
-                            trans_a,      trans_b,      std::move(bias)};
-    const auto prepared = prepare_gemm(inputs);
-    const auto variant = select_gemm_variant(inputs.a.scalar_type(), inputs.b.scalar_type());
+    const auto variant = select_gemm_variant(a.scalar_type(), b.scalar_type());
+    const auto prepared = prepare_gemm(a, b, a_scale, b_scale, trans_a, trans_b, bias);
     variant.launch(prepared, at::cuda::getCurrentCUDAStream().stream());
     C10_CUDA_CHECK(cudaGetLastError());
     return prepared.output;

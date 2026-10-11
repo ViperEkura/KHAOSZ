@@ -178,7 +178,10 @@ output types keep the same order through launch and kernel.
 - `api/torch/quantize.h` declares the complete Tensor interfaces and result.
   `csrc/quantize/entry.cu` checks parameters, makes input storage contiguous,
   allocates requested outputs, binds native parameters and dispatches dtypes.
-  It keeps the input Tensor alive until launch submission.
+  Both entries finish metadata validation before contiguous input copies
+  or output allocation. The input Tensor remains alive until launch submission.
+  CMake compiles this entry once as `quantize_entry` and links the object
+  into both quantize and GEMM; each module retains its own bindings.
 - `csrc/quantize/bindings.cu` registers named functions directly. It resolves
   Python defaults and converts the result to a tuple; C++ interfaces have no
   default arguments or options containers.

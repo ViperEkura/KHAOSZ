@@ -23,13 +23,12 @@ void check_scalar(const torch::Tensor& t, c10::Device device, const char* name) 
                 name, " must be a CUDA float32 scalar on the input device");
 }
 
-/* Initialize the same flat launch parameters for both public operations. */
-torch::Tensor prepare(const torch::Tensor& x,
-                      const torch::Tensor& inv_scale,
-                      c10::optional<at::ScalarType> dtype,
-                      c10::optional<at::ScalarType> tdtype,
-                      QuantParams& p,
-                      QuantizeOutputs& outs) {
+/* Validate input metadata and bind geometry without allocating storage. */
+void check_inputs(const torch::Tensor& x,
+                  const torch::Tensor& inv_scale,
+                  c10::optional<at::ScalarType> dtype,
+                  c10::optional<at::ScalarType> tdtype,
+                  QuantParams& p) {
     TORCH_CHECK(x.is_cuda(), "quantize requires a CUDA tensor");
     TORCH_CHECK(x.dim() >= 1, "quantize requires a 1D+ input");
     TORCH_CHECK(dtype_supported<QuantInputTypes>(x.scalar_type()),
@@ -77,13 +76,21 @@ torch::Tensor prepare(const torch::Tensor& x,
         p.inv_scale_row_stride = static_cast<int>(row_stride);
         p.inv_scale_col_stride = static_cast<int>(col_stride);
     }
-    auto input = x.contiguous();
-    p.input_ptr = input.data_ptr();
     p.inv_scale = inv_scale.data_ptr<float>();
     p.rows = static_cast<int>(rows);
     p.cols = static_cast<int>(cols);
     p.out_row_stride = p.cols;
     p.out_col_stride = 1;
+}
+
+/* Materialize only validated requests; the returned Tensor owns any input copy. */
+torch::Tensor prepare_outputs(const torch::Tensor& x,
+                              c10::optional<at::ScalarType> dtype,
+                              c10::optional<at::ScalarType> tdtype,
+                              QuantParams& p,
+                              QuantizeOutputs& outs) {
+    auto input = x.contiguous();
+    p.input_ptr = input.data_ptr();
     if (dtype.has_value()) {
         outs.out = torch::Tensor(
             at::detail::empty_cuda(input.sizes(), *dtype, input.device(), std::nullopt));
@@ -91,7 +98,7 @@ torch::Tensor prepare(const torch::Tensor& x,
     }
     if (tdtype.has_value()) {
         outs.out_t = torch::Tensor(
-            at::detail::empty_cuda({cols, rows}, *tdtype, input.device(), std::nullopt));
+            at::detail::empty_cuda({p.cols, p.rows}, *tdtype, input.device(), std::nullopt));
         p.output_transposed_ptr = outs.out_t.data_ptr();
     }
     return input;
@@ -139,7 +146,8 @@ QuantizeOutputs quantize(const torch::Tensor& x,
     const at::cuda::OptionalCUDAGuard guard(x.device());
     QuantParams p{};
     QuantizeOutputs outs;
-    const auto input = prepare(x, inv_scale, dtype, tdtype, p, outs);
+    check_inputs(x, inv_scale, dtype, tdtype, p);
+    const auto input = prepare_outputs(x, dtype, tdtype, p, outs);
     launch(input, p, dtype, tdtype);
     return outs;
 }
@@ -158,7 +166,7 @@ QuantizeOutputs quantize_scaled(const torch::Tensor& x,
     const at::cuda::OptionalCUDAGuard guard(x.device());
     QuantParams p{};
     QuantizeOutputs outs;
-    const auto input = prepare(x, inv_scale, dtype, tdtype, p, outs);
+    check_inputs(x, inv_scale, dtype, tdtype, p);
     TORCH_CHECK(inv_scale.numel() == 1, "quantize_scaled requires a scalar inv_scale");
     TORCH_CHECK(ring_state.defined() && ring_state.is_cuda() && ring_state.device() == x.device() &&
                     ring_state.dim() == 1 && ring_state.scalar_type() == at::kFloat &&
@@ -190,6 +198,7 @@ QuantizeOutputs quantize_scaled(const torch::Tensor& x,
         next_inv_scale.defined() ? next_inv_scale.data_ptr<float>() : base + layout.recip();
     p.quant_max = format_max;
     p.pow2_margin = pow2;
+    const auto input = prepare_outputs(x, dtype, tdtype, p, outs);
     launch(input, p, dtype, tdtype);
     return outs;
 }

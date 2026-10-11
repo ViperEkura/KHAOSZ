@@ -102,12 +102,12 @@ package and `loader.py` simply finds no `.so` files. When the env is unset,
 (CC 12.0 reports `120a`, so a dev build gets the full-rate fp8 cell):
 
 - **sm_80+** (Ampere and later): the minimum for the attention family — the
-  kernels are tensor-core only (`mma.sync.m16n8k16.bf16` / `.f16` for BF16 / FP16 attention,
-  `mma.sync.m16n8k32` for FP8); there is no scalar fallback.
-- **sm_89+**: required for the FP8 family (`quantize`) — FP8 tensor-core
-  instructions only exist on Ada/Hopper and newer. On older architectures,
-  CMake emits a warning and skips the `quantize` target so the remaining CUDA
-  kernels still build successfully.
+  kernels use `mma.sync.m16n8k16.bf16` / `.f16` for BF16 / FP16 attention;
+  there is no scalar fallback.
+- **sm_80+**: required for shared quantization, BF16/INT8 GEMM and mixed
+  BF16/INT8 GEMM. FP8 conversion does not require FP8 tensor-core MMA.
+- **sm_89+**: required for native FP8 GEMM MMA, whose architecture-specific
+  instantiations are selected independently of the quantization entry.
 - **sm_120a** (consumer Blackwell): the arch-specific pass that activates the
   fp8 `block_scale` cell. Listing plain `120` for the gemm target warns at
   configure time — the plain fp8 instruction decodes at half rate on sm_120,
@@ -121,14 +121,14 @@ package and `loader.py` simply finds no `.so` files. When the env is unset,
 ```
 NVCC_FLAGS = -O3 --expt-relaxed-constexpr --use_fast_math
              --ptxas-options=-O3,-v --extra-device-vectorization
-             -Xfatbin --compress-all --threads=16
+             -Xfatbin --compress-all --threads=4
 ```
 
 `--compress-all` stores every fatbin entry (SASS and PTX) compressed; the
 driver decompresses at module load, so the executed code is unchanged and the
 `.so` is ~4x smaller (measured per gemm TU: 8.03 MB -> 1.89 MB).
 
-Each kernel in `astrai/extension` is compiled as an independent pybind11 module (one `.so` per kernel, named `_C_<kernel>.cpython-*-x86_64-linux-gnu.so`). CMake builds all registered kernel targets in parallel via `cmake --build -j N`. The target list is the **single source of truth**: the `KERNEL_MODULES` registry in `csrc/CMakeLists.txt`, one entry per module as `name|srcs...` (a module may span several TUs — gemm is split into per-dtype-pair instantiation units so the heavy template work parallelizes). Entries append conditionally: the four base modules always, `quantize` and `gemm` only when the arch list reaches sm_89+, and nothing at all when `ASTRAI_CUDA_ARCH` is unset. `astrai/extension/runtime/loader.py` auto-discovers the compiled `.so` files, so adding a kernel means one registry entry and nothing else.
+Each kernel in `astrai/extension` is compiled as an independent pybind11 module (one `.so` per kernel, named `_C_<kernel>.cpython-*-x86_64-linux-gnu.so`). CMake builds all registered kernel targets in parallel via `cmake --build -j N`. The target list is the **single source of truth**: the `KERNEL_TARGETS` registry in `csrc/CMakeLists.txt`, one entry per target as `name|OBJECT/MODULE|sources...` (a module may span several TUs — gemm is split into per-dtype-pair instantiation units so the heavy template work parallelizes). The module registry is built for the selected architectures; GEMM schedules have separate architecture gates, and an unset `ASTRAI_CUDA_ARCH` builds no targets. The same creation loop handles objects and modules. Both `quantize` and `gemm` declare `$<TARGET_OBJECTS:quantize_entry>` in their source entries, so the shared Torch entry is compiled once. `astrai/extension/runtime/loader.py` auto-discovers the compiled `.so` files, so adding a kernel means one registry entry and nothing else.
 
 ## Python Extension Architecture
 
@@ -331,7 +331,7 @@ nvcc -I csrc/include -arch=sm_120 -O3 --use_fast_math \
 
 ```
 csrc/
-├── CMakeLists.txt                    # CMake build: the KERNEL_MODULES registry (module name | its source TUs) + torch/pybind11 linking
+├── CMakeLists.txt                    # CMake build: the KERNEL_TARGETS registry (name | OBJECT/MODULE | source TUs) + torch/pybind11 linking
 ├── __init__.py                       # build-time marker only (keeps `csrc` a setuptools package)
 ├── include/                          # THE include root: every header, angle-bracket root-qualified (<kernel/gemm/kernel.cuh>)
 │   ├── policy/                       # policy composition, grouped by operator
@@ -406,8 +406,7 @@ csrc/
 │   └── paged_prefill.cu              #   → module attn_paged_prefill
 ├── gemm/                             # one module; each subdirectory has one responsibility
 │   ├── bindings.cu                   # Python argument marshalling and module registration
-│   ├── entry.cu                      # Tensor entry, shared dtype/schedule selection and probe
-│   ├── params.h                      # private operand/scale validation and lifetime-aware POD packing
+│   ├── entry.cu                      # Tensor validation/packing, shared dtype/schedule selection and probe
 │   ├── plan/                         # ordinary C++ host planning
 │   │   ├── planner.cpp               # recipe ranking, geometry model and raster selection
 │   │   ├── table.cpp / table.h        # row parsing, storage, configuration and lookup
@@ -425,7 +424,7 @@ csrc/
 │   ├── entry.cu                      #   tensor validation and GEMM parameter packing
 │   ├── entry.h                       #   private host/launcher declarations
 │   └── kernels.cu                    #   typed CUDA kernels, launch dispatch and resource planning
-├── quantize/                         # family translation units (→ module quantize; entry.cu also compiled into gemm to share the chain)
+├── quantize/                         # family translation units (→ module quantize; entry.cu compiled once and linked into both modules)
 │   ├── bindings.cu                   #   named pybind functions (quantize / quantize_scaled)
 │   └── entry.cu                      #   shared validation, allocation, ring binding and dtype dispatch
 ├── gated_deltanet/                   # chunked GDN fwd/bwd kernels written in-TU + bindings.cu (→ module gated_deltanet)
@@ -532,7 +531,7 @@ code lives in the TU territory of its consumers**. An implementation header
 whose every includer sits in one family directory lives beside them
 (`attention/entry.h`, `gemm/fp8/state.h` — quoted same-directory include);
 an implementation shared across modules becomes a .cu listed in each
-module's CMake sources (`quantize/entry.cu`, compiled into both the
+module's CMake sources (`quantize/entry.cu`, compiled once and linked into both the
 quantize and gemm modules), with its Tensor declaration in `api/torch/`.
 `launcher/` owns GEMM CUDA dispatch. `api/native/gemm_plan.h` carries the shared query
 and launch decision; `policy/gemm/config.h` owns internal configuration helpers. `gemm/plan/planner.cpp` ranks recipes, while `gemm/plan/table.cpp`
