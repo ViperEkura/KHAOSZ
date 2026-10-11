@@ -80,13 +80,13 @@ static_assert(RingLayout{0}.size(1) == 4 + kFoldSlots,
 
 // Quantize-kernel parameter POD: float input -> FP8 with fused amax.
 struct QuantParams {
-    const void* __restrict__ input_ptr = nullptr;
-    void* __restrict__ output_ptr = nullptr;
-    void* __restrict__ output_transposed_ptr = nullptr; // [cols][rows]
+    const void* input_ptr = nullptr;
+    void* output_ptr = nullptr;
+    void* output_transposed_ptr = nullptr; // [cols][rows]
 
-    const float* __restrict__ scale = nullptr; // device multiplier
+    const float* scale = nullptr; // device multiplier
     // The round's raw-domain amax, as folded into hist[hist_idx]. Null skips it.
-    float* __restrict__ amax = nullptr;
+    float* amax = nullptr;
 
     /*
      * Delayed-scaling ring fold: the last-finishing block folds the round's amax
@@ -96,16 +96,16 @@ struct QuantParams {
      * meaningful only when this is set (bind_ring).
      */
     bool fold_ring = false;
-    float* __restrict__ hist = nullptr; // [hist_len] amax history window
-    float* __restrict__ scale_out = nullptr;
+    float* hist = nullptr; // [hist_len] amax history window
+    float* scale_out = nullptr;
     /*
      * The published scale's correctly rounded reciprocal (__frcp_rn), in the
      * slot the next quantize reads as its multiplier — publishing both here keeps
      * the host out of the per-step scale chain.
      */
-    float* __restrict__ scale_recip_out = nullptr;
-    float* __restrict__ amax_scratch = nullptr; // [kFoldSlots] RMW lines
-    unsigned int* __restrict__ done = nullptr;  // block-completion counter
+    float* scale_recip_out = nullptr;
+    float* amax_scratch = nullptr; // [kFoldSlots] RMW lines
+    unsigned int* done = nullptr;  // block-completion counter
     int hist_len = 0;
     int hist_idx = 0;
     float fp8_max = 0.0f; // set when a delayed-scaling ring is bound

@@ -7,8 +7,8 @@
  * The declaration surface is api/torch/quantize.h; this TU is the body.
  *
  * The instantiation list lives HERE, not in the header: every expansion site
- * (the refusal message, the dispatch switch, the supported-input check) is
- * in this file, the ASTRAI_GEMM_PAIRS-in-gemm/entry.cu shape — a list that only
+ * (the refusal message, the typed visitor, the supported-input check) is
+ * in this file, the GemmPairs-in-gemm/entry.cu shape — a list that only
  * one TU expands does not need to live where other TUs can see it.
  */
 
@@ -21,10 +21,10 @@
 #include <string>
 #include <torch/extension.h>
 
+#include <api/native/quantize.h>
 #include <api/torch/dispatch.cuh>
 #include <api/torch/fp8_checks.h>
 #include <api/torch/quantize.h>
-#include <api/native/quantize.h>
 #include <datatype/element.cuh>
 #include <kernel/quantize/kernel.cuh>
 
@@ -35,35 +35,25 @@ namespace quant {
  * Supported input element types; ScalarTypeOf<T> supplies the PyTorch
  * boundary value. The refusal and dispatch use these same rows.
  */
-#define ASTRAI_QUANT_IN_DTYPES(X)                                                                  \
-    X(bf16)                                                                                        \
-    X(fp16)                                                                                        \
-    X(float)
+using QuantInputTypes = TypeList<bf16, fp16, float>;
 
 namespace {
-
-/*
- * A scalar type quantize has no kernel for: say which ones it does have,
- * read off the list above (the attention/dtype.h pattern).
- */
-std::string unsupported_quant_input_message(at::ScalarType st) {
-    return std::string("quantize has no kernel for ") + toString(st) +
-           " (instantiated: " + dtype_names({ASTRAI_QUANT_IN_DTYPES(ASTRAI_SCALAR_TYPE)}) + ")";
-}
 
 /*
  * Dtype dispatch over the merged quantize launcher: one case per row above
  * for a (possibly mixed) fp8 output pair. Unsupported inputs throw.
  */
-ASTRAI_DEFINE_DTYPE_VISITOR(visit_quant_input, ASTRAI_QUANT_IN_DTYPES,
-                          unsupported_quant_input_message)
-
 template <typename Fp8TA, typename Fp8TB>
 void launch_for_dtype(const torch::Tensor& x, const QuantParams& p, cudaStream_t stream) {
-    visit_quant_input(x.scalar_type(), [&](auto tag) {
-        using T = typename decltype(tag)::Type;
-        launch_fp8_quantize<Fp8TA, T, Fp8TB>(p, stream);
-    });
+    visit_dtype<QuantInputTypes>(
+        x.scalar_type(),
+        [&](auto tag) {
+            using T = typename decltype(tag)::Type;
+            launch_fp8_quantize<Fp8TA, T, Fp8TB>(p, stream);
+        },
+        [](at::ScalarType dtype) {
+            return unsupported_dtype_message<QuantInputTypes>("quantize", dtype);
+        });
 }
 
 /*
@@ -155,14 +145,14 @@ QuantizeOutputs run_quantize(torch::Tensor x,
                              c10::optional<torch::Tensor> pub_recip,
                              c10::optional<int64_t> hist_len) {
     TORCH_CHECK(x.is_cuda(), "CUDA tensors required");
-    if (!dtype_supported(x.scalar_type(), {ASTRAI_QUANT_IN_DTYPES(ASTRAI_SCALAR_TYPE)}))
-        throw std::runtime_error(unsupported_quant_input_message(x.scalar_type()));
+    if (!dtype_supported<QuantInputTypes>(x.scalar_type()))
+        throw std::runtime_error(
+            unsupported_dtype_message<QuantInputTypes>("quantize", x.scalar_type()));
     const at::ScalarType out_dtype = dtype_a;
     const at::ScalarType t_dtype = dtype_b.has_value() ? *dtype_b : dtype_a;
     for (const at::ScalarType dt : {out_dtype, t_dtype})
-        TORCH_CHECK(is_fp8(dt),
-                    "unsupported quantize output dtype: expected "
-                    "float8_e4m3fn or float8_e5m2");
+        TORCH_CHECK(is_fp8(dt), "unsupported quantize output dtype: expected "
+                                "float8_e4m3fn or float8_e5m2");
     TORCH_CHECK(layout == QuantLayout::RowMajor || x.dim() >= 2,
                 "transposed quantize layouts need a 2D+ tensor");
     TORCH_CHECK(scale.is_cuda() && scale.device() == x.device() &&

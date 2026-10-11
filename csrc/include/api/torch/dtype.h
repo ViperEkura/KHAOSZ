@@ -2,6 +2,7 @@
 /* Torch dtype metadata; usable by ordinary C++ without CUDA headers. */
 
 #include <c10/core/ScalarType.h>
+#include <c10/util/StringUtil.h>
 #include <initializer_list>
 #include <string>
 
@@ -60,7 +61,7 @@ inline bool dtype_supported(at::ScalarType dtype, std::initializer_list<at::Scal
 inline std::string dtype_names(std::initializer_list<at::ScalarType> types) {
     std::string names;
     for (const auto type : types)
-        names += std::string(names.empty() ? "" : ", ") + c10::toString(type);
+        names += c10::str(names.empty() ? "" : ", ", c10::toString(type));
     return names;
 }
 
@@ -71,8 +72,8 @@ struct ScalarTypePair {
 inline std::string dtype_pair_names(std::initializer_list<ScalarTypePair> pairs) {
     std::string names;
     for (const auto pair : pairs)
-        names += std::string(names.empty() ? "" : ", ") + c10::toString(pair.a) + " x " +
-                 c10::toString(pair.b);
+        names += c10::str(names.empty() ? "" : ", ", c10::toString(pair.a), " x ",
+                          c10::toString(pair.b));
     return names;
 }
 

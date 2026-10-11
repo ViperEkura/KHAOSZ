@@ -5,9 +5,12 @@
 #include <type_traits>
 #include <utility>
 
+#include <api/native/gemm.h>
+#include <api/native/gemm_plan.h>
 #include <launcher/gemm_tiles.cuh>
 #include <memory/tma.cuh>
 #include <mma/mma.cuh>
+#include <policy/gemm/traits.cuh>
 #include <utils/device.cuh>
 
 namespace astrai {
@@ -51,8 +54,7 @@ template <typename ElemA,
           typename OutT,
           typename Schedule,
           typename LayoutOut>
-using GemmDispatchFor =
-    GemmTileDispatch<ElemA, ElemB, LayoutA, LayoutB, LayoutOut, OutT, Schedule>;
+using GemmDispatchFor = GemmTileDispatch<ElemA, ElemB, LayoutA, LayoutB, LayoutOut, OutT, Schedule>;
 
 /* Derive the query from typed operands and the launch geometry. */
 template <typename ElemA,
@@ -62,8 +64,9 @@ template <typename ElemA,
           typename OutT = __nv_bfloat16,
           typename Schedule = MmaSync,
           typename LayoutOut = RowMajor>
-PlanQuery plan_query(const GemmParams& p, const DeviceFacts& dev) {
+PlanQuery plan_query(const GemmParams& p, const DeviceFacts* dev = nullptr) {
     PlanQuery q;
+    q.dev = dev != nullptr ? *dev : device_facts();
     q.m = p.m;
     q.n = p.n;
     q.k = p.k;
@@ -78,7 +81,7 @@ PlanQuery plan_query(const GemmParams& p, const DeviceFacts& dev) {
     q.mma_k = MmaShape::kK;
     // Match the descriptor's alignment check before pricing TMA residency.
     // Driver encode can still reject a map; the launcher then falls back.
-    q.tma = tma_eligible_v<Schedule, ElemA, ElemB, LayoutA, LayoutB> && dev.cc >= 90 &&
+    q.tma = tma_eligible_v<Schedule, ElemA, ElemB, LayoutA, LayoutB> && q.dev.cc >= 90 &&
             !gemm_tma_staging_disabled() &&
             astrai::tma_aligned16(p.a_ptr, p.a_ld * sizeof(ElemA),
                                   (p.batch > 1 ? p.a_batch_stride : 0) * sizeof(ElemA)) &&
@@ -89,7 +92,6 @@ PlanQuery plan_query(const GemmParams& p, const DeviceFacts& dev) {
                    (reinterpret_cast<uintptr_t>(p.b_ptr) % 32) == 0 &&
                    (p.batch <= 1 || ((p.a_batch_stride * sizeof(ElemA)) % 32 == 0 &&
                                      (p.b_batch_stride * sizeof(ElemB)) % 32 == 0));
-    q.dev = dev;
     q.rank3a = p.batch > 1 && p.a_batch_stride > 0;
     q.rank3b = p.batch > 1 && p.b_batch_stride > 0;
     q.resources =
@@ -105,23 +107,10 @@ template <typename ElemA,
           typename OutT = __nv_bfloat16,
           typename Schedule = MmaSync,
           typename LayoutOut = RowMajor>
-LaunchPlan plan_dispatch_for(const GemmParams& p, const DeviceFacts& dev) {
+LaunchPlan plan_dispatch_for(const GemmParams& p, const DeviceFacts* dev = nullptr) {
     const PlanQuery q =
         plan_query<ElemA, ElemB, LayoutA, LayoutB, OutT, Schedule, LayoutOut>(p, dev);
     return {plan_dispatch(q), q.tma};
-}
-
-// Keep the standalone C++ planner entry used by benchmark harnesses.
-template <typename ElemA,
-          typename ElemB,
-          typename LayoutA,
-          typename LayoutB,
-          typename OutT = __nv_bfloat16,
-          typename Schedule = MmaSync,
-          typename LayoutOut = RowMajor>
-LaunchPlan plan_dispatch_for(const GemmParams& p) {
-    return plan_dispatch_for<ElemA, ElemB, LayoutA, LayoutB, OutT, Schedule, LayoutOut>(
-        p, device_facts());
 }
 
 /* Lower the problem and visit the layout tags shared by launch and probe. */
@@ -166,60 +155,76 @@ void gemm_dispatch(const GemmParams& p,
                    cudaStream_t stream,
                    bool trans_a,
                    bool trans_b,
-                   const DeviceFacts& dev) {
+                   const DeviceFacts* dev = nullptr) {
+    DeviceFacts local_dev;
+    if (dev == nullptr) {
+        local_dev = device_facts();
+        dev = &local_dev;
+    }
     const auto launch = [&](const GemmParams& lowered, auto la, auto lb, auto lout) {
-        using Dispatch = GemmDispatchFor<ElemA, ElemB, decltype(la), decltype(lb), OutT,
-                                        Schedule, decltype(lout)>;
-        Dispatch::launch(
-            lowered,
-            plan_dispatch_for<ElemA, ElemB, decltype(la), decltype(lb), OutT, Schedule,
-                              decltype(lout)>(lowered, dev),
-            stream, dev);
+        using Dispatch = GemmDispatchFor<ElemA, ElemB, decltype(la), decltype(lb), OutT, Schedule,
+                                         decltype(lout)>;
+        Dispatch::launch(lowered,
+                         plan_dispatch_for<ElemA, ElemB, decltype(la), decltype(lb), OutT, Schedule,
+                                           decltype(lout)>(lowered, dev),
+                         stream, *dev);
     };
     with_gemm_layout<ElemA, ElemB>(p, trans_a, trans_b, launch);
 }
 
-// Preserve direct C++ callers that do not already have a device snapshot.
-template <typename ElemA,
-          typename ElemB = ElemA,
-          typename OutT = __nv_bfloat16,
-          typename Schedule = MmaSync>
-void gemm_dispatch(const GemmParams& p, cudaStream_t stream, bool trans_a, bool trans_b) {
-    gemm_dispatch<ElemA, ElemB, OutT, Schedule>(p, stream, trans_a, trans_b, device_facts());
-}
-
-/*
- * Explicit-instantiation spelling shared by the per-pair TUs (bare) and
- * gemm/entry.cu's extern block: one place names the signature.
- */
-#ifndef ASTRAI_GEMM_SCHEDULE
-#define ASTRAI_GEMM_SCHEDULE MmaSync
-#endif
-
-#define ASTRAI_GEMM_SPECIALIZATIONS(PREFIX, TA, TB, SCHEDULE)                                  \
-    PREFIX void gemm_dispatch<TA, TB, __nv_bfloat16, SCHEDULE>(                                \
-        const GemmParams&, cudaStream_t, bool, bool, const DeviceFacts&);                      \
-    PREFIX void gemm_dispatch<TA, TB, __nv_bfloat16, SCHEDULE>(                                \
-        const GemmParams&, cudaStream_t, bool, bool);                                          \
-    PREFIX std::pair<PlanDecision, PlanQuery> plan_probe_for<TA, TB, SCHEDULE>(                \
-        const GemmParams&, bool, bool, const DeviceFacts&)
-
-#define ASTRAI_GEMM_INSTANTIATE(TA, TB) \
-    ASTRAI_GEMM_SPECIALIZATIONS(template, TA, TB, ASTRAI_GEMM_SCHEDULE)
-
 /* Host-only probe: use the launch layout route without launching a kernel. */
 template <typename ElemA, typename ElemB, typename Schedule = MmaSync>
-std::pair<PlanDecision, PlanQuery> plan_probe_for(const GemmParams& p,
-                                                bool trans_a,
-                                                bool trans_b,
-                                                const DeviceFacts& dev) {
+std::pair<PlanDecision, PlanQuery>
+plan_probe_for(const GemmParams& p, bool trans_a, bool trans_b, const DeviceFacts& dev) {
     return with_gemm_layout<ElemA, ElemB>(
         p, trans_a, trans_b, [&](const GemmParams& lowered, auto la, auto lb, auto lo) {
             PlanQuery q = plan_query<ElemA, ElemB, decltype(la), decltype(lb), __nv_bfloat16,
-                                     Schedule, decltype(lo)>(lowered, dev);
+                                     Schedule, decltype(lo)>(lowered, &dev);
             return std::make_pair(plan_dispatch(q), std::move(q));
         });
 }
+
+/* One signature spelling for explicit definitions and external instantiations. */
+#define ASTRAI_GEMM_SPECIALIZATIONS(PREFIX, TA, TB, SCHEDULE)                                      \
+    PREFIX void gemm_dispatch<TA, TB, __nv_bfloat16, SCHEDULE>(const GemmParams&, cudaStream_t,    \
+                                                               bool, bool, const DeviceFacts*);    \
+    PREFIX std::pair<PlanDecision, PlanQuery> plan_probe_for<TA, TB, SCHEDULE>(                    \
+        const GemmParams&, bool, bool, const DeviceFacts&)
+
+#ifndef ASTRAI_GEMM_SCHEDULE
+#define ASTRAI_GEMM_SCHEDULE MmaSync
+#endif
+#define ASTRAI_GEMM_INSTANTIATE(TA, TB)                                                            \
+    ASTRAI_GEMM_SPECIALIZATIONS(template, TA, TB, ASTRAI_GEMM_SCHEDULE)
+
+/*
+ * The extension entry includes gemm_build.h before this header. Its manifest
+ * selects externally compiled specializations, preserving per-schedule CUDA
+ * images. Standalone native callers instantiate the definitions above.
+ */
+#ifdef ASTRAI_BUILD_FP8
+#define ASTRAI_GEMM_BASE_EXTERN(SCHEDULE)                                                          \
+    ASTRAI_GEMM_SPECIALIZATIONS(extern template, __nv_bfloat16, __nv_bfloat16, SCHEDULE);          \
+    ASTRAI_GEMM_SPECIALIZATIONS(extern template, __nv_bfloat16, int8_t, SCHEDULE);                 \
+    ASTRAI_GEMM_SPECIALIZATIONS(extern template, int8_t, int8_t, SCHEDULE)
+#define ASTRAI_GEMM_FP8_EXTERN(SCHEDULE)                                                           \
+    ASTRAI_GEMM_SPECIALIZATIONS(extern template, __nv_fp8_e4m3, __nv_fp8_e4m3, SCHEDULE);          \
+    ASTRAI_GEMM_SPECIALIZATIONS(extern template, __nv_fp8_e5m2, __nv_fp8_e5m2, SCHEDULE)
+
+ASTRAI_GEMM_BASE_EXTERN(MmaSync);
+#if ASTRAI_BUILD_FP8
+ASTRAI_GEMM_FP8_EXTERN(MmaSync);
+#endif
+#if ASTRAI_BUILD_TMA
+ASTRAI_GEMM_BASE_EXTERN(TmaMma);
+ASTRAI_GEMM_FP8_EXTERN(TmaMma);
+#endif
+#if ASTRAI_BUILD_MX
+ASTRAI_GEMM_FP8_EXTERN(Sm120Mma);
+#endif
+#undef ASTRAI_GEMM_BASE_EXTERN
+#undef ASTRAI_GEMM_FP8_EXTERN
+#endif
 
 } // namespace gemm
 } // namespace astrai

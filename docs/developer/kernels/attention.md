@@ -43,12 +43,15 @@ output, with FP32 accumulation. Q/K/V must share one dtype. FP16 uses the
 workspace, mask and KV-layout implementation. FP32 is not a native attention
 instantiation and continues through backend fallback when selected implicitly.
 
-The instantiation list belongs to the private `csrc/attention/dtype.h`. Shared
-scalar/pair visitor generators and ScalarType mappings live in
-`csrc/include/api/torch/dtype.h`, also used by GEMM. One X-macro list generates
-both dispatch cases and supported-type diagnostics, without a separate native
-dtype API. `api/native/attention.h` remains the framework-free parameter
-contract; `api/torch/attention.h` declares the Tensor entry points.
+The private `csrc/attention/entry.h` owns
+`AttentionTypes = TypeList<bf16, fp16>`, shared by the four Torch entries.
+Each entry calls `visit_dtype<AttentionTypes>` directly and selects its
+launcher in the callback. The visitor, CUDA element/ScalarType mapping and
+`unsupported_dtype_message<List>` formatter live in
+`csrc/include/api/torch/dispatch.cuh`; the formatter also serves quantize.
+Torch dtype names and classification stay in the CUDA-free `api/torch/dtype.h`.
+Supported-type diagnostics derive from the same list used by dispatch.
+`api/native/attention.h` remains the framework-free parameter contract; `api/torch/attention.h` declares the Tensor entry points.
 
 ## Python Wrappers
 

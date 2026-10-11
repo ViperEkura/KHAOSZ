@@ -113,8 +113,7 @@ bool tma_maps_for(const GemmParams& p, CUtensorMap* ma, CUtensorMap* mb) {
 }
 
 /* Keep the broadcast and strided-batch kernel variants in one routing ladder. */
-template <typename F>
-decltype(auto) with_tma_ranks(bool rank3a, bool rank3b, F&& fn) {
+template <typename F> decltype(auto) with_tma_ranks(bool rank3a, bool rank3b, F&& fn) {
     if (rank3a) {
         if (rank3b)
             return fn(std::true_type{}, std::true_type{});
@@ -130,7 +129,9 @@ decltype(auto) with_tma_ranks(bool rank3a, bool rank3b, F&& fn) {
  * operand (misaligned base/ld) so the caller falls back to cp.async.
  */
 template <typename Policy>
-bool launch_policy_tma(const GemmParams& p, cudaStream_t stream, int smem_max) {
+bool launch_policy_tma(const GemmParams& p, cudaStream_t stream, int smem_max = -1) {
+    if (smem_max < 0)
+        smem_max = device_facts().smem_max;
     using Traits = typename Policy::Traits;
     /*
      * The planner prices rings only; TMA's pad + barriers can tip past
@@ -156,12 +157,6 @@ bool launch_policy_tma(const GemmParams& p, cudaStream_t stream, int smem_max) {
     with_tma_ranks(p.batch > 1 && p.a_batch_stride > 0, p.batch > 1 && p.b_batch_stride > 0,
                    launch_rank);
     return true;
-}
-
-// Preserve direct C++ callers that do not already have a device snapshot.
-template <typename Policy>
-bool launch_policy_tma(const GemmParams& p, cudaStream_t stream) {
-    return launch_policy_tma<Policy>(p, stream, device_facts().smem_max);
 }
 
 } // namespace gemm

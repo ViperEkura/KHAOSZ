@@ -392,13 +392,13 @@ csrc/
 │   │       ├── gated_deltanet.h       # GDN Tensor entry declarations
 │   │       ├── quantize.h            # QuantizeOutputs and run_quantize
 │   │       ├── dtype.h               # CUDA-free Torch dtype names, matching and classification
-│   │       ├── dispatch.cuh          # CUDA element/ScalarType mapping and generated typed visitors
+│   │       ├── dispatch.cuh          # CUDA element/ScalarType mapping and type-list visitors
 │   │       └── fp8_checks.h          # ATen-cached device capability validation
 │   └── launcher/                     # GEMM CUDA launch and dispatch templates
 │       ├── gemm_launch.cuh           #     typed CUDA launch and TMA descriptor setup
 │       ├── gemm_tiles.cuh            #     manifest selection and staging resolution
-│       └── gemm_dispatch.cuh         #     layout rewrite, typed entry and native planner probe
-├── attention/                        # private dtype.h instantiates BF16/FP16; family translation units + one bindings.cu (→ module attention; kernels/launchers/dispatch in the shared kernel/ headers)
+│       └── gemm_dispatch.cuh         #     definitions, layout rewrite and native planner probe
+├── attention/                        # private entry.h owns the BF16/FP16 type list; family translation units + one bindings.cu (→ module attention; kernels/launchers/dispatch in the shared kernel/ headers)
 │   ├── entry.h                       #   attention torch→POD marshalling (pack_*_params, split-partial allocation) — TU-local impl header, quoted-include (gemm/fp8/state.h shape)
 │   ├── decode.cu                     #   → module attn_decode
 │   ├── prefill.cu                    #   → module attn_prefill
@@ -427,7 +427,7 @@ csrc/
 │   └── kernels.cu                    #   typed CUDA kernels, launch dispatch and resource planning
 ├── quantize/                         # family translation units (→ module quantize; entry.cu also compiled into gemm to share the chain)
 │   ├── bindings.cu                   #   pybind surface only (quantize / quantize_dual)
-│   └── entry.cu                      #   the entry implementation: run_quantize + ring binding + dtype dispatch (ASTRAI_QUANT_IN_DTYPES lives here)
+│   └── entry.cu                      #   the entry implementation: run_quantize + ring binding + dtype dispatch (QuantInputTypes lives here)
 ├── gated_deltanet/                   # chunked GDN fwd/bwd kernels written in-TU + bindings.cu (→ module gated_deltanet)
 ├── rotary_emb.cu                     # rotary embedding (kernel + binding in one file) → module rotary_emb
 ├── bench/                            # measurement + dispatch-analysis tooling, run from the repo root as `python csrc/bench/<tool>.py`
@@ -462,7 +462,9 @@ mma / epilogue / arith / datatype / utils); `kernel/` groups by operator and
 The caller contracts remain together in `api/`, with a framework boundary:
 `api/torch/` may depend on `api/native/`, never the reverse. Native contracts,
 planners and shared device headers must not transitively include Torch, ATen,
-c10, pybind11 or Python. Family-private host headers may use Torch. Tensor
+c10, pybind11 or Python. Native parameter structs use plain pointers; their
+headers must compile as ordinary C++ without CUDA compatibility macros.
+Family-private host headers may use Torch. Tensor
 validation, allocation and packing stay in entries; Python marshalling stays
 in binding implementations. `api/native/gemm_plan.h` contains ordinary C++
 query/config/result types; `policy/gemm/config.h` retains the existing single
@@ -476,12 +478,37 @@ headers, such as `<api/native/gemm.h>` and `<api/torch/gemm.h>`. Private
 same-family implementation headers and harness-local helpers use quoted
 includes.
 
-Dtype dispatch uses the shared `ASTRAI_DEFINE_DTYPE_VISITOR` and
-`ASTRAI_DEFINE_DTYPE_PAIR_VISITOR` generators in `api/torch/dispatch.cuh`. Each
-family owns its X-macro instantiation list: attention's private `dtype.h`
-shares BF16/FP16 across four entries, while GEMM's list stays in `gemm/entry.cu`.
-Dispatch cases and unsupported-dtype diagnostics expand the same list; there
-is no separate native dtype-contract header or runtime registration table.
+Dtype dispatch uses `TypeList<Ts...>` and `DTypePair<A,B>` with shared
+`visit_dtype<List>` / `visit_dtype_pair<List>` templates in
+`api/torch/dispatch.cuh`. Each family owns its supported list: attention keeps
+BF16/FP16 in its private `attention/entry.h`, GEMM keeps legal A/B pairs in
+its entry, and quantize keeps BF16/FP16/FP32 in its entry. Names and support queries
+derive from the same lists as dispatch. There is no Cartesian expansion of
+GEMM operand types. Duplicate dispatch keys fail compilation. An empty list
+supports queries and diagnostics, but cannot instantiate a visitor.
+
+Visitors invoke the callback once on a match and preserve void, value or
+reference returns. Every candidate must return the same type. A miss invokes
+the caller's error formatter and throws `std::runtime_error`. Attention and
+quantize share `unsupported_dtype_message<List>`. Callback exceptions
+propagate unchanged. Compile-time recursion supplies the small
+runtime comparison chain, with no runtime registry or allocation.
+
+`api/torch/dtype.h` holds CUDA-free dtype names and metadata. The typed
+visitors and CUDA element mapping stay in `api/torch/dispatch.cuh`. GEMM's
+Torch entry includes `launcher/gemm_dispatch.cuh` for native launch and probe,
+with no local forward declarations. That header owns definitions, defaults,
+and the external instantiations selected by the extension's `gemm_build.h`
+manifest. The per-pair/schedule units still emit the kernels for their CUDA
+architecture images; standalone native callers instantiate directly.
+The instantiation macro shares the signature between these build paths.
+
+Check rejected template configurations without GPU
+launches (a C++17 compiler and CUDA element headers are required):
+
+```bash
+.venv/bin/python -m pytest tests/unit/extension/test_torch_dispatch.py -q
+```
 
 Check the dependency boundary and compile the host planners independently:
 

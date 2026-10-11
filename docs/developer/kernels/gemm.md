@@ -137,7 +137,7 @@ Headers under `csrc/include` contain declarations and device templates;
 | `api/native/quantize.h` | capability constants, `QuantLayout`, `RingLayout` and `QuantParams`; no framework or CUDA instruction dependency |
 | `datatype/element.cuh` | shared CUDA element traits: storage, native pair conversion, FP8 limits |
 | `api/torch/dtype.h` | CUDA-free Torch dtype names, checkpoint-name matching and supported-type metadata |
-| `api/torch/dispatch.cuh` | CUDA element/ScalarType mapping, typed tags and shared scalar/pair visitor generators |
+| `api/torch/dispatch.cuh` | CUDA element/ScalarType mapping, type tags and shared scalar/pair type-list visitors |
 | `kernel/quantize/kernel.cuh` | pure-CUDA device code: vectorized `fp8_quantize_kernel` + 64×32-tile transpose kernel (out_layout 0/1/2, Dual orientation a template param), `ElemTrait<T>` conversion and pair unpack from `datatype/element.cuh` — no torch |
 | `datatype/dequant.cuh` | in-register dequantization functors (`DequantPair<SrcT, MmaT>`): the exact int8→bf16 expansion quantized-GEMM operands fold between the smem read and the mma |
 | `api/native/gemm.h` | GEMM layout tags and unchanged `GemmParams` POD; no Torch or CUDA instruction dependency |
@@ -153,13 +153,13 @@ Headers under `csrc/include` contain declarations and device templates;
 | `kernel/gemm/kernel.cuh` | Device entry kernels for cp.async and TMA staging; they compose the mainloop and epilogue |
 | `launcher/gemm_launch.cuh` | Typed CUDA launch and TMA descriptor setup |
 | `launcher/gemm_tiles.cuh` | Manifest tile selection, output-reclaim fallback, and launch from the resolved staging decision |
-| `launcher/gemm_dispatch.cuh` | Typed query construction, layout canonicalization, and routing shared by launch and probe |
+| `launcher/gemm_dispatch.cuh` | Heavy definitions: typed query construction, layout canonicalization and routing shared by launch and probe |
 | `api/native/gemm_plan.h` | Pure C++ query/decision, staging, probe results, capabilities, configuration and vocabulary interfaces |
 | `gemm/plan/table.h` / `gemm/plan/table.cpp` | Private host row contract, parsing, row sources, configuration and row selection |
 | `gemm/plan/builtin.cpp` | Generated measured rows, compiled in a separate host TU |
 | `gemm/plan/planner.cpp` | Recipe vocabulary, model ranking and raster selection |
 | `api/torch/gemm.h` | Tensor-based `quant_gemm_impl` and `ScalarType`-based `plan_probe`; imports native result types and contains no Python interfaces or kernel instantiations |
-| `gemm/entry.cu` | Typed host layer: one dtype-pair visitor feeds launch and probe; the schedule visitor selects the compiled architecture variant. Holds no `py::` type |
+| `gemm/entry.cu` | Typed host dispatch using the launcher header: one dtype-pair visitor feeds launch and probe; the schedule visitor selects the compiled architecture variant. Holds no `py::` type |
 | `gemm/fp8/linear.cu` | Composed fp8 training linear (forward and backward) in one C++ `autograd::Function` |
 | `gemm/fp8/runtime.cu` / `gemm/fp8/linear.h` | Single `State` owner, checkpoint/debug and pybind interface; internal declarations connecting the runtime to the autograd entry |
 | `gemm/fp8/ring.h` / `gemm/fp8/cache.h` / `gemm/fp8/state.h` | Delayed-scaling ring and recipe; weight/activation cast caches; meta registry and restore helpers |
@@ -237,10 +237,43 @@ FP8 forward passes its existing `Fp8Cfg` recipe through the implementation
 without repeating five scalar fields. Torch dtype names and checkpoint-name
 matching are shared in `api/torch/dtype.h`; FP8 state owns only its registry
 and restore logic. The metadata header has no CUDA dependency.
-CUDA element mappings and typed visitor generators live in
-`api/torch/dispatch.cuh`, shared by GEMM, attention and quantize. Quantize uses
-the same single-dtype visitor and diagnostic-name expansion as attention;
-each family keeps its supported-type list private.
+CUDA element mappings and type-list visitors live in
+`api/torch/dispatch.cuh`, shared by GEMM, attention and quantize. Each family
+declares its supported list locally, for example:
+
+```cpp
+using AttentionTypes = TypeList<bf16, fp16>;
+using GemmBasePairs = TypeList<DTypePair<bf16, bf16>,
+                               DTypePair<bf16, int8_t>,
+                               DTypePair<int8_t, int8_t>>;
+```
+
+GEMM concatenates its base pairs with the FP8 list enabled by the compiled
+capability manifest. `visit_dtype_pair<GemmPairs>` selects a legal pair;
+names and support queries use that same list. The schedule callback retains
+the device/build gates and existing MX, TMA, cp.async priority. Quantize uses
+`visit_dtype<QuantInputTypes>`; attention uses `visit_dtype<AttentionTypes>`.
+Callback returns may be void, values or references, with one common return
+type across all candidates; duplicate keys and empty visitors fail compilation.
+
+The Torch entry includes `launcher/gemm_dispatch.cuh` for native launch
+and probe, without local forward declarations. Definitions and template
+defaults live in that header. When the extension's `gemm_build.h` manifest
+is present, the launcher declares external instantiations for the compiled
+pairs and schedules. Their definitions remain in the per-pair CUDA units,
+so the entry does not regenerate kernels or broaden architecture images.
+Standalone native callers instantiate directly from the same header.
+The shared build macro spells each explicit-instantiation signature once;
+dtype support and runtime visitors use templates.
+
+The native launch is a single `gemm_dispatch` template: its optional
+`const DeviceFacts*` defaults to null and resolves device facts inside the
+function when omitted. The Torch entry passes its selected device snapshot.
+`plan_query` and `plan_dispatch_for` use the same optional device pointer;
+the query resolves an omitted snapshot once into `PlanQuery::dev`.
+`launch_policy_tma` has one implementation. Its shared-memory budget
+defaults to -1; the function queries the device limit only when the
+budget was not supplied.
 
 Layout resolution: the user flag names the math (0 = last two dims are
 `[rows][contract]`, 1 = transposed); a col-major *view* of a contiguous

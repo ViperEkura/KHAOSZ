@@ -7,10 +7,14 @@
 #include <torch/extension.h>
 
 #include <api/native/attention.h>
+#include <api/torch/dispatch.cuh>
 #include <launcher/attention.cuh>
 
 namespace astrai {
 namespace attention {
+
+/* Supported kernel element types, shared by the four Torch entries. */
+using AttentionTypes = TypeList<bf16, fp16>;
 
 // Micro-checks shared by the packers
 inline void check_int32(const torch::Tensor& t, const char* name) {

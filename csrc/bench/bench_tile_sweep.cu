@@ -430,7 +430,7 @@ sweep_shape(int m, int n, int k, bool use_scale, int warmup, int iters, const ch
                  * Raster is a property of the geometry, and production recomputes it
                  * per tile; match that so the comparison is apples-to-apples.
                  */
-                p.raster = plan_raster(plan_query<EA, EB, RowMajor, ColMajor>(p, dev),
+                p.raster = plan_raster(plan_query<EA, EB, RowMajor, ColMajor>(p, &dev),
                                        (int)Tile::CtaShape::kM, (int)Tile::CtaShape::kN);
 
                 const BenchResult r =

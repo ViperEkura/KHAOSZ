@@ -28,26 +28,26 @@ constexpr float LOG2E = 1.44269504088896340736f;
  */
 struct AttentionParams {
     // Group input/output and workspace pointers before scalar metadata.
-    const void* __restrict__ q_ptr = nullptr;
-    void* __restrict__ o_ptr = nullptr;
+    const void* q_ptr = nullptr;
+    void* o_ptr = nullptr;
 
-    const void* __restrict__ k_ptr = nullptr;
-    const void* __restrict__ v_ptr = nullptr;
-    const void* __restrict__ new_k_ptr = nullptr;
-    const void* __restrict__ new_v_ptr = nullptr;
+    const void* k_ptr = nullptr;
+    const void* v_ptr = nullptr;
+    const void* new_k_ptr = nullptr;
+    const void* new_v_ptr = nullptr;
 
     // Decode split-KV workspace (FP32 online-softmax accumulators).
-    float* __restrict__ o_part = nullptr;
-    float* __restrict__ ml_part = nullptr;
+    float* o_part = nullptr;
+    float* ml_part = nullptr;
 
     // Paged KV addressing, lengths, and packed query work map.
-    const int* __restrict__ req_to_token = nullptr;     // [num_reqs, max_context_len]
-    const int* __restrict__ req_pool_indices = nullptr; // [batch]
-    const int* __restrict__ kv_indptr = nullptr;        // [batch + 1]
-    const int* __restrict__ qo_indptr = nullptr;        // [batch + 1] or nullptr for decode
-    const int* __restrict__ q_tile_to_batch = nullptr;  // [num_q_tiles], prefill only
-    const int* __restrict__ q_tile_to_index = nullptr;  // [num_q_tiles], prefill only
-    const bool* __restrict__ mask = nullptr;
+    const int* req_to_token = nullptr;     // [num_reqs, max_context_len]
+    const int* req_pool_indices = nullptr; // [batch]
+    const int* kv_indptr = nullptr;        // [batch + 1]
+    const int* qo_indptr = nullptr;        // [batch + 1] or nullptr for decode
+    const int* q_tile_to_batch = nullptr;  // [num_q_tiles], prefill only
+    const int* q_tile_to_index = nullptr;  // [num_q_tiles], prefill only
+    const bool* mask = nullptr;
 
     // Shape
     int batch;

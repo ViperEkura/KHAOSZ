@@ -33,10 +33,10 @@ struct GemmParams {
      * Operands, optional fused bias, and output.
      * Bias is added in FP32 before the single output rounding; null disables it.
      */
-    const void* __restrict__ a_ptr = nullptr;
-    const void* __restrict__ b_ptr = nullptr;
-    const void* __restrict__ bias_ptr = nullptr;
-    void* __restrict__ out_ptr = nullptr;
+    const void* a_ptr = nullptr;
+    const void* b_ptr = nullptr;
+    const void* bias_ptr = nullptr;
+    void* out_ptr = nullptr;
 
     /*
      * Per-operand dequantization scales, multiplied into the epilogue.
@@ -44,8 +44,8 @@ struct GemmParams {
      * b_scale_n: 0 = device scalar, n = per-output-channel scale.
      * Null pointers disable scaling. Scales grouped along K cannot fold here.
      */
-    const float* __restrict__ a_scale = nullptr;
-    const float* __restrict__ b_scale = nullptr;
+    const float* a_scale = nullptr;
+    const float* b_scale = nullptr;
     int a_scale_m = 0;
     int b_scale_n = 0;
 

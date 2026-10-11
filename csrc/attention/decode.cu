@@ -7,7 +7,6 @@
 
 #include "entry.h"
 #include <api/torch/attention.h>
-#include "dtype.h"
 #include <launcher/attention.cuh>
 
 namespace astrai {
@@ -35,7 +34,15 @@ torch::Tensor attn_decode(torch::Tensor q,
     p.o_ptr = O_view.data_ptr();
 
     DecodeCall call{p, q, o_part_buf, ml_part_buf};
-    attn_dtype_dispatch<ContiguousDecodeEntry>(q.scalar_type(), call, stream);
+    visit_dtype<AttentionTypes>(
+        q.scalar_type(),
+        [&](auto tag) {
+            using T = typename decltype(tag)::Type;
+            ContiguousDecodeEntry<T>::run(call, stream);
+        },
+        [](at::ScalarType dtype) {
+            return unsupported_dtype_message<AttentionTypes>("attention", dtype);
+        });
     C10_CUDA_CHECK(cudaGetLastError());
     return O;
 }

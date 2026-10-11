@@ -1,15 +1,19 @@
 /* GEMM typed entry, dtype/schedule selection, and planner probe. */
 
 #include <c10/core/ScalarType.h>
+#include <c10/util/StringUtil.h>
 #include <cstdint>
 #include <string>
+#include <utility>
 
 #include <ATen/cuda/CUDAContext.h>
-#include <c10/cuda/CUDAGuard.h>
 #include <api/torch/dispatch.cuh>
 #include <api/torch/gemm.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <gemm_build.h>
 #include <launcher/gemm_dispatch.cuh>
+#include <policy/gemm/config.h>
+#include <utils/device.cuh>
 
 #include "params.h"
 
@@ -19,37 +23,14 @@ using namespace astrai::quant;
 namespace astrai {
 namespace gemm {
 
-#define ASTRAI_GEMM_BASE_PAIRS(X)                                                                  \
-    X(bf16, bf16)                                                                                  \
-    X(bf16, int8_t)                                                                                \
-    X(int8_t, int8_t)
-
+using GemmBasePairs =
+    TypeList<DTypePair<bf16, bf16>, DTypePair<bf16, int8_t>, DTypePair<int8_t, int8_t>>;
 #if ASTRAI_BUILD_FP8
-#define ASTRAI_GEMM_FP8_PAIRS(X)                                                                   \
-    X(fp8_e4m3, fp8_e4m3)                                                                          \
-    X(fp8_e5m2, fp8_e5m2)
+using GemmFp8Pairs = TypeList<DTypePair<fp8_e4m3, fp8_e4m3>, DTypePair<fp8_e5m2, fp8_e5m2>>;
 #else
-#define ASTRAI_GEMM_FP8_PAIRS(X)
+using GemmFp8Pairs = TypeList<>;
 #endif
-#define ASTRAI_GEMM_PAIRS(X) ASTRAI_GEMM_BASE_PAIRS(X) ASTRAI_GEMM_FP8_PAIRS(X)
-
-#define GEMM_EXTERN_FOR(TA, TB, SCHEDULE) \
-    ASTRAI_GEMM_SPECIALIZATIONS(extern template, TA, TB, SCHEDULE);
-
-#define GEMM_EXTERN_BASE(TA, TB) GEMM_EXTERN_FOR(TA, TB, MmaSync)
-ASTRAI_GEMM_PAIRS(GEMM_EXTERN_BASE)
-#undef GEMM_EXTERN_BASE
-#if ASTRAI_BUILD_TMA
-#define GEMM_EXTERN_TMA(TA, TB) GEMM_EXTERN_FOR(TA, TB, TmaMma)
-ASTRAI_GEMM_PAIRS(GEMM_EXTERN_TMA)
-#undef GEMM_EXTERN_TMA
-#endif
-#if ASTRAI_BUILD_MX
-#define GEMM_EXTERN_MX(TA, TB) GEMM_EXTERN_FOR(TA, TB, Sm120Mma)
-ASTRAI_GEMM_FP8_PAIRS(GEMM_EXTERN_MX)
-#undef GEMM_EXTERN_MX
-#endif
-#undef GEMM_EXTERN_FOR
+using GemmPairs = concat_type_lists_t<GemmBasePairs, GemmFp8Pairs>;
 
 static GemmCapabilities capabilities_for(const DeviceFacts& dev) {
     const int cc = dev.cc;
@@ -65,23 +46,14 @@ GemmCapabilities capabilities() { return capabilities_for(device_facts()); }
 
 namespace {
 
-/*
- * The shared typed visitor packs case labels with:
- * one u16 per pair, so every label is a compile-time constant and the switch
- * lowers to one indexed branch with no runtime-initialized state. An
- * unsupported pair raises with the actual operand dtypes in the message
- * instead of a hardcoded list that can drift.
- */
-using GemmDispatchFn = void (*)(const GemmParams&, cudaStream_t, bool, bool, const DeviceFacts&);
+/* The launcher header binds these addresses to per-pair compiled specializations. */
+using GemmDispatchFn = void (*)(const GemmParams&, cudaStream_t, bool, bool, const DeviceFacts*);
 
 /* The same pair list drives typed dispatch and unsupported-pair diagnostics. */
 std::string unsupported_pair_message(c10::ScalarType a, c10::ScalarType b) {
-    return std::string("unsupported operand dtype pair ") + toString(a) + " x " + toString(b) +
-           " (instantiated: " + dtype_pair_names({ASTRAI_GEMM_PAIRS(ASTRAI_SCALAR_TYPE_PAIR)}) +
-           ")";
+    return c10::str("unsupported operand dtype pair ", toString(a), " x ", toString(b),
+                    " (instantiated: ", dtype_pair_names<GemmPairs>(), ")");
 }
-
-ASTRAI_DEFINE_DTYPE_PAIR_VISITOR(visit_gemm_pair, ASTRAI_GEMM_PAIRS, unsupported_pair_message)
 
 /* All kernel variants have distinct schedule types and architecture images. */
 template <typename A, typename B, typename F> auto with_schedule(const DeviceFacts& dev, F&& fn) {
@@ -104,15 +76,20 @@ template <typename A, typename B, typename F> auto with_schedule(const DeviceFac
 
 template <typename F>
 auto with_gemm_variant(c10::ScalarType a, c10::ScalarType b, const DeviceFacts& dev, F&& fn) {
-    return visit_gemm_pair(a, b, [&](auto pair) {
-        using Pair = decltype(pair);
-        return with_schedule<typename Pair::A, typename Pair::B>(
-            dev, [&](auto schedule) { return fn(pair, schedule); });
-    });
+    return visit_dtype_pair<GemmPairs>(
+        a, b,
+        [&](auto pair) {
+            using Pair = decltype(pair);
+            return with_schedule<typename Pair::A, typename Pair::B>(
+                dev, [&](auto schedule) { return fn(pair, schedule); });
+        },
+        unsupported_pair_message);
 }
 
-using GemmProbeFn = std::pair<PlanDecision, PlanQuery> (*)(
-    const GemmParams&, bool, bool, const DeviceFacts&);
+using GemmProbeFn = std::pair<PlanDecision, PlanQuery> (*)(const GemmParams&,
+                                                           bool,
+                                                           bool,
+                                                           const DeviceFacts&);
 
 /* One selection binds both operations to the same dtype, schedule and device. */
 struct GemmVariant {
@@ -121,7 +98,7 @@ struct GemmVariant {
     DeviceFacts device;
 
     void launch(const PreparedGemm& prepared, cudaStream_t stream) const {
-        dispatch(prepared.params, stream, prepared.a.transposed, prepared.b.transposed, device);
+        dispatch(prepared.params, stream, prepared.a.transposed, prepared.b.transposed, &device);
     }
 
     auto inspect(const GemmParams& params, bool trans_a, bool trans_b) const {
@@ -207,7 +184,7 @@ torch::Tensor quant_gemm_impl(torch::Tensor a,
     TORCH_CHECK(a.device() == b.device(), "a and b must share device");
     const at::cuda::OptionalCUDAGuard guard(a.device());
     const GemmInputs inputs{std::move(a), std::move(b), std::move(a_scale), std::move(b_scale),
-                            trans_a, trans_b, std::move(bias)};
+                            trans_a,      trans_b,      std::move(bias)};
     const auto prepared = prepare_gemm(inputs);
     const auto variant = select_gemm_variant(inputs.a.scalar_type(), inputs.b.scalar_type());
     variant.launch(prepared, at::cuda::getCurrentCUDAStream().stream());
