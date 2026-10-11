@@ -3,11 +3,11 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/util/Exception.h>
 
-#include <api/quantize_common.h>
+#include <api/native/quantize.h>
 
 /*
  * The fp8 runtime capability gate shared by the quantize and quant_gemm
- * bindings; api/quantize_common.h stays torch-free (pure POD/traits).
+ * bindings; api/native/quantize.h stays torch-free (pure POD/traits).
  */
 
 namespace astrai {

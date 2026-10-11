@@ -8,7 +8,7 @@
 
 #include <type_traits>
 
-#include <api/gemm_common.h>
+#include <api/native/gemm.h>
 #include <datatype/dequant.cuh>
 #include <memory/load_async.cuh>
 #include <memory/load_crosswise.cuh>

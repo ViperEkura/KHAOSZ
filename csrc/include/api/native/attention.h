@@ -57,7 +57,7 @@ struct AttentionParams {
     int q_len;  // Per-request in contiguous mode; total_q in paged mode.
     int kv_len; // Contiguous mode; paged mode uses kv_indptr.
 
-    // Tensor and mask strides.
+    // Tensor strides.
     int q_b_stride;
     int q_h_stride;
     int q_l_stride;
@@ -68,12 +68,20 @@ struct AttentionParams {
     int kv_d_stride;
     int new_kv_b_stride;
     int new_kv_h_stride;
-    // Mask key elements are contiguous; zero strides represent broadcast axes.
-    int mask_b_stride = 0;
-    int mask_h_stride = 0;
-    int mask_l_stride = 0; // Query sequence axis, matching q_l_stride.
-    int mask_k_len = 0;
-    int mask_q_len = 0; // A singleton query axis broadcasts to all query rows.
+
+    /*
+     * Mask shape in [batch, head, query, key] order, read from the mask tensor.
+     * Missing axes have size one. Singleton B/H/Q axes broadcast; query/key
+     * sizes bound coverage independently of zero strides from expanded storage.
+     */
+    int mask_b_size;
+    int mask_h_size;
+    int mask_q_size;
+    int mask_k_size;
+    int mask_b_stride;
+    int mask_h_stride;
+    int mask_q_stride;
+    int mask_k_stride;
 
     // Launch metadata and attention behavior; the boolean stays last to avoid padding.
     int num_q_tiles;

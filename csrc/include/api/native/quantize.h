@@ -1,8 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <cuda_fp8.h>
-#include <cuda_runtime.h>
 
 /*
  * Pure POD/traits header — no .cuh/CUDA-kernel includes; raw __nv_* spellings

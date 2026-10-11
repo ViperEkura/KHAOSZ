@@ -6,8 +6,8 @@
 #include <string>
 
 #include "entry.h"
-#include <api/dtype.h>
-#include <api/gemm.h>
+#include <api/torch/dtype.h>
+#include <api/torch/gemm.h>
 #include <gemm_build.h>
 #include <launcher/gemm_dispatch.cuh>
 
@@ -34,8 +34,8 @@ namespace gemm {
 #define GEMM_EXTERN_FOR(TA, TB, SCHEDULE)                                                          \
     extern template void gemm_dispatch<TA, TB, __nv_bfloat16, SCHEDULE>(                           \
         GemmParams, cudaStream_t, bool, bool, const DeviceFacts&);                                 \
-    extern template void gemm_dispatch<TA, TB, __nv_bfloat16, SCHEDULE>(                           \
-        GemmParams, cudaStream_t, bool, bool);                                                     \
+    extern template void gemm_dispatch<TA, TB, __nv_bfloat16, SCHEDULE>(GemmParams, cudaStream_t,  \
+                                                                        bool, bool);               \
     extern template std::pair<PlanDecision, PlanQuery> plan_probe_for<TA, TB, SCHEDULE>(           \
         int64_t, int64_t, int64_t, int64_t, bool, bool, const DeviceFacts&);
 
@@ -77,42 +77,17 @@ namespace {
  */
 using GemmDispatchFn = void (*)(GemmParams, cudaStream_t, bool, bool, const DeviceFacts&);
 
-constexpr uint16_t pack_dtypes(c10::ScalarType a, c10::ScalarType b) {
-    return static_cast<uint16_t>(static_cast<uint8_t>(a)) << 8 | static_cast<uint8_t>(b);
-}
-
-/*
- * The unsupported-pair arm, one spelling for the two lookups below: the
- * error text is generated from ASTRAI_GEMM_PAIRS, matching both lookups.
- */
+/* The same pair list drives typed dispatch and unsupported-pair diagnostics. */
 std::string unsupported_pair_message(c10::ScalarType a, c10::ScalarType b) {
-    std::string instantiated;
-#define ASTRAI_GEMM_PAIR_ROW(TA, TB)                                                               \
-    instantiated += std::string(instantiated.empty() ? "" : ", ") + toString(scalar_type_v<TA>) +  \
-                    " x " + toString(scalar_type_v<TB>);
-    ASTRAI_GEMM_PAIRS(ASTRAI_GEMM_PAIR_ROW)
-#undef ASTRAI_GEMM_PAIR_ROW
     return std::string("unsupported operand dtype pair ") + toString(a) + " x " + toString(b) +
-           " (instantiated: " + instantiated + ")";
+           " (instantiated: " + dtype_pair_names({ASTRAI_GEMM_PAIRS(ASTRAI_SCALAR_TYPE_PAIR)}) +
+           ")";
 }
 
-template <typename A_, typename B_> struct PairTag {
-    using A = A_;
-    using B = B_;
-};
-
-template <typename F> auto visit_gemm_pair(c10::ScalarType a, c10::ScalarType b, F&& fn) {
-#define GEMM_CASE(TA, TB)                                                                          \
-    case pack_dtypes(scalar_type_v<TA>, scalar_type_v<TB>):                                        \
-        return fn(PairTag<TA, TB>{});
-    switch (pack_dtypes(a, b)) { ASTRAI_GEMM_PAIRS(GEMM_CASE) }
-#undef GEMM_CASE
-    throw std::runtime_error(unsupported_pair_message(a, b));
-}
+ASTRAI_DEFINE_DTYPE_PAIR_VISITOR(visit_gemm_pair, ASTRAI_GEMM_PAIRS, unsupported_pair_message)
 
 /* All kernel variants have distinct schedule types and architecture images. */
-template <typename A, typename B, typename F>
-auto with_schedule(const DeviceFacts& dev, F&& fn) {
+template <typename A, typename B, typename F> auto with_schedule(const DeviceFacts& dev, F&& fn) {
     constexpr bool fp8 = sizeof(A) == 1 && !std::is_same_v<A, int8_t>;
     const GemmCapabilities caps = capabilities_for(dev);
     TORCH_CHECK(fp8 ? caps.fp8 : caps.mma, "GEMM kernels were not built for this device/dtype (SM",
@@ -139,9 +114,7 @@ auto with_gemm_variant(c10::ScalarType a, c10::ScalarType b, const DeviceFacts& 
     });
 }
 
-GemmDispatchFn find_gemm_dispatch(c10::ScalarType a,
-                                  c10::ScalarType b,
-                                  const DeviceFacts& dev) {
+GemmDispatchFn find_gemm_dispatch(c10::ScalarType a, c10::ScalarType b, const DeviceFacts& dev) {
     return with_gemm_variant(a, b, dev, [](auto pair, auto schedule) -> GemmDispatchFn {
         using Pair = decltype(pair);
         return &gemm_dispatch<typename Pair::A, typename Pair::B, __nv_bfloat16,
@@ -156,9 +129,7 @@ GemmDispatchFn find_gemm_dispatch(c10::ScalarType a,
 using GemmProbeFn = std::pair<PlanDecision, PlanQuery> (*)(
     int64_t, int64_t, int64_t, int64_t, bool, bool, const DeviceFacts&);
 
-GemmProbeFn find_gemm_probe(c10::ScalarType a,
-                            c10::ScalarType b,
-                            const DeviceFacts& dev) {
+GemmProbeFn find_gemm_probe(c10::ScalarType a, c10::ScalarType b, const DeviceFacts& dev) {
     return with_gemm_variant(a, b, dev, [](auto pair, auto schedule) -> GemmProbeFn {
         using Pair = decltype(pair);
         return &plan_probe_for<typename Pair::A, typename Pair::B, decltype(schedule)>;

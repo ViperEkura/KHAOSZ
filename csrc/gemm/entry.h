@@ -3,7 +3,7 @@
  * quant_gemm's op entry ladder, in one place: classify the dtype pair, gate
  * the device, resolve the dequant scales, resolve layouts/leading dims,
  * validate the geometry, allocate, fill GemmParams, dispatch. Declared in
- * api/gemm.h; the pybind spelling is in bindings.cu; gemm.cu's
+ * api/torch/gemm.h; the pybind spelling is in bindings.cu; gemm.cu's
  * quant_gemm_impl is the thin wrapper that instantiates the ladder with the
  * family's dtype-pair lookup. The family's TU-local impl header (the
  * attention/entry.h shape): it lives beside its consumers, not in
@@ -33,10 +33,10 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 
-#include <api/gemm_common.h>
+#include <api/native/gemm.h>
 
-#include <api/fp8_checks.h>
-#include <api/gemm.h>
+#include <api/torch/fp8_checks.h>
+#include <api/torch/gemm.h>
 #include <utils/device.cuh>
 
 namespace astrai {

@@ -68,8 +68,7 @@ class CudaBackend(AttentionBackend):
     @classmethod
     def supports_axes(cls, ax: Axes) -> bool:
         mask = ax["_call"][2]
-        # The CUDA kernels take one precision per build — bf16 today, and the
-        # instantiated set lives in csrc/include/api/attention_dtypes.h.
+        # Native entries instantiate BF16 and FP16 through csrc/attention/dtype.h.
         return (
             ax["fwd"] in ("prefill", "decode")
             and ax["has_cache"]
@@ -83,7 +82,7 @@ class CudaBackend(AttentionBackend):
                 )
             )
             and ax["ndim"] == 3
-            and ax["dtype"] == torch.bfloat16
+            and ax["dtype"] in (torch.bfloat16, torch.float16)
             and ax["head_dim"] in cls.HEAD_DIMS
             and is_available("attention")
         )

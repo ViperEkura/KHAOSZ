@@ -1,13 +1,13 @@
 /*
  * SGLang-style paged GQA decode (flat KV pool + req_to_token + kv_indptr)
- * — the implementation of the entry declared in api/attention.h.
+ * — the implementation of the entry declared in api/torch/attention.h.
  * Device-side code is in launcher/attention.cuh +
  * kernel/attention/split_kv.cuh.
  */
 
 #include "entry.h"
-#include <api/attention.h>
-#include <api/attention_dtypes.h>
+#include <api/torch/attention.h>
+#include "dtype.h"
 #include <launcher/attention.cuh>
 
 namespace astrai {

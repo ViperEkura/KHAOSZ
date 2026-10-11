@@ -8,9 +8,9 @@
 
 #include <c10/util/Optional.h>
 #include <cstdint>
-#include <torch/extension.h>
+#include <torch/types.h>
 
-#include <api/quantize_common.h>
+#include <api/native/quantize.h>
 
 namespace astrai {
 namespace quant {
@@ -26,7 +26,7 @@ struct QuantizeOutputs {
  * the orientations produced; ``dtype_b`` (default: ``dtype_a``) recasts the
  * transposed side (hybrid fwd/bwd pair from one read). ``ring`` switches on
  * the delayed-scaling fold and requires ``hist_len`` (RingLayout,
- * api/quantize_common.h); ``pub_scale``/``pub_recip`` redirect where the
+ * api/native/quantize.h); ``pub_scale``/``pub_recip`` redirect where the
  * fold publishes (default: the ring's own slots). Semantics at the definition
  * (quantize/entry.cu).
  */

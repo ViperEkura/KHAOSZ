@@ -15,7 +15,7 @@
 
 #include "plan_table.h"
 
-#include <api/gemm.h>
+#include <api/native/gemm_plan.h>
 #include <policy/manifest.cuh>
 
 namespace astrai {

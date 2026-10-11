@@ -3,7 +3,7 @@
 #include <cfloat>
 #include <cuda_bf16.h>
 
-#include <api/attention_common.h>
+#include <api/native/attention.h>
 #include <arith/softmax.cuh>
 #include <kernel/attention/mma.cuh>
 #include <memory/layout_policies.cuh>
@@ -114,11 +114,8 @@ __global__ void attn_prefill_split_q_mma_kernel(const AttentionParams p) {
     // Causal and explicit-mask bounds are fixed for the warp's query rows.
     const int maxc0 = IsCausal ? min(seq_len, query_start + mra + 1) : seq_len;
     const int maxc1 = IsCausal ? min(seq_len, query_start + mrb + 1) : seq_len;
-    const MaskView mask_view{
-        p.mask,       p.mask_b_stride, p.mask_h_stride,  p.mask_l_stride,  p.mask_k_len,
-        p.mask_q_len, batch,           kv_head * G + h0, kv_head * G + h1, mra,
-        mrb};
-    const AttentionMask<HasMask, MaskCoversShape> mask{mask_view, maxc0, maxc1, va, vb};
+    const MaskRows mask_rows{batch, kv_head * G + h0, kv_head * G + h1, mra, mrb};
+    const AttentionMask<HasMask, MaskCoversShape> mask{p, mask_rows, maxc0, maxc1, va, vb};
 
     const int tiles = (seq_len + Traits::BC - 1) / Traits::BC;
 

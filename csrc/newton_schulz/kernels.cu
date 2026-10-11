@@ -6,6 +6,7 @@
 #include <launcher/gemm_cost.h>
 #include <launcher/kernel_resources.cuh>
 #include <scheduler.cuh>
+#include <utils/device.cuh>
 #include <torch/extension.h>
 
 #include <cmath>

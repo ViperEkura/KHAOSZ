@@ -39,6 +39,7 @@ template <typename Op, unsigned Packed, int K> __device__ void check_atom(int* f
 
 __global__ void check_atoms(int* failures) {
     check_atom<MmaOpImpl<__nv_bfloat16>, 0x3f803f80, 16>(failures);
+    check_atom<MmaOpImpl<__half>, 0x3c003c00, 16>(failures);
     check_atom<MmaOpImpl<int8_t>, 0x01010101, 32>(failures);
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 890
     check_atom<MmaOpImpl<__nv_fp8_e4m3>, 0x38383838, 32>(failures);

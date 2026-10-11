@@ -102,7 +102,7 @@ package and `loader.py` simply finds no `.so` files. When the env is unset,
 (CC 12.0 reports `120a`, so a dev build gets the full-rate fp8 cell):
 
 - **sm_80+** (Ampere and later): the minimum for the attention family — the
-  kernels are tensor-core only (`mma.sync.m16n8k16.bf16` for bf16 attention,
+  kernels are tensor-core only (`mma.sync.m16n8k16.bf16` / `.f16` for BF16 / FP16 attention,
   `mma.sync.m16n8k32` for FP8); there is no scalar fallback.
 - **sm_89+**: required for the FP8 family (`quantize`) — FP8 tensor-core
   instructions only exist on Ada/Hopper and newer. On older architectures,
@@ -336,7 +336,8 @@ csrc/
 ├── include/                          # THE include root: every header, angle-bracket root-qualified (<kernel/gemm/kernel.cuh>)
 │   ├── policy.cuh                    #   composed GemmPolicy consumed by the kernel
 │   ├── policy/                      #   compile-time GEMM tile rules
-│   │   ├── traits.cuh              #     promoted MMA traits and shared-memory budget
+│   │   ├── traits.cuh              #     compute promotion, MMA traits and shared-memory budget
+│   │   ├── geometry.h             #     pure C++ geometry and ring-budget formulas
 │   │   └── manifest.cuh            #     named tile recipes, CTA classes and staging ladders
 │   ├── scheduler.cuh                 #   cross-cutting: grouped/plain raster mapping
 │   ├── kernel/                       # device kernels and launch helpers, grouped by operator
@@ -375,23 +376,26 @@ csrc/
 │   │   ├── device.cuh                #     DeviceFacts geometry query (sms / smem opt-in / L2)
 │   │   ├── launch.cuh                #     launch-and-check macros, pure C
 │   │   └── shape.cuh / swizzle.cuh / tensor.cuh   # static geometry / staging swizzle / Tensor<Engine, Layout>
-│   ├── api/                          # THE CALLER CONTRACT — declarations, the supported-set lists, the capability gates and the cross-layer family PODs; the only directory whose headers may touch torch/ATen/c10/Python (files named BY FAMILY: <family>*.h = that family's surface)
-│   │   ├── dtype.h                   #     element type -> PyTorch ScalarType
-│   │   ├── gemm.h                    #     gemm C++ surface (declarations only, no py:: type)
-│   │   ├── attention.h               #     attention entry declarations (astrai::attention)
-│   │   ├── attention_dtypes.h        #     attention ASTRAI_ATTN_DTYPE_LIST + generated unsupported-dtype refusal
-│   │   ├── gated_deltanet.h          #     the family's two entry declarations (astrai::gdn)
-│   │   ├── quantize.h                #     quantize declaration surface: QuantizeOutputs + run_quantize (the implementation is quantize/entry.cu)
-│   │   ├── fp8_checks.h              #     fp8 capability gate (check_fp8_device; native FP8 GEMM)
-│   │   ├── gemm_common.h             #     layout tags, ElemTrait, gemm_mma_traits, GemmParams POD
-│   │   ├── attention_common.h        #     AttentionParams POD (cross-layer: stage headers include it)
-│   │   └── quantize_common.h         #     sm_at_least + kMinSmForFp8, QuantLayout, RingLayout, QuantParams POD
+│   ├── api/                          # caller contracts, split by framework dependency
+│   │   ├── native/                   # no Torch/ATen/c10/Python; ordinary C++ value contracts
+│   │   │   ├── gemm.h                # layout tags and unchanged GemmParams POD
+│   │   │   ├── gemm_plan.h           # query/decision, config, capabilities and probe results
+│   │   │   ├── device.h              # DeviceFacts value contract; querying stays in utils/device.cuh
+│   │   │   ├── attention.h           # AttentionParams, tensor layouts and workspace constants
+│   │   │   └── quantize.h            # capability constants, QuantLayout, RingLayout and QuantParams
+│   │   └── torch/                    # Tensor/ScalarType interfaces and framework adapters
+│   │       ├── gemm.h                # quant_gemm_impl and ScalarType-based plan_probe
+│   │       ├── attention.h           # attention Tensor entry declarations
+│   │       ├── gated_deltanet.h       # GDN Tensor entry declarations
+│   │       ├── quantize.h            # QuantizeOutputs and run_quantize
+│   │       ├── dtype.h               # ScalarType mapping, type tags and generated scalar/pair visitors
+│   │       └── fp8_checks.h          # ATen-cached device capability validation
 │   └── launcher/                     # GEMM CUDA launch and dispatch templates
 │       ├── gemm_launch.cuh           #     typed CUDA launch and TMA descriptor setup
 │       ├── gemm_tiles.cuh            #     manifest selection and staging resolution
 │       ├── gemm_dispatch.cuh         #     layout rewrite, typed entry and planner probe
-│       └── plan_types.h              #     planner query and launch decision
-├── attention/                        # family translation units + one bindings.cu (→ module attention; kernels/launchers/dispatch in the shared kernel/ headers)
+│       └── plan_types.h              #     internal config owner/helpers; imports api/native/gemm_plan.h
+├── attention/                        # private dtype.h instantiates BF16/FP16; family translation units + one bindings.cu (→ module attention; kernels/launchers/dispatch in the shared kernel/ headers)
 │   ├── entry.h                       #   attention torch→POD marshalling (pack_*_params, split-partial allocation) — TU-local impl header, quoted-include (fp8_state.h shape)
 │   ├── decode.cu                     #   → module attn_decode
 │   ├── prefill.cu                    #   → module attn_prefill
@@ -447,27 +451,48 @@ GEMM benchmark entry points:
 
 Compiled `.so` modules are placed directly in `astrai/extension/`.
 
-Three conventions the tree encodes. (1) **Stages, not families**: headers
-live under `csrc/include/<stage>/` by what they do (kernel / memory / mma /
-epilogue / arith / datatype / utils); `kernel/` groups its headers by
-operator, while the `csrc/<operator>/` directories hold translation units, and `api/` is the caller contract — declarations, the
-supported-set lists and the capability gates; it is the only directory
-whose headers may touch torch, which is what keeps the standalone
-`csrc/tests/*.cu` harnesses torch-free. The gemm→quantize include edges
-that forced a family-qualified tree before (`mainloop → dequant`,
-`fp8_linear → quantize launch`) are plain kernel→datatype and TU→api
-edges now. (2) The standalone harnesses stay out of the CMake registry on
-purpose: each carries its own `nvcc` line so a correctness test runs
-without torch; the `bench/` python tools are the reproduce path for the
-numbers in the operator docs and workspace `notes/`. (3) **One include
-root, `csrc/include`, every project include angle-bracket and
-root-qualified** (`<kernel/gemm/kernel.cuh>`, `<policy.cuh>`); quoted includes are
-the toolchain's plus the harness-local `test_utils.cuh`. A quoted project
-path would resolve through the includer's own directory first and silently
-change meaning on a move — the three same-named `common.h` are now
-`api/{gemm,attention,quantize}_common.h` precisely so a spelling names
-one file. (The layout test that once pinned this mechanically was retired
-when the stage tree landed; the discipline lives here and in review.)
+Three conventions the tree encodes. (1) **Stages, not families**: device
+headers live under `csrc/include/<stage>/` by what they do (kernel / memory /
+mma / epilogue / arith / datatype / utils); `kernel/` groups by operator and
+`csrc/<operator>/` holds translation units and private implementation headers.
+The caller contracts remain together in `api/`, with a framework boundary:
+`api/torch/` may depend on `api/native/`, never the reverse. Native contracts,
+planners and shared device headers must not transitively include Torch, ATen,
+c10, pybind11 or Python. Family-private host headers may use Torch. Tensor
+validation, allocation and packing stay in entries; Python marshalling stays
+in binding implementations. `api/native/gemm_plan.h` contains ordinary C++
+query/config/result types; `launcher/plan_types.h` retains the existing single
+runtime config owner and helpers. Compute promotion lives in
+`policy/traits.cuh`; the manifest and shared geometry remain ordinary C++.
+(2) Standalone harnesses stay outside the module registry and carry their own
+`nvcc` commands. GEMM harnesses link `planning.cpp`, `plan_table.cpp` and
+`plan_table_builtin.cpp`, without Torch headers or libraries. (3) One project
+include root, `csrc/include`, and root-qualified angle includes for shared
+headers, such as `<api/native/gemm.h>` and `<api/torch/gemm.h>`. Private
+same-family implementation headers and harness-local helpers use quoted
+includes.
+
+Dtype dispatch uses the shared `ASTRAI_DEFINE_DTYPE_VISITOR` and
+`ASTRAI_DEFINE_DTYPE_PAIR_VISITOR` generators in `api/torch/dtype.h`. Each
+family owns its X-macro instantiation list: attention's private `dtype.h`
+shares BF16/FP16 across four entries, while GEMM's list stays in `gemm.cu`.
+Dispatch cases and unsupported-dtype diagnostics expand the same list; there
+is no separate native dtype-contract header or runtime registration table.
+
+Check the dependency boundary and compile the host planners independently:
+
+```bash
+.venv/bin/python -m pytest tests/unit/extension/test_csrc_api.py -q
+g++ -std=c++17 -I csrc/include -fsyntax-only \
+    csrc/gemm/planning.cpp csrc/gemm/plan_table.cpp \
+    csrc/gemm/plan_table_builtin.cpp
+```
+
+The dependency test walks project includes transitively, including private
+planner headers. The existing module names, Tensor interfaces, parameter layouts, FP8 state
+ownership and compiled architecture selection are unchanged. Attention now
+instantiates BF16 and FP16; FP32 continues to use the existing fallback or fail
+at the direct native entry. The BF16 computation is unchanged.
 
 A fourth convention, the mirror of the header fan-in rule: **implementation
 code lives in the TU territory of its consumers**. An implementation header
@@ -475,9 +500,9 @@ whose every includer sits in one family directory lives beside them
 (`attention/entry.h`, `gemm/fp8_state.h` — quoted same-directory include);
 an implementation shared across modules becomes a .cu listed in each
 module's CMake sources (`quantize/entry.cu`, compiled into both the
-quantize and gemm modules), with only its declaration in `api/`.
-`launcher/` owns GEMM CUDA dispatch. `plan_types.h` carries the shared query
-and launch decision. `gemm/planning.cpp` ranks recipes, while `gemm/plan_table.cpp`
+quantize and gemm modules), with its Tensor declaration in `api/torch/`.
+`launcher/` owns GEMM CUDA dispatch. `api/native/gemm_plan.h` carries the shared query
+and launch decision; `plan_types.h` owns internal configuration helpers. `gemm/planning.cpp` ranks recipes, while `gemm/plan_table.cpp`
 owns mutable row state and parsing; generated rows live in `gemm/plan_table_builtin.cpp`.
 The dtype-pair
 instantiation units include neither planner nor table headers. A family

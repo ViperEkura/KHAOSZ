@@ -4,7 +4,7 @@
 #include <type_traits>
 #include <utility>
 
-#include <policy/traits.cuh>
+#include <policy/geometry.h>
 
 namespace astrai {
 namespace gemm {

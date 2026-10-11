@@ -113,9 +113,14 @@ template <typename P> inline void set_default_strides(P& p) {
     p.kv_h_stride = p.kv_len * p.head_dim;
     p.kv_l_stride = p.head_dim;
     p.kv_d_stride = 1;
+    p.mask_b_size = p.batch;
+    p.mask_h_size = 1;
+    p.mask_q_size = 1;
+    p.mask_k_size = p.kv_len;
     p.mask_b_stride = p.kv_len;
     p.mask_h_stride = 0;
-    p.mask_l_stride = 0;
+    p.mask_q_stride = 0;
+    p.mask_k_stride = 1;
 }
 
 /*

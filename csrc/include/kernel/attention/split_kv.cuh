@@ -3,7 +3,7 @@
 #include <cfloat>
 #include <cuda_bf16.h>
 
-#include <api/attention_common.h>
+#include <api/native/attention.h>
 #include <arith/softmax.cuh>
 #include <kernel/attention/mma.cuh>
 #include <memory/layout_policies.cuh>
@@ -93,18 +93,8 @@ __global__ void attn_decode_split_kv_mma_kernel(const AttentionParams p) {
     const float& l1 = softmax.rows[1].l;
 
     // Visibility is fixed for these query rows across all K/V tiles.
-    const MaskView mask_view{p.mask,
-                             p.mask_b_stride,
-                             p.mask_h_stride,
-                             p.mask_l_stride,
-                             p.mask_k_len,
-                             p.mask_q_len,
-                             batch,
-                             q_head0 + gid,
-                             q_head0 + gid + 8,
-                             0,
-                             0};
-    const AttentionMask<HasMask> mask{mask_view, seq_len, seq_len, va, vb};
+    const MaskRows mask_rows{batch, q_head0 + gid, q_head0 + gid + 8, 0, 0};
+    const AttentionMask<HasMask> mask{p, mask_rows, seq_len, seq_len, va, vb};
 
     const int tiles_total = (seq_len + Traits::BC - 1) / Traits::BC;
     const int tiles_per_split = (tiles_total + p.num_splits - 1) / p.num_splits;

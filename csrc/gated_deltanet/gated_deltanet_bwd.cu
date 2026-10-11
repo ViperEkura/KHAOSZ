@@ -16,7 +16,7 @@
 #include <cuda_bf16.h>
 #include <torch/extension.h>
 
-#include <api/gated_deltanet.h>
+#include <api/torch/gated_deltanet.h>
 #include <utils/launch.cuh>
 
 namespace {

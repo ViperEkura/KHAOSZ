@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include <torch/extension.h>
+#include <torch/types.h>
 
 #include <vector>
 

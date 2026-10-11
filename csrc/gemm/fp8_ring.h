@@ -5,8 +5,8 @@
 #include <cmath>
 #include <cstdint>
 
-#include <api/dtype.h>
-#include <api/quantize_common.h>
+#include <api/torch/dtype.h>
+#include <api/native/quantize.h>
 
 namespace astrai {
 namespace fp8 {

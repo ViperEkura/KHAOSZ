@@ -2,7 +2,7 @@
 /* GEMM device entry kernels: cp.async and TMA staging. */
 #include <cuda_runtime.h>
 
-#include <api/gemm_common.h>
+#include <api/native/gemm.h>
 #include <epilogue/writer.cuh>
 #include <kernel/gemm/mainloop.cuh>
 #include <memory/pipeline.cuh>

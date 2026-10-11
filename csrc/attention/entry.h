@@ -6,7 +6,7 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <torch/extension.h>
 
-#include <api/attention_common.h>
+#include <api/native/attention.h>
 #include <launcher/attention.cuh>
 
 namespace astrai {
@@ -126,28 +126,16 @@ inline void extract_q_dims_and_strides(torch::Tensor& q, int64_t layout, Attenti
  * Head/q dimensions with size 1 broadcast (stride set to 0).
  */
 
-// Stride of a mask dim that broadcasts when its extent is 1.
-inline int bc_stride(const torch::Tensor& m, int dim) {
-    return (m.size(dim) == 1) ? 0 : (int)m.stride(dim);
-}
-
-inline void set_mask_null(AttentionParams& p) {
-    p.mask = nullptr;
-    p.mask_b_stride = 0;
-    p.mask_h_stride = 0;
-    p.mask_l_stride = 0;
-    p.mask_k_len = 0;
-    p.mask_q_len = 0;
-}
-
 inline void pack_mask(const c10::optional<torch::Tensor>& mask,
                       AttentionParams& p,
                       const torch::Device& device,
                       bool paged = false) {
-    if (!mask.has_value() || !mask->defined()) {
-        set_mask_null(p);
+    p.mask = nullptr;
+    p.mask_b_size = p.mask_h_size = p.mask_q_size = 1;
+    p.mask_k_size = 0;
+    p.mask_b_stride = p.mask_h_stride = p.mask_q_stride = p.mask_k_stride = 0;
+    if (!mask.has_value() || !mask->defined())
         return;
-    }
     const auto& m = mask.value();
     TORCH_CHECK(m.device() == device && m.dtype() == torch::kBool,
                 "mask must be bool on Q's device");
@@ -157,23 +145,24 @@ inline void pack_mask(const c10::optional<torch::Tensor>& mask,
     const int limit = paged ? p.max_context_len : p.kv_len;
     TORCH_CHECK(paged ? (m.size(-1) > 0 && m.size(-1) <= limit) : m.size(-1) == limit,
                 "mask kv_len mismatch");
+
     p.mask = m.data_ptr<bool>();
-    p.mask_b_stride = bc_stride(m, 0);
-    p.mask_h_stride = 0;
-    p.mask_l_stride = 0;
-    p.mask_k_len = (int)m.size(-1);
-    p.mask_q_len = 1;
+    p.mask_b_size = (int)m.size(0);
+    p.mask_k_size = (int)m.size(-1);
+    p.mask_b_stride = p.mask_b_size == 1 ? 0 : (int)m.stride(0);
+    p.mask_k_stride = (int)m.stride(-1);
     if (m.dim() == 4) {
         TORCH_CHECK(m.size(1) == 1 || m.size(1) == p.q_head, "mask head mismatch");
-        p.mask_h_stride = bc_stride(m, 1);
+        p.mask_h_size = (int)m.size(1);
+        p.mask_h_stride = p.mask_h_size == 1 ? 0 : (int)m.stride(1);
     }
     if (m.dim() >= 3) {
         const int q_dim = (int)m.dim() - 2;
         TORCH_CHECK(m.size(q_dim) == 1 || (paged ? (m.size(q_dim) > 0 && m.size(q_dim) <= p.q_len)
                                                  : m.size(q_dim) == p.q_len),
                     "mask q_len mismatch");
-        p.mask_l_stride = bc_stride(m, q_dim);
-        p.mask_q_len = (int)m.size(q_dim);
+        p.mask_q_size = (int)m.size(q_dim);
+        p.mask_q_stride = p.mask_q_size == 1 ? 0 : (int)m.stride(q_dim);
     }
 }
 

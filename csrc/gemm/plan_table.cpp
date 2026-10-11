@@ -13,8 +13,8 @@
 #include <utility>
 #include <vector>
 
-#include <api/gemm.h>
-#include <policy.cuh>
+#include <api/native/gemm_plan.h>
+#include <policy/manifest.cuh>
 
 namespace astrai {
 namespace gemm {

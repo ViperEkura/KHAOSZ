@@ -1,7 +1,7 @@
 /*
  * CUDA bindings for the stateless FP8 quantize primitives. The launcher,
  * the ring binding and the composed pass live in ``entry.cu`` (beside this
- * file, declared in api/quantize.h) so the fp8-linear composition
+ * file, declared in api/torch/quantize.h) so the fp8-linear composition
  * (``gemm/fp8_linear.cu``, compiled into the gemm module where the GEMM
  * dispatch state lives) shares them instead of re-deriving them; this TU is
  * only the pybind surface.
@@ -11,8 +11,8 @@
 #include <cstdint>
 #include <torch/extension.h>
 
-#include <api/dtype.h>
-#include <api/quantize.h>
+#include <api/torch/dtype.h>
+#include <api/torch/quantize.h>
 
 using namespace astrai::quant;
 
@@ -111,7 +111,7 @@ py::object quantize_dual(torch::Tensor x,
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     /*
      * The fold-scratch extent, for policy/tests that size the ring buffer
-     * (the full layout is RingLayout, api/quantize_common.h).
+     * (the full layout is RingLayout, api/native/quantize.h).
      */
     m.attr("K_FOLD_SLOTS") = kFoldSlots;
     m.def("quantize", &quantize, py::arg("x"), py::arg("scale"), py::arg("dtype"),

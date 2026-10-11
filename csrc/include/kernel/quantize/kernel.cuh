@@ -6,7 +6,7 @@
 #include <cuda_runtime.h>
 #include <type_traits>
 
-#include <api/quantize_common.h>
+#include <api/native/quantize.h>
 #include <arith/reduce.cuh>
 #include <datatype/element.cuh>
 #include <utils/define.cuh>

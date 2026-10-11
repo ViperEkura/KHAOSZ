@@ -317,3 +317,14 @@ def test_cuda_paged_mask_shape_rejected_before_cache_write():
         CudaBackend().forward(q, kv, kv, cache, 0, full_mask, fwd="prefill")
     assert torch.count_nonzero(cache.k_buffer - 1) == 0
     assert torch.count_nonzero(cache.v_buffer - 1) == 0
+
+
+@pytest.mark.parametrize(
+    "dtype,supported",
+    [(torch.bfloat16, True), (torch.float16, True), (torch.float32, False)],
+)
+def test_cuda_attention_dtype_capability(monkeypatch, dtype, supported):
+    cuda_module = importlib.import_module("astrai.extension.backend.attention.cuda")
+    monkeypatch.setattr(cuda_module, "is_available", lambda name: True)
+    q = torch.empty(2, 4, 64, dtype=dtype)
+    assert CudaBackend().supports_call(q, object(), None, False, "decode") is supported

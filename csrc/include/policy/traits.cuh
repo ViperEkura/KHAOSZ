@@ -3,12 +3,30 @@
 #include <cuda_fp8.h>
 #include <type_traits>
 
-#include <api/gemm_common.h>
+#include <api/native/gemm.h>
+#include <datatype/element.cuh>
+#include <policy/geometry.h>
 #include <mma/mma.cuh>
 #include <utils/tensor.cuh>
 
 namespace astrai {
 namespace gemm {
+
+/*
+ * MMA compute type per operand pair — the tensor-core input type both
+ * operands are brought to before mma.sync. Promotes to bf16 m16n8k16 when
+ * int8 rides exactly one side (W8A16, A8W16, the only supported mixed
+ * pair); symmetric pairs keep their native mma (bf16 pass-through, fp8 mma,
+ * s8 mma with int32 accumulators).
+ */
+template <typename ElemA, typename ElemB> struct gemm_mma_traits {
+    static constexpr bool kI8A = std::is_same_v<ElemA, int8_t>;
+    static constexpr bool kI8B = std::is_same_v<ElemB, int8_t>;
+    static constexpr bool kPromote = (kI8A != kI8B);
+    using MmaT = std::conditional_t<kPromote, __nv_bfloat16, ElemA>;
+    static constexpr bool kDequantA = !std::is_same_v<ElemA, MmaT>;
+    static constexpr bool kDequantB = !std::is_same_v<ElemB, MmaT>;
+};
 
 struct MmaSync {
     static constexpr bool kTma = false, kMx = false;
@@ -93,30 +111,6 @@ struct GemmTraits {
     static constexpr int kNt = kWarpN / 8;
     using AccTensor = Tensor<ArrayEngine<typename MmaOp::CFrag, kMt * kNt>, CellLayout<kNt>>;
 };
-
-/*
- * Ring-budget formula, one source for GemmSmem, the launcher's epilogue
- * reclaim check and the host planner's recipe feasibility gate:
- * every operand ring holds kStages+1 buffers of k * (bm*ba + bn*bb) bytes.
- */
-constexpr int ring_smem_bytes(int bm, int bn, int k, int k_stages, int ba, int bb) {
-    return (k_stages + 1) * k * (bm * ba + bn * bb);
-}
-
-/*
- * Shared compiler/planner CTA hint and register budget. The 48 KiB watermark
- * is a preference, not a device limit; occupancy still uses each device's
- * smem_per_sm so larger-memory GPUs can pack additional CTAs.
- */
-constexpr int min_ctas_for_ring(int bytes) { return bytes <= 48 * 1024 ? 2 : 1; }
-
-constexpr int tma_smem_bytes(int ring, int k_stages) {
-    return ring + 1024 + 2 * (k_stages + 1) * 8;
-}
-
-/* Crosswise staging uses ColMajor A or RowMajor B; the other layouts stage as-is. */
-template <typename Layout> constexpr bool direct_a() { return std::is_same_v<Layout, ColMajor>; }
-template <typename Layout> constexpr bool direct_b() { return std::is_same_v<Layout, RowMajor>; }
 
 /* Each kStages+1 ring reuses an already-consumed slot, avoiding a post-compute barrier. */
 template <typename Traits, typename LayoutA, typename LayoutB> struct GemmSmem {

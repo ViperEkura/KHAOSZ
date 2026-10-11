@@ -1,21 +1,66 @@
 #pragma once
-/*
- * The gemm module's host surface: in-module composed callers (fp8 linear) and
- * the pybind layer (bindings.cu owns every py:: spelling). Declarations only,
- * template-free — including it must not instantiate the dtype-pair kernels,
- * which live in their own TUs; no Python types (py:: is callable from nowhere
- * but bindings.cu).
- */
-
-#include <c10/util/Optional.h>
-#include <torch/extension.h>
-
+/* Native GEMM planning, configuration and introspection contracts. */
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
+#include <api/native/device.h>
+
 namespace astrai {
 namespace gemm {
+
+// Dtype-class ids the plan-table rows key on.
+enum class GemmPerfClass : int { kW16A16 = 0, kW8A16, kW8A8, kF8A8 };
+
+struct GemmRecipe {
+    int cta;      // TileClass ordinal — the row-file serialization key
+    int k_stages; // prefetched K tiles; ring has one extra slot
+    int k_tile;   // K elements held in one pipeline stage
+    int bm, bn;   // CTA geometry
+    int wm, wn;   // warp tiling (the recipe name's W<x>x<y>)
+    int threads;  // the manifest entry's warp tiling (first match wins)
+    int smem;     // ring bytes at this staging pair's operand widths
+};
+
+struct KernelResources {
+    GemmRecipe effective{}; // after warp widening and output-reclaim substitution
+    int resident = 0;       // CUDA occupancy limit, not observed execution occupancy
+    int registers = 0;
+    int local_bytes = 0;
+};
+
+struct PlanQuery {
+    int64_t m = 0;
+    int64_t n = 0;
+    int64_t k = 0;
+    int64_t batch = 1;
+    int perf_class = -1; // GemmPerfClass id; -1 matches any
+    int crosswise = 0;   // direct-load operand count, see gemm_dispatch
+    int ba = 2;          // operand element bytes
+    int bb = 2;
+    int out_elem_bytes = 2; // bf16 output by default
+    int mma_k = 16;         // promoted MMA instruction K extent
+    bool tma = true;        // effective staging selected for this launch
+    DeviceFacts dev{};
+    bool rank3a = false, rank3b = false;
+    bool contiguous = false; // congruous rows and sector-aligned base pointers
+    KernelResources (*resources)(const GemmRecipe&, const PlanQuery&) = nullptr;
+};
+
+struct PlanDecision {
+    GemmRecipe recipe;
+    int raster;
+    const char* source;
+};
+
+struct LaunchPlan {
+    PlanDecision decision;
+    bool tma;
+};
+
+int plan_raster(const PlanQuery& q, int bm, int bn);
+PlanDecision plan_dispatch(const PlanQuery& q);
 
 struct GemmCapabilities {
     int cc;
@@ -23,19 +68,6 @@ struct GemmCapabilities {
     const char* targets;
 };
 GemmCapabilities capabilities();
-
-/*
- * The single quantized-GEMM entry (one kernel per cell); semantics, validation
- * and dispatch at the definition in gemm.cu. pybind's quant_gemm is a thin
- * None-tolerant wrapper.
- */
-torch::Tensor quant_gemm_impl(torch::Tensor a,
-                              torch::Tensor b,
-                              c10::optional<torch::Tensor> a_scale,
-                              c10::optional<torch::Tensor> b_scale,
-                              bool trans_a,
-                              bool trans_b,
-                              c10::optional<torch::Tensor> bias);
 
 /*
  * Planner introspection without launching or timing kernels. `source` names the deciding row tier, the
@@ -55,15 +87,6 @@ struct PlanProbe {
     // threads), resident CTAs, registers/thread, local bytes/thread.
     std::vector<std::vector<int>> resources;
 };
-
-PlanProbe plan_probe(int64_t m,
-                     int64_t n,
-                     int64_t k,
-                     at::ScalarType dt_a,
-                     at::ScalarType dt_b,
-                     bool trans_a,
-                     bool trans_b,
-                     int64_t batch);
 
 /*
  * Runtime configuration (the backing of astrai.extension.policy.gemm.plan). Every field is
@@ -86,22 +109,22 @@ struct GemmConfigPatch {
      * m_min m_max n_min n_max perf_class crosswise cta k_stages raster [k_tile]);
      * the addressed tier is replaced wholesale, empty string clears it.
      */
-    c10::optional<std::string> rows;
-    c10::optional<RowTier> tier; // which tier `rows` addresses
+    std::optional<std::string> rows;
+    std::optional<RowTier> tier; // which tier `rows` addresses
     // All row tiers off: the planner chain falls through to model/degraded.
-    c10::optional<bool> table_off;
+    std::optional<bool> table_off;
     /*
      * 0/1/2/3 = table / hybrid / model / heuristic; -1 = unset (env seed decides, hybrid
      * unseeded).
      */
-    c10::optional<int> planner_mode;
-    c10::optional<bool> log;
+    std::optional<int> planner_mode;
+    std::optional<bool> log;
     /*
      * Positive enables: false forces cp.async staging / knocks the sm_120a
      * block-scale cell out (the A/B knobs).
      */
-    c10::optional<bool> staging_tma;
-    c10::optional<bool> staging_mx;
+    std::optional<bool> staging_tma;
+    std::optional<bool> staging_mx;
 };
 
 /*

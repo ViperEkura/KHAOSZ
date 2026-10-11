@@ -4,7 +4,7 @@
  * quantize chain — the quantize module itself and the fp8-linear composition
  * in the gemm module (which shares it instead of re-deriving it, so the
  * implementation is a plain .cu listed in both modules' CMake source lists).
- * The declaration surface is api/quantize.h; this TU is the body.
+ * The declaration surface is api/torch/quantize.h; this TU is the body.
  *
  * The instantiation list lives HERE, not in the header: every expansion site
  * (the refusal message, the dispatch switch, the supported-input check) is
@@ -21,10 +21,10 @@
 #include <string>
 #include <torch/extension.h>
 
-#include <api/dtype.h>
-#include <api/fp8_checks.h>
-#include <api/quantize.h>
-#include <api/quantize_common.h>
+#include <api/torch/dtype.h>
+#include <api/torch/fp8_checks.h>
+#include <api/torch/quantize.h>
+#include <api/native/quantize.h>
 #include <datatype/element.cuh>
 #include <kernel/quantize/kernel.cuh>
 

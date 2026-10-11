@@ -2,7 +2,7 @@
  * Quantized GEMM and planner pybind surface: None-tolerant argument
  * marshalling, introspection dicts, and module registration. FP8 training
  * bindings live in fp8_runtime.cu and are registered here through bind_fp8.
- * The typed C++ face is api/gemm.h; gemm.cu holds its implementations.
+ * The typed C++ face is api/torch/gemm.h; gemm.cu holds its implementations.
  *
  * Dictionaries are the wire here, in both directions: the state report and the
  * config patch. Each key set is spelled exactly once — the report's keys below,
@@ -18,7 +18,7 @@
 #include <vector>
 
 #include "fp8_linear.h"
-#include <api/gemm.h>
+#include <api/torch/gemm.h>
 #include <utils/device.cuh>
 
 namespace astrai {
@@ -41,7 +41,7 @@ torch::Tensor cast_tensor_arg(const py::object& o, const char* name) {
 /*
  * pybind surface: None-tolerant operand scales and bias (``cast_tensor_arg``
  * keeps the "must be a torch.Tensor or None" message), then the shared
- * implementation the composed fp8 linear also calls (see api/gemm.h).
+ * implementation the composed fp8 linear also calls (see api/torch/gemm.h).
  */
 torch::Tensor quant_gemm(torch::Tensor a,
                          torch::Tensor b,
@@ -112,7 +112,7 @@ py::dict facts_dict() {
  * that is the whole contract. The dict is the point: with a positional parameter
  * list this file had to spell the same seven names three times (the converter's
  * parameters, its conversion bodies, and the registration's py::arg list) on top
- * of api/gemm.h's struct and astrai.extension.policy.gemm.plan's ``configure`` signature.
+ * of api/torch/gemm.h's struct and astrai.extension.policy.gemm.plan's ``configure`` signature.
  * The table below is the C++ half of that vocabulary; those other two are the
  * typed and the documented ends.
  */
