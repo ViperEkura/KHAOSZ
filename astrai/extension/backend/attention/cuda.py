@@ -68,7 +68,7 @@ class CudaBackend(AttentionBackend):
     @classmethod
     def supports_axes(cls, ax: Axes) -> bool:
         mask = ax["_call"][2]
-        # Native entries instantiate BF16 and FP16 through csrc/attention/dtype.h.
+        # Native entries instantiate BF16 and FP16 through csrc/attention/entry.h.
         return (
             ax["fwd"] in ("prefill", "decode")
             and ax["has_cache"]
