@@ -9,7 +9,7 @@ import torch.multiprocessing as mp
 from torch import nn
 from torch.distributed.fsdp import fully_shard
 
-from astrai.optim.muon_adamw import MuonAdamW
+from astrai.optimization.optimizer.muon import MuonAdamW
 from astrai.parallel.setup import find_free_port
 from tests.support.capabilities import skip_no_cuda
 
@@ -36,7 +36,9 @@ def _compare_reshard(rank, port, use_ns_kernels):
         init_method=f"tcp://127.0.0.1:{port}",
         device_id=torch.device("cuda", rank),
     )
-    module = importlib.import_module("astrai.optim.muon_adamw")
+    module = importlib.import_module(
+        "astrai.optimization.optimizer.muon.strategies.dtensor"
+    )
     distribute = module.distribute_tensor
     try:
         torch.manual_seed(123)

@@ -3,7 +3,11 @@ import math
 import pytest
 import torch
 
-from astrai.trainer.schedule import CosineScheduler, SchedulerFactory, SGDRScheduler
+from astrai.optimization.scheduler import (
+    CosineScheduler,
+    SchedulerFactory,
+    SGDRScheduler,
+)
 
 
 def _stepped_lrs(scheduler, optimizer, n_steps):

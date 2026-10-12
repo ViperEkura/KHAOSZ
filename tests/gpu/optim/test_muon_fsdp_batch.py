@@ -7,7 +7,7 @@ import torch.multiprocessing as mp
 from torch import nn
 from torch.distributed.fsdp import fully_shard
 
-from astrai.optim.muon_adamw import MuonAdamW
+from astrai.optimization.optimizer.muon import MuonAdamW
 from astrai.parallel.setup import find_free_port
 from tests.support.capabilities import skip_no_cuda
 

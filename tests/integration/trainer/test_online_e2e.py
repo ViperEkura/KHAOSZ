@@ -9,11 +9,11 @@ import torch
 from torch.utils.data import Dataset
 
 from astrai.config import TrainConfig
+from astrai.optimization.scheduler import SchedulerFactory
 from astrai.serialization import Checkpoint
 from astrai.trainer import train_context
 from astrai.trainer.rollout import BaseRewardModel
 from astrai.trainer.rollout.setup import configure_rollout
-from astrai.trainer.schedule import SchedulerFactory
 from astrai.trainer.trainer import Trainer
 from tests.support.tokenizers import CHAT_TEMPLATE
 from tests.support.trainer import (

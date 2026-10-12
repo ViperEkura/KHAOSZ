@@ -2,7 +2,7 @@
 
 ## Contents
 
-- [Class Diagram](#class-diagram) — Full Mermaid class diagram across 10+ namespaces
+- [Class Diagram](#class-diagram) — Mermaid class diagram grouped by package and submodule
 - [Module Overview](#module-overview) — Component inventory per module
 - [Design Patterns](#design-patterns) — 16 documented patterns with classes
 - [Core Relationships](#core-relationships) — 11 key inter-component relationships
@@ -294,7 +294,6 @@ classDiagram
             +register(name) decorator
             +get_component_class(name) Type
         }
-
         class AutoModel {
             <<nn.Module>>
             +BaseModelConfig config
@@ -302,7 +301,6 @@ classDiagram
             +save_pretrained(save_directory)
             +to(*args, **kwargs) Self
         }
-
         class TransformerModel {
             +AutoRegressiveLMConfig config
             +RotaryEmbedding rotary_embedding
@@ -311,7 +309,6 @@ classDiagram
             +RMSNorm norm
             +_trunk_hidden(input_ids, input_mask, kv_cache, position_ids) Tuple[Tensor, Optional]
         }
-
         class AutoRegressiveLM {
             +AutoRegressiveLMConfig config
             +Linear lm_head
@@ -319,7 +316,6 @@ classDiagram
             +load_state_dict(state_dict, strict, assign)
             +state_dict()
         }
-
         class EmbeddingEncoder {
             +EncoderConfig config
             +RotaryEmbedding rotary_embedding
@@ -331,129 +327,132 @@ classDiagram
             +forward(input_ids, input_mask, position_ids) Tensor
             +load_state_dict(state_dict)
         }
-
-        class DecoderBlock {
-            +nn.Module attention  # GQA or MLA via AttnFactory
-            +RMSNorm input_norm
-            +nn.Module mlp        # MLP or DeepSeekMoE via FFNFactory
-            +RMSNorm post_attention_norm
-            +forward(x, rotary_emb, attention_mask, kv_cache, is_causal) DecoderOutput
+        namespace kv_cache {
+            class KVStorage
+            class ReqToTokenPool
+            class BaseKVCache {
+                <<dataclass>>
+            }
+            class PrefillKVCache {
+                <<dataclass>>
+            }
+            class DecodeKVCache {
+                <<dataclass>>
+            }
+            class KVCache {
+                <<type alias>>
+            }
         }
-
-        class DecoderOutput {
-            <<TypedDict>>
-            +Tensor hidden_states
-            +Optional[Tensor] aux_loss
-            +Optional[RouterStats] router_stats
-        }
-
-        class GQA {
-            +int dim
-            +int n_heads
-            +int n_kv_heads
-            +int head_dim
-            +int n_rep
-            +int layer_id
-            +bool use_qk_norm
-            +bool use_gated_attention
-            +Linear q_proj, k_proj, v_proj, o_proj
-            +Linear gate  # only if use_gated_attention
-            +RMSNorm q_norm, k_norm  # only if use_qk_norm
-            +forward(x, rotary_emb, attn_mask, kv_cache, is_causal) Tensor
-        }
-
-        class MLA {
-            +int dim
-            +int n_heads
-            +int n_kv_heads
-            +int head_dim
-            +int kv_lora_rank
-            +int qk_nope_head_dim
-            +int qk_rope_head_dim
-            +int n_rep
-            +int layer_id
-            +bool use_qk_norm
-            +bool use_gated_attention
-            +Linear q_proj, kv_a_proj, kv_b_proj
-            +Linear o_proj
-            +Linear gate  # only if use_gated_attention
-            +RMSNorm kv_norm
-            +RMSNorm q_norm, k_norm  # only if use_qk_norm
-            +forward(x, rotary_emb, attn_mask, kv_cache, is_causal) Tensor
-        }
-
-        class MLP {
-            +Linear up, gate, down
-            +forward(x) FFNOutput
-        }
-
-        class FFNOutput {
-            <<TypedDict>>
-            +Tensor hidden_states
-            +Optional[Tensor] aux_loss
-            +Optional[RouterStats] router_stats
-        }
-
-        class DeepSeekMoE {
-            +int dim
-            +int n_routed_experts
-            +int n_shared_experts
-            +int n_activated_experts
-            +str topk_method
-            +Linear router
-            +ModuleList shared_experts
-            +ModuleList routed_experts
-            +forward(x) FFNOutput
-        }
-
-        class AttnFactory {
-            +create(attn_type, **kwargs) nn.Module
-        }
-
-        class FFNFactory {
-            +create(ffn_type, dim, dim_ffn, **kwargs) nn.Module
-        }
-
-        class RMSNorm {
-            +Parameter weight
-            +float norm_eps
-            +tuple normalized_shape
-            +forward(x) Tensor
-        }
-
-        class Linear {
-            +Parameter weight
-            +Optional[Parameter] bias  # only if bias=True
-            +forward(x) Tensor
-        }
-
-        class RotaryEmbedding {
-            +int dim
-            +int max_len
-            +float base
-            +Optional[Dict] rope_scaling
-            +Tensor freqs_cis
-            +forward(x, position_ids=None) Tensor
-        }
-
-        class Embedding {
-            +Parameter weight
-            +float neftune_noise_alpha
-            +forward(x) Tensor
-            +set_neftune_alpha(alpha)
-        }
-
-        class LoRAConfig {
-            +int r
-            +int alpha
-            +tuple target_modules
-        }
-
-        class LoRALinear {
-            +Linear weight
-            +Parameter lora_A, lora_B
-            +forward(x) Tensor
-            +merge()
+        namespace components {
+            class DecoderBlock {
+                +nn.Module attention  # GQA or MLA via AttnFactory
+                +RMSNorm input_norm
+                +nn.Module mlp        # MLP or DeepSeekMoE via FFNFactory
+                +RMSNorm post_attention_norm
+                +forward(x, rotary_emb, attention_mask, kv_cache, is_causal) DecoderOutput
+            }
+            class DecoderOutput {
+                <<TypedDict>>
+                +Tensor hidden_states
+                +Optional[Tensor] aux_loss
+                +Optional[RouterStats] router_stats
+            }
+            class GQA {
+                +int dim
+                +int n_heads
+                +int n_kv_heads
+                +int head_dim
+                +int n_rep
+                +int layer_id
+                +bool use_qk_norm
+                +bool use_gated_attention
+                +Linear q_proj, k_proj, v_proj, o_proj
+                +Linear gate  # only if use_gated_attention
+                +RMSNorm q_norm, k_norm  # only if use_qk_norm
+                +forward(x, rotary_emb, attn_mask, kv_cache, is_causal) Tensor
+            }
+            class MLA {
+                +int dim
+                +int n_heads
+                +int n_kv_heads
+                +int head_dim
+                +int kv_lora_rank
+                +int qk_nope_head_dim
+                +int qk_rope_head_dim
+                +int n_rep
+                +int layer_id
+                +bool use_qk_norm
+                +bool use_gated_attention
+                +Linear q_proj, kv_a_proj, kv_b_proj
+                +Linear o_proj
+                +Linear gate  # only if use_gated_attention
+                +RMSNorm kv_norm
+                +RMSNorm q_norm, k_norm  # only if use_qk_norm
+                +forward(x, rotary_emb, attn_mask, kv_cache, is_causal) Tensor
+            }
+            class MLP {
+                +Linear up, gate, down
+                +forward(x) FFNOutput
+            }
+            class FFNOutput {
+                <<TypedDict>>
+                +Tensor hidden_states
+                +Optional[Tensor] aux_loss
+                +Optional[RouterStats] router_stats
+            }
+            class DeepSeekMoE {
+                +int dim
+                +int n_routed_experts
+                +int n_shared_experts
+                +int n_activated_experts
+                +str topk_method
+                +Linear router
+                +ModuleList shared_experts
+                +ModuleList routed_experts
+                +forward(x) FFNOutput
+            }
+            class AttnFactory {
+                +create(attn_type, **kwargs) nn.Module
+            }
+            class FFNFactory {
+                +create(ffn_type, dim, dim_ffn, **kwargs) nn.Module
+            }
+            class RMSNorm {
+                +Parameter weight
+                +float norm_eps
+                +tuple normalized_shape
+                +forward(x) Tensor
+            }
+            class Linear {
+                +Parameter weight
+                +Optional[Parameter] bias  # only if bias=True
+                +forward(x) Tensor
+            }
+            class RotaryEmbedding {
+                +int dim
+                +int max_len
+                +float base
+                +Optional[Dict] rope_scaling
+                +Tensor freqs_cis
+                +forward(x, position_ids=None) Tensor
+            }
+            class Embedding {
+                +Parameter weight
+                +float neftune_noise_alpha
+                +forward(x) Tensor
+                +set_neftune_alpha(alpha)
+            }
+            class LoRAConfig {
+                +int r
+                +int alpha
+                +tuple target_modules
+            }
+            class LoRALinear {
+                +Linear weight
+                +Parameter lora_A, lora_B
+                +forward(x) Tensor
+                +merge()
+            }
         }
     }
 
@@ -462,81 +461,68 @@ classDiagram
             +process_sections(item, sections, config, tokenizer) Tuple
             +process_list_field(item, sections, config, tokenizer) Tuple
         }
-
         class BaseMaskBuilder {
             <<abstract>>
             +build(item, config, tokenizer) Optional[dict]
         }
-
+        class MaskBuilderFactory {
+            +Dict _entries
+            +register(name) decorator
+            +create(name, *args, **kwargs) BaseMaskBuilder
+        }
         class SingleOutputMaskBuilder {
             +SectionRenderer renderer
             +build(item, config, tokenizer) Optional[dict]
         }
-
         class MultiOutputMaskBuilder {
             +SectionRenderer renderer
             +build(item, config, tokenizer) Optional[dict]
         }
-
         class SectionedMaskBuilder {
             +build(item, config, tokenizer) Optional[dict]
         }
-
         class PackingStrategy {
             <<abstract>>
             +apply(keys, max_packed_len, truncation_mode) Dict
         }
-
         class PackingStrategyFactory {
             +create(name, *args, **kwargs) PackingStrategy
         }
-
         class SimplePacking {
             +apply(keys, max_packed_len, truncation_mode) Dict
         }
-
         class BFDPacking {
             +apply(keys, max_packed_len, truncation_mode) Dict
         }
-
         class BFDSplitPacking {
             +apply(keys, max_packed_len, truncation_mode) Dict
         }
-
         class PositionIdStrategy {
             <<abstract>>
             +generate(sequences) List[int]
         }
-
         class PositionIdStrategyFactory {
             +create(name, *args, **kwargs) PositionIdStrategy
         }
-
         class NoPositionId {
             +generate(sequences) List[int]
         }
-
         class DocResetPositionId {
             +generate(sequences) List[int]
         }
-
         class ContinuousPositionId {
             +generate(sequences) List[int]
         }
-
         class StoreWriter {
             <<abstract>>
             +save(output_dir, domain, shard_idx, tensors)
         }
-
         class StoreWriterFactory {
             +create(name, *args, **kwargs) StoreWriter
         }
-
         class BinWriter {
             +save(output_dir, domain, shard_idx, tensors)
         }
-
         class Pipeline {
             +PipelineConfig config
             +List[str] paths
@@ -554,7 +540,6 @@ classDiagram
             +_inject_continuous_position_ids(tensors, mode, seqs) Dict
             +_to_tensors(keys) Dict
         }
-
         class TokenizeTransform {
             +PipelineConfig config
             +AutoTokenizer tokenizer
@@ -585,22 +570,6 @@ classDiagram
         }
     }
 
-    namespace factory {
-        class BaseFactory {
-            +Dict _entries
-            +register(name) decorator
-            +create(name, *args, **kwargs) T
-            +get_component_class(name) Type
-            +list_registered() list
-            +is_registered(name) bool
-        }
-
-        class MaskBuilderFactory {
-            +Dict _entries
-            +register(name) decorator
-            +create(name, *args, **kwargs) BaseMaskBuilder
-        }
-    }
 
     namespace trainer {
         class Trainer {
@@ -609,7 +578,6 @@ classDiagram
             +train(param_path=None, resume=False)
             -_get_default_callbacks() List[TrainCallback]
         }
-
         class TrainContext {
             +nn.Module model
             +BaseStrategy strategy
@@ -638,455 +606,481 @@ classDiagram
             +optimizer_step (property) int
             +request_stop()
         }
-
         class TrainContextBuilder {
             +TrainConfig config
             +with_param_path(param_path, resume) TrainContextBuilder
             +build() TrainContext
         }
-
-        class BaseStrategy {
-            +Callable model
-            +Optional[BaseExecutor] executor
-            +float moe_aux_loss_coef
-            +dict extra_kwargs
-            +str device
-            +__call__(batch) LossOutput
-            +compute_loss(batch) Tensor
-            +compute_loss_output(batch) LossOutput
-            +supports_online() bool
-            +set_rollout_runner(runner)
-            +set_weight_publishers(publishers)
-            +prepare_from_rollout(result) Dict
-            +validate_online(batch) Optional[LossOutput]
-            +optimizer_step(optimizer)
+        namespace strategy {
+            class BaseStrategy {
+                +Callable model
+                +Optional[BaseExecutor] executor
+                +float moe_aux_loss_coef
+                +dict extra_kwargs
+                +str device
+                +__call__(batch) LossOutput
+                +compute_loss(batch) Tensor
+                +compute_loss_output(batch) LossOutput
+                +supports_online() bool
+                +set_rollout_runner(runner)
+                +set_weight_publishers(publishers)
+                +prepare_from_rollout(result) Dict
+                +validate_online(batch) Optional[LossOutput]
+                +optimizer_step(optimizer)
+            }
+            class LossOutput {
+                <<TypedDict>>
+                +Tensor loss
+                +Dict[str, float] metrics
+            }
+            class StrategyFactory {
+                +Dict _entries
+                +register(name) decorator
+                +create(train_type, model, device, **kwargs) BaseStrategy
+            }
+            class SEQStrategy {
+                +float label_smoothing
+                +compute_loss(batch) Tensor
+            }
+            class SFTStrategy {
+                +float label_smoothing
+                +compute_loss(batch) Tensor
+            }
+            class DPOStrategy {
+                +nn.Module ref_model
+                +float beta
+                +str reduction
+                +compute_loss(batch) Tensor
+            }
+            class GRPOStrategy {
+                +nn.Module old_model
+                +nn.Module ref_model
+                +float clip_eps
+                +float kl_coef
+                +int group_size
+                +compute_loss(batch) Tensor
+                +sync_old_model()
+            }
         }
-
-        class LossOutput {
-            <<TypedDict>>
-            +Tensor loss
-            +Dict[str, float] metrics
+        namespace backend {
+            class RolloutBackend {
+                <<protocol>>
+                +device
+                +int policy_version
+                +generate(prompt_ids_list, **kwargs)
+                +update_weights(policy_version) int
+                +apply_weight_update(policy_version, update)
+                +with_policy_snapshot(inspect)
+            }
+            class ColocatedBackend {
+                +Scheduler scheduler
+                +generate(prompt_ids_list, **kwargs)
+            }
+            class ReplicaBackend {
+                +nn.Module model
+                +torch.device device
+                +Scheduler scheduler
+                +generate(prompt_ids_list, **kwargs)
+            }
+            class WeightPublisher {
+                <<protocol>>
+                +publish(policy_version, source)
+            }
+            class P2PCopyPublisher {
+                +ReplicaBackend backend
+                +publish(policy_version, source)
+            }
         }
-
-        class StrategyFactory {
-            +Dict _entries
-            +register(name) decorator
-            +create(train_type, model, device, **kwargs) BaseStrategy
+        namespace rollout {
+            class RawRollout {
+                +Tensor prompts
+                +Tensor prompt_mask
+                +Tensor responses
+                +Tensor response_mask
+                +Tensor logprobs_old
+                +int policy_version
+                +List[str] prompt_texts
+                +List[List[str]] response_texts
+            }
+            class RolloutResult {
+                +Tensor rewards
+            }
+            class BaseRewardModel {
+                <<abstract>>
+                +score(List[str] prompts, List[List[str]] responses) Tensor
+            }
+            class SamplingParams {
+                +float temperature
+                +float top_p
+                +int top_k
+                +int max_tokens
+                +int group_size
+                +float frequency_penalty
+                +int rep_window
+            }
+            class RolloutGenerator {
+                +RolloutBackend backend
+                +SamplingParams params
+                +output_device
+                +int policy_version
+                +update_weights(policy_version) int
+                +apply_weight_update(policy_version, update)
+                +generate(batch, params) RawRollout
+            }
+            class RolloutRunner {
+                +int policy_version
+                +int max_policy_lag
+                +update_weights(policy_version) int
+                +apply_weight_update(policy_version, update)
+                +step()
+                +clear_cache()
+                +__call__(batch) Tuple[RolloutResult, bool]
+            }
+            class RolloutEvaluator {
+                +RolloutGenerator generator
+                +BaseRewardModel reward_model
+                +SamplingParams params
+                +evaluate(batch) Dict[str, float]
+            }
         }
-
-        class SEQStrategy {
-            +float label_smoothing
-            +compute_loss(batch) Tensor
+        namespace callbacks {
+            class TrainCallback {
+                <<protocol>>
+                +on_train_begin(context)
+                +on_train_end(context)
+                +on_epoch_begin(context)
+                +on_epoch_end(context)
+                +on_batch_begin(context)
+                +on_batch_end(context)
+                +before_optimizer_step(context)
+                +after_optimizer_step(context)
+                +on_error(context)
+            }
+            class GradientClippingCallback {
+                +Optional[float] max_grad_norm
+                +before_optimizer_step(context)
+            }
+            class GradientCheckpointingCallback {
+                +Optional[List[type]] modules
+                +on_train_begin(context)
+                +on_train_end(context)
+            }
+            class CheckpointCallback {
+                +str save_dir
+                +int interval
+                +bool weight_only
+                +Callable save_extra_fn
+                -_save_checkpoint(context)
+                +after_optimizer_step(context)
+                +on_train_end(context)
+                +on_error(context)
+                +save_extra(context) dict
+            }
+            class ProgressBarCallback {
+                +int num_epoch
+                +int log_interval
+                +IO file
+                +tqdm progress_bar
+                +on_epoch_begin(context)
+                +before_optimizer_step(context)
+                +on_epoch_end(context)
+            }
+            class MetricCallback {
+                +Path ckpt_dir
+                +int save_interval
+                +List[str] metrics
+                +int val_step
+                +before_optimizer_step(context)
+                +on_epoch_end(context)
+                +on_train_end(context)
+                +on_error(context)
+                -_run_validation(context)
+                -_run_rollout_validation(context) Dict[str, float]
+            }
+            class CallbackFactory {
+                +Dict _entries
+                +register(name) decorator
+                +create(name, **kwargs) TrainCallback
+            }
         }
+    }
 
-        class SFTStrategy {
-            +float label_smoothing
-            +compute_loss(batch) Tensor
+    namespace optimization {
+        namespace optimizer {
+            class OptimizerFactory {
+                +register(name) decorator
+                +create(name, *args, **kwargs) Optimizer
+            }
+            class OptimizerParameterGroups
+            class Mano
+            class ManoAdamW
+            class Nora
+            class NAdamW
+            class NoraNAdamW
+            namespace muon {
+                class MuonAdamW
+                class _ShardedMuon {
+                    +step()
+                }
+                namespace strategies {
+                    class DTensorTransferPolicy {
+                        <<protocol>>
+                        +gather(tensor)
+                        +redistribute(tensor, like)
+                    }
+                    class FullTensorTransferPolicy
+                    class TorchOrthogonalizer
+                    class KernelOrthogonalizer
+                }
+            }
         }
-
-        class DPOStrategy {
-            +nn.Module ref_model
-            +float beta
-            +str reduction
-            +compute_loss(batch) Tensor
+        namespace scheduler {
+            class BaseScheduler {
+                <<abstract>>
+                +get_lr() List[float]
+                +step()
+                +state_dict() dict
+                +load_state_dict(d)
+            }
+            class SchedulerFactory {
+                +register(name) decorator
+                +create(name, *args, **kwargs) BaseScheduler
+            }
+            class CosineScheduler {
+                +int warmup_steps
+                +int lr_decay_steps
+                +int total_steps
+                +float min_rate
+            }
+            class SGDRScheduler {
+                +int warmup_steps
+                +int cycle_length
+                +float min_rate
+                +int t_mult
+            }
+            class WSDScheduler {
+                +int warmup_steps
+                +int stable_steps
+                +int decay_steps
+                +float min_rate
+            }
         }
-
-        class GRPOStrategy {
-            +nn.Module old_model
-            +nn.Module ref_model
-            +float clip_eps
-            +float kl_coef
-            +int group_size
-            +compute_loss(batch) Tensor
-            +sync_old_model()
+        namespace protocols {
+            class OptimizerProtocol {
+                <<protocol>>
+                +step(closure)
+                +zero_grad()
+                +state_dict() dict
+                +load_state_dict(d)
+            }
+            class SchedulerProtocol {
+                <<protocol>>
+                +step()
+                +state_dict() dict
+                +load_state_dict(d)
+                +get_last_lr()
+            }
         }
-
-        class RawRollout {
-            +Tensor prompts
-            +Tensor prompt_mask
-            +Tensor responses
-            +Tensor response_mask
-            +Tensor logprobs_old
-            +int policy_version
-            +List[str] prompt_texts
-            +List[List[str]] response_texts
-        }
-
-        class RolloutResult {
-            +Tensor rewards
-        }
-
-        class BaseRewardModel {
-            <<abstract>>
-            +score(List[str] prompts, List[List[str]] responses) Tensor
-        }
-
-        class SamplingParams {
-            +float temperature
-            +float top_p
-            +int top_k
-            +int max_tokens
-            +int group_size
-            +float frequency_penalty
-            +int rep_window
-        }
-
-        class RolloutBackend {
-            <<protocol>>
-            +device
-            +int policy_version
-            +generate(prompt_ids_list, **kwargs)
-            +update_weights(policy_version) int
-            +apply_weight_update(policy_version, update)
-            +with_policy_snapshot(inspect)
-        }
-
-        class ColocatedBackend {
-            +Scheduler scheduler
-            +generate(prompt_ids_list, **kwargs)
-        }
-
-        class ReplicaBackend {
-            +nn.Module model
-            +torch.device device
-            +Scheduler scheduler
-            +generate(prompt_ids_list, **kwargs)
-        }
-
-        class WeightPublisher {
-            <<protocol>>
-            +publish(policy_version, source)
-        }
-
-        class P2PCopyPublisher {
-            +ReplicaBackend backend
-            +publish(policy_version, source)
-        }
-
-        class RolloutGenerator {
-            +RolloutBackend backend
-            +SamplingParams params
-            +output_device
-            +int policy_version
-            +update_weights(policy_version) int
-            +apply_weight_update(policy_version, update)
-            +generate(batch, params) RawRollout
-        }
-
-        class RolloutRunner {
-            +int policy_version
-            +int max_policy_lag
-            +update_weights(policy_version) int
-            +apply_weight_update(policy_version, update)
-            +step()
-            +clear_cache()
-            +__call__(batch) Tuple[RolloutResult, bool]
-        }
-
-        class RolloutEvaluator {
-            +RolloutGenerator generator
-            +BaseRewardModel reward_model
-            +SamplingParams params
-            +evaluate(batch) Dict[str, float]
-        }
-
-        class BaseScheduler {
-            +get_lr() List[float]
-            +step()
-            +state_dict() dict
-            +load_state_dict(d)
-        }
-
-        class SchedulerFactory {
-            +Dict _entries
-            +register(name) decorator
-            +create(name, *args, **kwargs) BaseScheduler
-        }
-
-        class CosineScheduler {
-            +int warmup_steps
-            +int lr_decay_steps
-            +int total_steps
-            +float min_rate
-        }
-
-        class SGDRScheduler {
-            +int warmup_steps
-            +int cycle_length
-            +float min_rate
-            +int t_mult
-        }
-
-        class WSDScheduler {
-            +int warmup_steps
-            +int stable_steps
-            +int decay_steps
-            +float min_rate
-        }
-
-        class TrainCallback {
-            <<protocol>>
-            +on_train_begin(context)
-            +on_train_end(context)
-            +on_epoch_begin(context)
-            +on_epoch_end(context)
-            +on_batch_begin(context)
-            +on_batch_end(context)
-            +before_optimizer_step(context)
-            +after_optimizer_step(context)
-            +on_error(context)
-        }
-
-        class GradientClippingCallback {
-            +Optional[float] max_grad_norm
-            +before_optimizer_step(context)
-        }
-
-        class GradientCheckpointingCallback {
-            +Optional[List[type]] modules
-            +on_train_begin(context)
-            +on_train_end(context)
-        }
-
-        class CheckpointCallback {
-            +str save_dir
-            +int interval
-            +bool weight_only
-            +Callable save_extra_fn
-            -_save_checkpoint(context)
-            +after_optimizer_step(context)
-            +on_train_end(context)
-            +on_error(context)
-            +save_extra(context) dict
-        }
-
-        class ProgressBarCallback {
-            +int num_epoch
-            +int log_interval
-            +IO file
-            +tqdm progress_bar
-            +on_epoch_begin(context)
-            +before_optimizer_step(context)
-            +on_epoch_end(context)
-        }
-
-        class MetricCallback {
-            +Path ckpt_dir
-            +int save_interval
-            +List[str] metrics
-            +int val_step
-            +before_optimizer_step(context)
-            +on_epoch_end(context)
-            +on_train_end(context)
-            +on_error(context)
-            -_run_validation(context)
-            -_run_rollout_validation(context) Dict[str, float]
-        }
-
-        class CallbackFactory {
-            +Dict _entries
-            +register(name) decorator
-            +create(name, **kwargs) TrainCallback
-        }
-
     }
 
     namespace inference {
-        class InferenceEngine {
-            +generate() / generate_async() / generate_events() / score()
+        namespace frontend {
+            class InferenceEngine {
+                +generate() / generate_async() / generate_events() / score()
+            }
+            class EngineCoreClient {
+                <<abstract>>
+            }
+            class InprocClient
+            class InputProcessor
+            class OutputProcessor
         }
-        class EngineCoreClient {
-            <<abstract>>
+        namespace core {
+            class Scheduler {
+                +run_busy_loop()
+                +run_batch() / score_ids()
+            }
+            class RequestManager {
+                waiting / running
+            }
+            class Request {
+                +num_computed_tokens
+            }
+            class RequestStatus {
+                <<enumeration>>
+                PENDING
+                RUNNING
+                FINISHED
+                ABORTED
+            }
+            class SchedulerStep
+            class PolicyVersionGuard
+            class StreamDecoder
+            namespace cache {
+                namespace pool {
+                    class BlockPool
+                    class KVCacheManager
+                }
+                namespace strategy {
+                    class RequestCacheState
+                    class Allocator {
+                        bitmap free-set + LRU
+                    }
+                    class RadixCache
+                    class RadixNode
+                    class AllocationStrategy {
+                        <<abstract>>
+                    }
+                    class ContiguousStrategy
+                    class PagedStrategy
+                }
+            }
         }
-        class InprocClient
-        class InputProcessor
-        class OutputProcessor
-        class Scheduler {
-            +run_busy_loop()
-            +run_batch() / score_ids()
+        namespace worker {
+            class GPUModelRunner {
+                +execute_prefill() / submit_decode()
+            }
+            class PendingExecution {
+                +commit()
+            }
+            class CUDAGraphRunner
+            class InferenceWorkspace
+            class SamplingPipeline
+            class BaseSamplingStrategy {
+                <<abstract>>
+            }
+            class TemperatureStrategy
+            class TopKStrategy
+            class TopPStrategy
+            class FrequencyPenaltyStrategy
         }
-        class RequestManager {
-            waiting / running
-        }
-        class Request {
-            +num_computed_tokens
-        }
-        class SchedulerStep
-        class KVCacheManager
-        class BlockPool
-        class PolicyVersionGuard
-        class GPUModelRunner {
-            +execute_prefill() / submit_decode()
-        }
-        class PendingExecution {
-            +commit()
-        }
-        class CUDAGraphRunner
-        class InferenceWorkspace
-        class SamplingPipeline
-        class BaseSamplingStrategy {
-            <<abstract>>
-        }
-        class TemperatureStrategy
-        class TopKStrategy
-        class TopPStrategy
-        class FrequencyPenaltyStrategy
-        class StreamDecoder
-        class Allocator {
-            bitmap free-set + LRU
-        }
-        class RadixCache
-        class RadixNode
-        class AllocationStrategy {
-            <<abstract>>
-        }
-        class ContiguousStrategy
-        class PagedStrategy
+        namespace network {
 
+            class ChatMessage {
+                +str role
+                +Optional[str] content
+                +Optional[List[Dict]] tool_calls
+                +Optional[str] tool_call_id
+            }
+
+            class FunctionDef {
+                +str name
+                +Optional[str] description
+                +Optional[Dict] parameters
+            }
+
+            class ToolDef {
+                +str type
+                +FunctionDef function
+            }
+
+            class ChatCompletionRequest {
+                +str model
+                +List[ChatMessage] messages
+                +Optional[float] temperature
+                +Optional[float] top_p
+                +Optional[int] top_k
+                +Optional[int] max_tokens
+                +Optional[bool] stream
+                +Optional[Union[str, List[str]]] stop
+                +Optional[int] n
+                +Optional[float] presence_penalty
+                +Optional[float] frequency_penalty
+                +Optional[Dict[int, float]] logit_bias
+                +Optional[str] user
+                +Optional[List[ToolDef]] tools
+                +Optional[Union[str, Dict]] tool_choice
+            }
+
+            class AnthropicMessage {
+                +str role
+                +Union[str, List[Dict]] content
+            }
+
+            class MessagesRequest {
+                +str model
+                +List[AnthropicMessage] messages
+                +Optional[str] system
+                +Optional[float] temperature
+                +Optional[float] top_p
+                +Optional[int] top_k
+                +int max_tokens
+                +Optional[bool] stream
+                +Optional[List[str]] stop_sequences
+            }
+
+            class ResponseBuilder {
+                <<abstract>>
+                +prepare(request, engine) Tuple[str, GenContext, List[str]]
+                +format_stream_start(ctx) List[str]
+                +format_chunk(token, **kwargs) List[str]
+                +format_stream_end(ctx, stop) List[str]
+                +format_response(ctx, content, stop) Dict
+            }
+
+            class OpenAIResponseBuilder {
+                +prepare(request, engine) Tuple
+                +format_stream_start(ctx) List[str]
+                +format_chunk(token, **kwargs) List[str]
+                +format_stream_end(ctx, stop) List[str]
+                +format_response(ctx, content, stop) Dict
+            }
+
+            class AnthropicResponseBuilder {
+                +prepare(request, engine) Tuple
+                +format_stream_start(ctx) List[str]
+                +format_chunk(token, **kwargs) List[str]
+                +format_stream_end(ctx, stop) List[str]
+                +format_response(ctx, content, stop) Dict
+            }
+
+            class ProtocolHandler {
+                +request
+                +engine
+                +builder: ResponseBuilder
+                +async handle() Union[StreamingResponse, Dict]
+                -_handle_stream(agen, ctx, stop_sequences) StreamingResponse
+                -async _handle_non_stream(agen, ctx, stop_sequences) Dict
+            }
+
+            class StopSequenceChecker {
+                +push(text) Tuple[str, bool]
+                incremental windowed stop matching
+            }
+
+            class GenContext {
+                +str resp_id
+                +int created
+                +str model
+                +int prompt_tokens
+                +int completion_tokens
+            }
+
+            class StopInfo {
+                +Optional[str] matched
+                +str body
+                +str yielded
+            }
+
+            class BaseToolParser {
+                <<abstract>>
+                +feed(body, current_token_ids, delta_token_ids) List[Dict]
+                +parse_complete(body) Optional[Dict]
+                +has_tool_calls (property) bool
+            }
+
+            class ToolParserFactory {
+                +create(name, *args, **kwargs) BaseToolParser
+            }
+
+            class SimpleJsonToolParser {
+                +feed(body, current_token_ids, delta_token_ids) List[Dict]
+                +parse_complete(body) Optional[Dict]
+            }
+        }
     }
 
-    namespace network {
 
-        class ChatMessage {
-            +str role
-            +Optional[str] content
-            +Optional[List[Dict]] tool_calls
-            +Optional[str] tool_call_id
-        }
-
-        class FunctionDef {
-            +str name
-            +Optional[str] description
-            +Optional[Dict] parameters
-        }
-
-        class ToolDef {
-            +str type
-            +FunctionDef function
-        }
-
-        class ChatCompletionRequest {
-            +str model
-            +List[ChatMessage] messages
-            +Optional[float] temperature
-            +Optional[float] top_p
-            +Optional[int] top_k
-            +Optional[int] max_tokens
-            +Optional[bool] stream
-            +Optional[Union[str, List[str]]] stop
-            +Optional[int] n
-            +Optional[float] presence_penalty
-            +Optional[float] frequency_penalty
-            +Optional[Dict[int, float]] logit_bias
-            +Optional[str] user
-            +Optional[List[ToolDef]] tools
-            +Optional[Union[str, Dict]] tool_choice
-        }
-
-        class AnthropicMessage {
-            +str role
-            +Union[str, List[Dict]] content
-        }
-
-        class MessagesRequest {
-            +str model
-            +List[AnthropicMessage] messages
-            +Optional[str] system
-            +Optional[float] temperature
-            +Optional[float] top_p
-            +Optional[int] top_k
-            +int max_tokens
-            +Optional[bool] stream
-            +Optional[List[str]] stop_sequences
-        }
-
-        class ResponseBuilder {
-            <<abstract>>
-            +prepare(request, engine) Tuple[str, GenContext, List[str]]
-            +format_stream_start(ctx) List[str]
-            +format_chunk(token, **kwargs) List[str]
-            +format_stream_end(ctx, stop) List[str]
-            +format_response(ctx, content, stop) Dict
-        }
-
-        class OpenAIResponseBuilder {
-            +prepare(request, engine) Tuple
-            +format_stream_start(ctx) List[str]
-            +format_chunk(token, **kwargs) List[str]
-            +format_stream_end(ctx, stop) List[str]
-            +format_response(ctx, content, stop) Dict
-        }
-
-        class AnthropicResponseBuilder {
-            +prepare(request, engine) Tuple
-            +format_stream_start(ctx) List[str]
-            +format_chunk(token, **kwargs) List[str]
-            +format_stream_end(ctx, stop) List[str]
-            +format_response(ctx, content, stop) Dict
-        }
-
-        class ProtocolHandler {
-            +request
-            +engine
-            +builder: ResponseBuilder
-            +async handle() Union[StreamingResponse, Dict]
-            -_handle_stream(agen, ctx, stop_sequences) StreamingResponse
-            -async _handle_non_stream(agen, ctx, stop_sequences) Dict
-        }
-
-        class StopSequenceChecker {
-            +push(text) Tuple[str, bool]
-            incremental windowed stop matching
-        }
-
-        class GenContext {
-            +str resp_id
-            +int created
-            +str model
-            +int prompt_tokens
-            +int completion_tokens
-        }
-
-        class StopInfo {
-            +Optional[str] matched
-            +str body
-            +str yielded
-        }
-
-        class BaseToolParser {
-            <<abstract>>
-            +feed(body, current_token_ids, delta_token_ids) List[Dict]
-            +parse_complete(body) Optional[Dict]
-            +has_tool_calls (property) bool
-        }
-
-        class ToolParserFactory {
-            +create(name, *args, **kwargs) BaseToolParser
-        }
-
-        class SimpleJsonToolParser {
-            +feed(body, current_token_ids, delta_token_ids) List[Dict]
-            +parse_complete(body) Optional[Dict]
-        }
-    }
-
-    namespace protocols {
-        class OptimizerProtocol {
-            <<protocol>>
-            +step(closure)
-            +zero_grad()
-            +state_dict() dict
-            +load_state_dict(d)
-        }
-
-        class SchedulerProtocol {
-            <<protocol>>
-            +step()
-            +state_dict() dict
-            +load_state_dict(d)
-            +get_last_lr()
-        }
-    }
 
     namespace parallel {
         class ParallelTopology {
@@ -1241,21 +1235,6 @@ classDiagram
     AttentionConfig *-- GDNConfig
     AttentionConfig *-- MLAConfig
     BaseModelConfig <|-- EncoderConfig
-    BaseFactory <|-- ModelFactory
-    BaseFactory <|-- AttnFactory
-    BaseFactory <|-- FFNFactory
-    BaseFactory <|-- DatasetFactory
-    BaseFactory <|-- StrategyFactory
-    BaseFactory <|-- SchedulerFactory
-    BaseFactory <|-- CallbackFactory
-    BaseFactory <|-- StoreFactory
-    BaseFactory <|-- ExecutorFactory
-    BaseFactory <|-- ConfigFactory
-    BaseFactory <|-- MaskBuilderFactory
-    BaseFactory <|-- PackingStrategyFactory
-    BaseFactory <|-- PositionIdStrategyFactory
-    BaseFactory <|-- StoreWriterFactory
-    BaseFactory <|-- ToolParserFactory
     BaseExecutor <|-- NoneExecutor
     BaseExecutor <|-- DDPExecutor
     BaseExecutor <|-- FSDPExecutor
@@ -1273,6 +1252,10 @@ classDiagram
     PositionIdStrategy <|-- ContinuousPositionId
     StoreWriter <|-- BinWriter
     AllocationStrategy <|-- ContiguousStrategy
+    BaseKVCache <|-- PrefillKVCache
+    BaseKVCache <|-- DecodeKVCache
+    KVCache ..> PrefillKVCache
+    KVCache ..> DecodeKVCache
     AllocationStrategy <|-- PagedStrategy
     RawRollout <|-- RolloutResult
     LaunchStrategy <|-- TorchrunStrategy
@@ -1311,7 +1294,8 @@ classDiagram
     AutoTokenizer o-- ChatTemplate
     Trainer o-- TrainCallback
     TrainContext o-- BaseStrategy
-    TrainContext o-- BaseScheduler
+    TrainContext o-- OptimizerProtocol
+    TrainContext o-- SchedulerProtocol
     TrainContext o-- Checkpoint
     TrainContext o-- BaseExecutor
     SamplingPipeline o-- BaseSamplingStrategy
@@ -1414,15 +1398,14 @@ classDiagram
 | **astrai.preprocessing** | SectionRenderer, BaseMaskBuilder, MaskBuilderFactory, SectionedMaskBuilder, SingleOutputMaskBuilder, MultiOutputMaskBuilder, Pipeline, TokenizeTransform, PackingStrategy, PackingStrategyFactory, SimplePacking, BFDPacking, BFDSplitPacking, PositionIdStrategy, PositionIdStrategyFactory, NoPositionId, DocResetPositionId, ContinuousPositionId, StoreWriter, StoreWriterFactory, BinWriter | Declarative JSON-driven data preprocessing |
 | **astrai.dataset** | BaseDataset, SEQDataset, SFTDataset, DPODataset, GRPODataset, Store, Streamable, Recordable, MmapStore, JsonlSource, JsonlStore, StoreFactory, RDSampler, DatasetFactory | Dataset loading and management |
 | **astrai.serialization** | Checkpoint | Model serialization |
-| **astrai.model** | ModelFactory, AutoModel, AutoRegressiveLM, EmbeddingEncoder, DecoderBlock, GQA, MLA, MLP, DeepSeekMoE, AttnFactory, FFNFactory, RMSNorm, Linear, LoRAConfig, LoRALinear, RotaryEmbedding, Embedding | Neural network model |
+| **astrai.model** | ModelFactory, AutoModel, AutoRegressiveLM, EmbeddingEncoder, TransformerModel · `components/`: DecoderBlock, GQA, MLA, MLP, DeepSeekMoE, AttnFactory, FFNFactory, RMSNorm, Linear, LoRAConfig, LoRALinear, RotaryEmbedding, Embedding · `kv_cache.py`: KVStorage, ReqToTokenPool, BaseKVCache, PrefillKVCache, DecodeKVCache, KVCache alias | Neural network model and KV layout contract |
 | **astrai.tokenize** | AutoTokenizer, ChatTemplate | Tokenizer and chat template |
-| **astrai.trainer** | Trainer, TrainContext, TrainContextBuilder, create_ref_model, BaseStrategy–GRPOStrategy, StrategyFactory, BaseScheduler–WSDScheduler, SchedulerFactory, TrainCallback(Protocol)–MetricCallback, CallbackFactory, RawRollout, RolloutResult, BaseRewardModel, SamplingParams, RolloutGenerator, RolloutRunner, RolloutEvaluator, RolloutBackend, ColocatedBackend, ReplicaBackend, WeightPublisher, P2PCopyPublisher | Training workflow (online RL rollout via injectable backends) |
-| **astrai.inference** | frontend: InferenceEngine, InputProcessor, OutputProcessor, EngineCoreClient/InprocClient, events (TokenDelta/RequestFinished/RequestError) · core: Scheduler, SchedulerStep, RequestManager, Request/RequestStatus, KVCacheManager, BlockPool, AllocationStrategy (Contiguous/Paged), Allocator, RadixCache, PolicyVersionGuard, MetricsCollector · worker: GPUModelRunner, PendingExecution, CUDAGraphRunner, InferenceWorkspace, sampler (BaseSamplingStrategy–SamplingPipeline) · network: ProtocolHandler, ResponseBuilder (OpenAI/Anthropic), StopSequenceChecker, GenContext, StopInfo, ChatMessage/FunctionDef/ToolDef, ChatCompletionRequest, AnthropicMessage/MessagesRequest, BaseToolParser, ToolParserFactory, SimpleJsonToolParser | Inference service (see [developer/inference/](inference/)) |
+| **astrai.trainer** | Trainer, TrainContext, TrainContextBuilder, create_ref_model · `strategy/`: BaseStrategy–GRPOStrategy, StrategyFactory · `callbacks/`: TrainCallback, GradientClippingCallback, GradientCheckpointingCallback, CheckpointCallback, ProgressBarCallback, MetricCallback, CallbackFactory · `backend.py`: RolloutBackend, ColocatedBackend, ReplicaBackend, WeightPublisher, P2PCopyPublisher · `rollout/`: RawRollout, RolloutResult, BaseRewardModel, SamplingParams, RolloutGenerator, RolloutRunner, RolloutEvaluator | Training workflow (online RL rollout via injectable backends) |
+| **astrai.inference** | frontend: InferenceEngine, InputProcessor, OutputProcessor, EngineCoreClient/InprocClient, events (TokenDelta/RequestFinished/RequestError) · core: Scheduler, SchedulerStep, RequestManager, Request/RequestStatus · `core.cache.pool`: BlockPool, KVCacheManager · `core.cache.strategy`: RequestCacheState, Allocator, RadixCache/RadixNode, AllocationStrategy/ContiguousStrategy/PagedStrategy · core: PolicyVersionGuard, MetricsCollector · worker: GPUModelRunner, PendingExecution, CUDAGraphRunner, InferenceWorkspace, sampler (BaseSamplingStrategy–SamplingPipeline) · network: ProtocolHandler, ResponseBuilder (OpenAI/Anthropic), StopSequenceChecker, GenContext, StopInfo, ChatMessage/FunctionDef/ToolDef, ChatCompletionRequest, AnthropicMessage/MessagesRequest, BaseToolParser, ToolParserFactory, SimpleJsonToolParser | Inference service (see [developer/inference/](inference/)) |
 | **astrai.extension** | `backend` policy package, `kernel` kernel-wrapper package, `fp8.py` FP8 strategy layer, AttentionBackend, TorchNativeBackend, CudaBackend, FlashAttnBackend, attention, attn_backend, ATTN_BACKEND, apply_rotary_emb, is_available | Stable API over attention/rotary/FP8 execution policy and optional CUDA kernels |
-| **astrai.optim** | OptimizerFactory, MuonAdamW, NoraNadamW, ManoAdamW, composite_step/composite_zero_grad/composite_state_dict, partition_optimizer_parameters | Built-in optimizers (`muon_adamw` / `nora_nadamw` / `mano_adamw`) with shared composite-optimizer helpers |
+| **astrai.optimization** | `optimizer/`: OptimizerFactory, Mano/ManoAdamW, Nora/NAdamW/NoraNAdamW, OptimizerParameterGroups, composite helpers, parameter partitioning · `optimizer/muon/`: MuonAdamW, _ShardedMuon · `optimizer/muon/strategies/`: DTensorTransferPolicy, FullTensorTransferPolicy, TorchOrthogonalizer, KernelOrthogonalizer · `scheduler/`: SchedulerFactory, BaseScheduler–WSDScheduler · `protocols.py`: OptimizerProtocol, SchedulerProtocol | Training optimizers and learning-rate schedulers; Muon sharding uses batching, orthogonalization and DTensor strategies |
 | **astrai.parallel** | spawn_parallel_fn, setup_parallel, get_rank/get_world_size/get_current_device, only_on_rank, LaunchStrategy, TorchrunStrategy, LocalStrategy, ParallelTopology, build_topology, CPState, CPStrategy, TPState, LossReduction, TokenLoss, BaseExecutor, ExecutorFactory, NoneExecutor, DDPExecutor, FSDPExecutor, GradientState, AccumOptimizer, AccumScheduler, broadcast_state_dict | Rank-layout topology (dp x cp x tp), context-parallel composition, distributed launch, executors & gradient accumulation |
 | **astrai.factory** | BaseFactory | Component registration |
-| **astrai.protocols** | OptimizerProtocol, SchedulerProtocol | Structural subtyping for optimizer/scheduler wrappers |
 
 ## Design Patterns
 
@@ -1461,6 +1444,6 @@ classDiagram
 8. **Checkpoint**: `Checkpoint` saves/loads safetensors + metadata; `CheckpointCallback` performs rank-0 training saves, with extra state saved as `{key}.pt`
 9. **Scheduler**: `SchedulerFactory` creates `CosineScheduler`/`SGDRScheduler`/`WSDScheduler`
 10. **AutoModel**: `from_pretrained()` loads `config.json` + `model.safetensors`, `_disable_random_init` replaces `nn.init.*` with no-ops
-11. **Protocols**: `OptimizerProtocol` / `SchedulerProtocol` — structural subtyping for `AccumOptimizer` / `AccumScheduler` wrappers
+11. **Protocols**: `OptimizerProtocol` / `SchedulerProtocol` define the structural contracts used by `TrainContext`
 
-> Document Update Time: 2026-09-20
+> Document Update Time: 2026-10-12

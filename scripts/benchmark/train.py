@@ -26,7 +26,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 from astrai.extension.kernel.cross_entropy import linear_cross_entropy
 from astrai.model import AutoRegressiveLM
-from astrai.optim.muon_adamw import MuonAdamW
+from astrai.optimization.optimizer.muon import MuonAdamW
 from astrai.parallel.executor import FSDPExecutor
 
 SMOKE_CASES = [
@@ -583,7 +583,7 @@ def _run_stats(args, torch):
 def _run_muon(args, torch):
     """Measure single-stream Muon and optionally compare NS buffer reuse."""
     from astrai.model import AutoRegressiveLM
-    from astrai.optim.muon_adamw import MuonAdamW
+    from astrai.optimization.optimizer.muon import MuonAdamW
 
     result = {
         "model_path": str(args.model_path),
@@ -778,7 +778,9 @@ def _muon_reshard(args, candidate):
     if args.compare not in _RESHARD_COMPARISONS:
         yield
         return
-    module = importlib.import_module("astrai.optim.muon_adamw")
+    module = importlib.import_module(
+        "astrai.optimization.optimizer.muon.strategies.dtensor"
+    )
     distribute = module.distribute_tensor
 
     def variant(tensor, mesh, placements, **kwargs):

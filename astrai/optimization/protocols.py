@@ -1,4 +1,4 @@
-"""Training component protocols — structural subtyping for optimizer/scheduler wrappers."""
+"""Structural subtyping for optimizer and scheduler wrappers."""
 
 from typing import Any, Protocol, runtime_checkable
 

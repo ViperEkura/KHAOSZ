@@ -10,9 +10,9 @@ from torch.utils.data import Dataset
 
 from astrai.config import TrainConfig
 from astrai.model.autoregressive_lm import AutoRegressiveLM
+from astrai.optimization.scheduler import SchedulerFactory
 from astrai.signal_handler import register_signal_handlers
 from astrai.trainer import Trainer
-from astrai.trainer.schedule import SchedulerFactory
 from astrai.trainer.train_context import TrainContext
 from tests.support.checkpoint import load_checkpoint_meta
 from tests.support.models import make_tiny_config

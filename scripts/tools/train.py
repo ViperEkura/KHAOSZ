@@ -24,8 +24,9 @@ from astrai.config.train_config import (
 from astrai.dataset import DatasetFactory, dpo_collate_fn, grpo_collate_fn
 from astrai.model import AutoRegressiveLM, ValueModel
 from astrai.model.components.mlp import MLP
-from astrai.optim import OptimizerFactory
-from astrai.trainer import SchedulerFactory, Trainer
+from astrai.optimization.optimizer import OptimizerFactory
+from astrai.optimization.scheduler import SchedulerFactory
+from astrai.trainer import Trainer
 from astrai.trainer.strategy import StrategyFactory
 
 # Re-exported under its historical name for tests importing it from here.

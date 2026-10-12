@@ -1,15 +1,15 @@
-"""Optimizer implementations and factory registration."""
+"""Training optimizer implementations and factory registration."""
 
-from astrai.optim.composite import (
-    OptimizerFactory,
+from .composite import (
     composite_state_dict,
     composite_step,
     composite_zero_grad,
     refresh_param_groups,
 )
-from astrai.optim.mano_adamw import Mano, ManoAdamW
-from astrai.optim.muon_adamw import MuonAdamW
-from astrai.optim.nora_nadamw import (
+from .factory import OptimizerFactory
+from .mano_adamw import Mano, ManoAdamW
+from .muon import MuonAdamW
+from .nora_nadamw import (
     NAdamW,
     Nora,
     NoraNAdamW,

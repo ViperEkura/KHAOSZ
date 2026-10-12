@@ -13,13 +13,13 @@ from astrai.model.components.embedding import Embedding
 from astrai.model.components.linear import Linear
 from astrai.model.components.lora import LoRALinear
 from astrai.model.components.norm import RMSNorm
-from astrai.optim.composite import (
-    OptimizerFactory,
+from astrai.optimization.optimizer.composite import (
     composite_state_dict,
     composite_step,
     composite_zero_grad,
     refresh_param_groups,
 )
+from astrai.optimization.optimizer.factory import OptimizerFactory
 
 NORA_EPS = 1e-10
 

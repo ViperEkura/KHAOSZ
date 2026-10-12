@@ -14,6 +14,7 @@ from astrai.config.train_config import TrainConfig, _TrainRuntimeDependencies
 from astrai.dataset import RDSampler
 from astrai.inference.core.scheduler import Scheduler
 from astrai.model.components.lora import inject_lora
+from astrai.optimization.protocols import OptimizerProtocol, SchedulerProtocol
 from astrai.parallel.cp import CPState, CPStrategy, LossReduction
 from astrai.parallel.executor import (
     BaseExecutor,
@@ -24,7 +25,6 @@ from astrai.parallel.executor import (
 from astrai.parallel.setup import get_current_device, get_rank, get_world_size
 from astrai.parallel.topology import ParallelTopology, build_topology
 from astrai.parallel.tp import TPState
-from astrai.protocols import OptimizerProtocol, SchedulerProtocol
 from astrai.serialization import (
     Checkpoint,
     adapt_config,

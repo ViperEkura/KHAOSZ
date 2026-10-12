@@ -9,7 +9,7 @@ from astrai.config import TrainConfig
 from astrai.model import AutoRegressiveLM
 from astrai.model.components.linear import Linear
 from astrai.model.components.lora import LoRALinear, inject_lora
-from astrai.optim import (
+from astrai.optimization.optimizer import (
     NAdamW,
     Nora,
     NoraNAdamW,
@@ -17,7 +17,7 @@ from astrai.optim import (
     nora_lr_scale,
     partition_optimizer_parameters,
 )
-from astrai.trainer.schedule import SchedulerFactory
+from astrai.optimization.scheduler import SchedulerFactory
 from tests.support.models import make_tiny_config
 
 

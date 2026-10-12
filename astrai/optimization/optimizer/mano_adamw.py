@@ -13,14 +13,14 @@ import torch
 from torch import nn, optim
 from torch.optim import Optimizer
 
-from astrai.optim.composite import (
-    OptimizerFactory,
+from astrai.optimization.optimizer.composite import (
     composite_state_dict,
     composite_step,
     composite_zero_grad,
     refresh_param_groups,
 )
-from astrai.optim.nora_nadamw import partition_optimizer_parameters
+from astrai.optimization.optimizer.factory import OptimizerFactory
+from astrai.optimization.optimizer.nora_nadamw import partition_optimizer_parameters
 
 
 class Mano(Optimizer):

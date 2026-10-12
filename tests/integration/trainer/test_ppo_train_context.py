@@ -11,11 +11,11 @@ import torch
 from astrai.config import TrainConfig
 from astrai.model.autoregressive_lm import AutoRegressiveLM
 from astrai.model.value import ValueModel
+from astrai.optimization.scheduler import SchedulerFactory
 from astrai.serialization import Checkpoint
 from astrai.trainer.backend import ColocatedBackend, P2PCopyPublisher, ReplicaBackend
 from astrai.trainer.callbacks import CheckpointCallback
 from astrai.trainer.rollout import BaseRewardModel, RolloutEvaluator
-from astrai.trainer.schedule import SchedulerFactory
 from astrai.trainer.strategy import GRPOStrategy, PPOStrategy
 from astrai.trainer.train_context import TrainContext, TrainContextBuilder
 from astrai.trainer.trainer import Trainer

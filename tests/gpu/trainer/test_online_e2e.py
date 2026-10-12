@@ -10,12 +10,12 @@ import torch
 from torch.utils.data import Dataset, Subset
 
 from astrai.config import TrainConfig
+from astrai.optimization.scheduler import SchedulerFactory
 from astrai.serialization import Checkpoint
 from astrai.trainer.rollout import BaseRewardModel
 from astrai.trainer.rollout.async_round import AsyncRoundCoordinator
 from astrai.trainer.rollout.nccl_transport import NCCLWeightChannel
 from astrai.trainer.rollout.types import SamplingParams
-from astrai.trainer.schedule import SchedulerFactory
 from astrai.trainer.trainer import Trainer
 from tests.support.tokenizers import CHAT_TEMPLATE
 from tests.support.trainer import (

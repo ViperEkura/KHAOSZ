@@ -29,7 +29,7 @@ from astrai.extension.kernel.cross_entropy import (
     linear_cross_entropy,
 )
 from astrai.model.autoregressive_lm import AutoRegressiveLM
-from astrai.optim.muon_adamw import MuonAdamW
+from astrai.optimization.optimizer.muon import MuonAdamW
 from astrai.trainer.strategy import SEQStrategy
 
 
