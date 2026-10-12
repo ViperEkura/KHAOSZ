@@ -240,7 +240,8 @@ See [Inference Guide](docs/guides/inference.md) for SSE streaming format, error 
 | [Data Flow](./docs/developer/dataflow.md) | Data pipeline, storage backends & dataset architecture |
 | [Internals](./docs/developer/internals.md) | Training internals: loss formulas, callback lifecycle, KV cache |
 | [Trainer Internals](./docs/developer/trainer/README.md) | Training ownership, session cleanup, config snapshots and strategy registration |
-| [CUDA Kernels](./docs/developer/kernels/README.md) | Custom CUDA attention kernels & benchmarks |
+| [Test Suites](./docs/developer/testing.md) | Unit / integration / GPU tier layout, skip rules, CI entry |
+| [CUDA Kernels](./docs/developer/kernels/README.md) | CUDA kernel math contracts, design notes & build (GEMM, attention, RoPE, cross-entropy, FP8) |
 | [Docker Serving](./docs/developer/docker/serving.md) | YAML-driven containerized serving (`serve.yaml`, `serve.sh`) |
 | [Docker Training](./docs/developer/docker/training.md) | YAML-driven containerized training (`train.yaml`, `train.sh`) |
 

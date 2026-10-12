@@ -228,5 +228,6 @@ Replace angle-bracket placeholders before running these commands. Sweep files
 are measurement artifacts rather than checked-in benchmark data.
 A faster individual kernel must also pass the complete recurrence benchmark
 before selecting it for optimizer use.
-A shape-held-out [cost-model validation report](../../reports/ns-dispatch-cost-2026-10-08.md)
-records one measured device and the architecture compile coverage.
+A locally held shape-held-out cost-model validation report records one
+measured device and the architecture compile coverage; the report file is
+excluded from version control.
