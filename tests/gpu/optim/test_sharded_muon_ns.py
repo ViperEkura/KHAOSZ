@@ -13,7 +13,7 @@ from torch import nn
 from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.tensor import Shard, distribute_tensor
 
-from astrai.extension.backend import newton_schulz as backend
+from astrai.extension.backend.newton_schulz import cuda as ns_cuda
 from astrai.extension.kernel.newton_schulz import is_available
 from astrai.extension.policy import newton_schulz as plan
 from astrai.optim.muon_adamw import _ShardedMuon
@@ -44,7 +44,7 @@ def _worker(rank, world, rendezvous, output, nesterov):
         wanted = torch.optim.Muon([expected], lr=0.001, nesterov=nesterov)
         got = _ShardedMuon([actual], lr=0.001, nesterov=nesterov, use_ns_kernels=True)
         launches = []
-        original = backend.cuda.iterate
+        original = ns_cuda.iterate
 
         def observed(matrix, *args):
             launches.append(
@@ -55,7 +55,7 @@ def _worker(rank, world, rendezvous, output, nesterov):
             )
             return original(matrix, *args)
 
-        backend.cuda.iterate = observed
+        ns_cuda.iterate = observed
         torch.cuda.reset_peak_memory_stats()
         with plan.override(_small_plans()):
             for seed, scale in enumerate((0.0, 1e-9, 1.0, 0.0, 0.2)):
