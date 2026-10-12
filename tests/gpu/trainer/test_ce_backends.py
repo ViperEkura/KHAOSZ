@@ -1,16 +1,18 @@
 import copy
 import os
+from unittest.mock import patch
 
 import pytest
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.distributed.fsdp import fully_shard
+from torch.distributed.tensor import DTensor
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from astrai.config.model_config import AutoRegressiveLMConfig
 from astrai.extension import ATTN_BACKEND, attn_backend
-from astrai.extension.kernel.cross_entropy import is_available
+from astrai.extension.kernel.cross_entropy import is_available, linear_cross_entropy
 from astrai.model.autoregressive_lm import AutoRegressiveLM
 from astrai.parallel.cp import CPState, CPStrategy
 from astrai.parallel.topology import ParallelTopology
@@ -186,20 +188,32 @@ def _fsdp_worker(rank, init_file):
         reference = copy.deepcopy(sharded)
         fully_shard(sharded.lm_head, reshard_after_forward=False)
         data = batch("cuda:" + str(rank))
-        actual = SEQStrategy(
-            sharded, "cuda:" + str(rank), loss_backend="cuda_linear_ce"
-        ).compute_loss(data)
+        with patch(
+            "astrai.extension.kernel.cross_entropy.linear_cross_entropy",
+            wraps=linear_cross_entropy,
+        ) as fused:
+            actual = SEQStrategy(
+                sharded, "cuda:" + str(rank), loss_backend="cuda_linear_ce"
+            ).compute_loss(data)
+        assert fused.call_count == 1
         expected = SEQStrategy(reference, "cuda:" + str(rank)).compute_loss(data)
         torch.testing.assert_close(actual, expected, rtol=2e-4, atol=2e-4)
         actual.backward()
-        assert sharded.lm_head.weight.grad is not None
+        expected.backward()
+        assert isinstance(sharded.lm_head.weight.grad, DTensor)
+        torch.testing.assert_close(
+            sharded.lm_head.weight.grad.full_tensor(),
+            reference.lm_head.weight.grad,
+            rtol=0.05,
+            atol=0.01,
+        )
     finally:
         dist.destroy_process_group()
 
 
 @skip_no_ce
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="needs two GPUs")
-def test_fsdp_head_fallback(tmp_path):
+def test_fsdp_head_fused_ce(tmp_path):
     mp.spawn(
         _fsdp_worker, args=(os.fspath(tmp_path / "init_fsdp"),), nprocs=2, join=True
     )

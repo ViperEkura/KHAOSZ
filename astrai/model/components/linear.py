@@ -30,3 +30,40 @@ class Linear(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         return F.linear(x, self.weight, self.bias)
+
+
+class LinearCrossEntropyHead(Linear):
+    """Language-model head that can compute CE inside its FSDP forward."""
+
+    def forward(
+        self,
+        x: Tensor,
+        targets: Tensor | None = None,
+        *,
+        label_smoothing: float = 0.0,
+        chunk_size: int = 512,
+    ) -> Tensor:
+        if targets is None:
+            return super().forward(x)
+        if targets.shape != x.shape[:-1]:
+            raise ValueError("targets must match the training token shape")
+        from astrai.extension.kernel.cross_entropy import (
+            is_available,
+            linear_cross_entropy,
+        )
+
+        if self.bias is None and x.is_cuda and is_available():
+            return linear_cross_entropy(
+                x.reshape(-1, x.shape[-1]),
+                self.weight,
+                targets.reshape(-1),
+                label_smoothing=label_smoothing,
+                chunk_size=chunk_size,
+            )
+        logits = super().forward(x)
+        return F.cross_entropy(
+            logits.reshape(-1, logits.shape[-1]).float(),
+            targets.reshape(-1),
+            label_smoothing=label_smoothing,
+            reduction="sum",
+        )
