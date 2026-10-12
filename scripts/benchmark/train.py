@@ -1,19 +1,33 @@
-"""Bounded, configurable single-GPU AstrAI training and statistics benchmark.
+"""AstrAI training benchmarks for single-GPU smoke and distributed comparisons.
 
-Use a free physical GPU only. The script refuses a selected GPU with another
-compute process and limits PyTorch to a fraction of its memory.
+Single-GPU modes require an idle physical GPU and limit PyTorch memory.
+Distributed comparisons use --compare and --gpus with ABBA timing.
 """
 
 import argparse
 import gc
+import importlib
 import json
 import math
 import os
 import statistics
 import subprocess
+import sys
 import time
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
+
+import torch
+import torch.distributed as dist
+import torch.nn.functional as F
+from torch.distributed.fsdp import FSDPModule
+from torch.nn.parallel import DistributedDataParallel as DDP
+
+from astrai.extension.kernel.cross_entropy import linear_cross_entropy
+from astrai.model import AutoRegressiveLM
+from astrai.optim.muon_adamw import MuonAdamW
+from astrai.parallel.executor import FSDPExecutor
 
 SMOKE_CASES = [
     {
@@ -187,8 +201,8 @@ def _run_case(case, torch):
 
     from astrai.config.model_config import AutoRegressiveLMConfig
     from astrai.model import AutoRegressiveLM
-    from astrai.trainer.metric_util import GradSNRTracker
-    from astrai.trainer.strategy import _collect_moe_diagnostics
+    from astrai.trainer.callbacks.metric_util import GradSNRTracker
+    from astrai.trainer.strategy.ops import _collect_moe_diagnostics
 
     config = AutoRegressiveLMConfig(
         vocab_size=case["vocab_size"],
@@ -306,9 +320,9 @@ def _run_stats(args, torch):
 
     from astrai.config.model_config import AutoRegressiveLMConfig
     from astrai.model import AutoRegressiveLM
-    from astrai.trainer.metric_util import GradSNRTracker
-    from astrai.trainer.strategy import _collect_moe_diagnostics
-    from astrai.trainer.train_callback import MetricCallback
+    from astrai.trainer.callbacks.metric_util import GradSNRTracker
+    from astrai.trainer.callbacks.metrics import MetricCallback
+    from astrai.trainer.strategy.ops import _collect_moe_diagnostics
 
     device = "cuda"
     result = {}
@@ -635,6 +649,374 @@ def _run_muon(args, torch):
     return result
 
 
+COMPARES = (
+    "muon-step",
+    "muon-reshard",
+    "muon-train",
+    "wrap",
+    "ce",
+    "microbatch",
+    "reshard",
+    "no-sync",
+    "keep-unsharded",
+    "ddp",
+)
+_OPTIMIZER_ONLY = {"muon-step", "muon-reshard"}
+_REBUILD = {"wrap", "ddp"}
+_KERNEL_COMPARISONS = {"muon-step", "muon-train"}
+_RESHARD_COMPARISONS = {"muon-reshard", "reshard"}
+
+
+def validate_train_args(args):
+    if args.batch is None:
+        args.batch = (
+            2 if args.compare in {"muon-train", "wrap", "ce", "microbatch"} else 4
+        )
+    if args.accum is None:
+        args.accum = (
+            8 if args.compare in {"muon-train", "wrap", "ce", "microbatch"} else 4
+        )
+    for name in ("batch", "seq", "accum", "rounds", "ns_batch_size", "loss_chunk_size"):
+        if getattr(args, name) < 1:
+            raise ValueError(f"--{name.replace('_', '-')} must be positive")
+    if args.warmup < 0:
+        raise ValueError("--warmup must be nonnegative")
+    if args.compare == "microbatch" and args.accum % 2:
+        raise ValueError("--accum must be even for the microbatch comparison")
+
+
+def _names(args):
+    if args.compare == "microbatch":
+        return (
+            f"batch{args.batch}_accum{args.accum}",
+            f"batch{args.batch * 2}_accum{args.accum // 2}",
+        )
+    return {
+        "muon-step": ("independent_ns", "batched_ns"),
+        "muon-reshard": ("scatter", "local_shard"),
+        "muon-train": ("independent_ns", "batched_ns"),
+        "wrap": ("coarse", "layer"),
+        "ce": ("torch_ce", "fused_ce"),
+        "reshard": ("scatter", "local_shard"),
+        "no-sync": ("recursive", "per_module"),
+        "keep-unsharded": ("reshard_backward", "keep_unsharded"),
+        "ddp": ("fsdp", "ddp"),
+    }[args.compare]
+
+
+def _build(args, local_rank, candidate):
+    torch.manual_seed(7)
+    model = (
+        AutoRegressiveLM.from_pretrained(args.model)
+        .to(device="cuda", dtype=torch.bfloat16)
+        .train()
+    )
+    executor = None
+    if args.compare == "ddp" and candidate:
+        model = DDP(model, device_ids=[local_rank])
+    else:
+        layerwise = args.compare not in {
+            "muon-step",
+            "muon-reshard",
+            "muon-train",
+        } and not (args.compare == "wrap" and not candidate)
+        executor = FSDPExecutor(grad_accum_steps=args.accum, layerwise=layerwise)
+        model = executor._prepare_model(model)
+    parameters = sum(param.numel() for param in model.parameters())
+    optimizer = MuonAdamW(
+        model,
+        lr=1e-5,
+        ns_steps=5,
+        use_ns_kernels=args.compare not in _KERNEL_COMPARISONS,
+        ns_batch_size=args.ns_batch_size,
+    )
+    if args.compare in _OPTIMIZER_ONLY:
+        for param in model.parameters():
+            if param.requires_grad:
+                param.grad = torch.ones_like(param) * 0.01
+    return {
+        "model": model,
+        "optimizer": optimizer,
+        "executor": executor,
+        "modules": [m for m in model.modules() if isinstance(m, FSDPModule)],
+        "parameters": parameters,
+    }
+
+
+@contextmanager
+def _manual_no_sync(modules, *, recurse, keep_unsharded):
+    if keep_unsharded:
+        for module in modules:
+            module.set_reshard_after_backward(False, recurse=False)
+    for module in modules:
+        module.set_requires_gradient_sync(False, recurse=recurse)
+    try:
+        yield
+    finally:
+        for module in modules:
+            module.set_requires_gradient_sync(True, recurse=recurse)
+        if keep_unsharded:
+            for module in modules:
+                module.set_reshard_after_backward(True, recurse=False)
+
+
+def _no_sync(state, args, candidate):
+    model = state["model"]
+    if isinstance(model, DDP):
+        return model.no_sync()
+    if args.compare == "ddp":
+        return state["executor"]._no_sync(model)
+    return _manual_no_sync(
+        state["modules"],
+        recurse=not (args.compare == "no-sync" and candidate),
+        keep_unsharded=args.compare == "keep-unsharded" and candidate,
+    )
+
+
+@contextmanager
+def _muon_reshard(args, candidate):
+    if args.compare not in _RESHARD_COMPARISONS:
+        yield
+        return
+    module = importlib.import_module("astrai.optim.muon_adamw")
+    distribute = module.distribute_tensor
+
+    def variant(tensor, mesh, placements, **kwargs):
+        return distribute(
+            tensor, mesh, placements, src_data_rank=None if candidate else 0
+        )
+
+    module.distribute_tensor = variant
+    try:
+        yield
+    finally:
+        module.distribute_tensor = distribute
+
+
+def _inputs(args, rank):
+    torch.manual_seed(20261012 + rank)
+    batch = args.batch * 2 if args.compare == "microbatch" else args.batch
+    return (
+        torch.randint(0, 100000, (batch, args.seq), device="cuda"),
+        torch.randint(0, 100000, (batch, args.seq), device="cuda"),
+    )
+
+
+def _step(state, args, candidate, inputs, targets):
+    model = state["model"]
+    optimizer = state["optimizer"]
+    with _muon_reshard(args, candidate):
+        if args.compare in _KERNEL_COMPARISONS:
+            optimizer.muon.use_ns_kernels = candidate
+        if args.compare in _OPTIMIZER_ONLY:
+            optimizer.step()
+            return None
+        optimizer.zero_grad(set_to_none=True)
+        accum = (
+            args.accum // 2
+            if args.compare == "microbatch" and candidate
+            else args.accum
+        )
+        for microbatch in range(accum):
+            scope = (
+                nullcontext()
+                if microbatch == accum - 1
+                else _no_sync(state, args, candidate)
+            )
+            with scope:
+                if args.compare == "microbatch" and not candidate:
+                    index = microbatch % 2
+                    x = inputs[index * args.batch : (index + 1) * args.batch]
+                    y = targets[index * args.batch : (index + 1) * args.batch]
+                else:
+                    x, y = inputs, targets
+                if args.compare in {"muon-train", "wrap"} or (
+                    args.compare == "ce" and not candidate
+                ):
+                    logits = model(x)["logits"]
+                    loss = F.cross_entropy(logits.float().flatten(0, 1), y.flatten())
+                else:
+                    outputs = model(x, skip_lm_head=True, return_lm_head_weight=True)
+                    if isinstance(model, DDP):
+                        loss = (
+                            linear_cross_entropy(
+                                outputs["hidden_states"].flatten(0, 1),
+                                outputs["lm_head_weight"],
+                                y.flatten(),
+                                chunk_size=args.loss_chunk_size,
+                            )
+                            / y.numel()
+                        )
+                    else:
+                        loss = (
+                            model.lm_head(
+                                outputs["hidden_states"],
+                                targets=y,
+                                chunk_size=args.loss_chunk_size,
+                            )
+                            / y.numel()
+                        )
+                (loss / accum).backward()
+        optimizer.step()
+        return loss.detach()
+
+
+def _measure(state, args, candidate, inputs, targets, name):
+    dist.barrier()
+    torch.cuda.synchronize()
+    torch.cuda.reset_peak_memory_stats()
+    start = time.perf_counter()
+    loss = _step(state, args, candidate, inputs, targets)
+    torch.cuda.synchronize()
+    elapsed = torch.tensor([1000 * (time.perf_counter() - start)], device="cuda")
+    peak = torch.tensor([torch.cuda.max_memory_allocated() / 2**20], device="cuda")
+    dist.all_reduce(elapsed, op=dist.ReduceOp.MAX)
+    peaks = [torch.empty_like(peak) for _ in range(dist.get_world_size())]
+    dist.all_gather(peaks, peak)
+    peak_by_rank = [round(value.item(), 1) for value in peaks]
+    return {
+        "variant": name,
+        "ms": round(elapsed.item(), 3),
+        "peak_mib": max(peak_by_rank),
+        "peak_mib_by_rank": peak_by_rank,
+        "loss": None if loss is None else float(loss),
+    }
+
+
+def _release(state):
+    state.clear()
+    gc.collect()
+    torch.cuda.empty_cache()
+    dist.barrier()
+
+
+def run_train(args):
+    rank = int(os.environ["RANK"])
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+    torch.set_num_threads(1)
+    dist.init_process_group("nccl", device_id=torch.device("cuda", local_rank))
+    try:
+        names = _names(args)
+        inputs, targets = (
+            (None, None) if args.compare in _OPTIMIZER_ONLY else _inputs(args, rank)
+        )
+        records = []
+        parameters = None
+        if args.compare in _REBUILD:
+            for _ in range(args.rounds):
+                for candidate in (False, True, True, False):
+                    state = _build(args, local_rank, candidate)
+                    parameters = state["parameters"]
+                    name = names[int(candidate)]
+                    for _ in range(args.warmup):
+                        _step(state, args, candidate, inputs, targets)
+                    record = _measure(state, args, candidate, inputs, targets, name)
+                    if rank == 0:
+                        records.append(record)
+                        print(json.dumps(record), flush=True)
+                    _release(state)
+        else:
+            state = _build(args, local_rank, False)
+            parameters = state["parameters"]
+            for _ in range(args.warmup):
+                for candidate in (False, True):
+                    _step(state, args, candidate, inputs, targets)
+            for _ in range(args.rounds):
+                for candidate in (False, True, True, False):
+                    name = names[int(candidate)]
+                    record = _measure(state, args, candidate, inputs, targets, name)
+                    if rank == 0:
+                        records.append(record)
+                        print(json.dumps(record), flush=True)
+        if rank == 0:
+            tokens = (
+                None
+                if args.compare in _OPTIMIZER_ONLY
+                else args.batch * args.seq * args.accum * dist.get_world_size()
+            )
+            samples = {
+                name: [r["ms"] for r in records if r["variant"] == name]
+                for name in names
+            }
+            peaks = {
+                name: [r["peak_mib"] for r in records if r["variant"] == name]
+                for name in names
+            }
+            result = {
+                "benchmark": "train",
+                "args": {
+                    key: getattr(args, key)
+                    for key in (
+                        "compare",
+                        "model",
+                        "output",
+                        "gpus",
+                        "batch",
+                        "seq",
+                        "accum",
+                        "rounds",
+                        "warmup",
+                        "ns_batch_size",
+                        "loss_chunk_size",
+                    )
+                },
+                "model_parameters": parameters,
+                "world_size": dist.get_world_size(),
+                "visible_gpus": os.environ.get("CUDA_VISIBLE_DEVICES"),
+                "precision": "bf16",
+                "input_tokens_per_step": tokens,
+                "supervised_tokens_per_step": tokens,
+                "records": records,
+                "samples_ms": samples,
+                "peak_allocated_mib": peaks,
+                "median_ms": {
+                    name: statistics.median(values) for name, values in samples.items()
+                },
+            }
+            output = Path(args.output)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(result, indent=2) + "\n")
+            print(json.dumps(result), flush=True)
+    finally:
+        dist.destroy_process_group()
+
+
+def _run_distributed_cli(args, parser):
+    if args.mode != "train":
+        parser.error("--compare applies only to train mode")
+    try:
+        validate_train_args(args)
+        if args.worker:
+            run_train(args)
+            return
+        if not args.gpus:
+            raise ValueError("--gpus is required for a distributed train benchmark")
+        gpus = [item.strip() for item in args.gpus.split(",")]
+        if len(gpus) < 2 or len(set(gpus)) != len(gpus):
+            raise ValueError("--gpus needs at least two distinct GPU indices")
+        if any(not item.isdecimal() for item in gpus):
+            raise ValueError("--gpus must contain nonnegative integer indices")
+    except ValueError as exc:
+        parser.error(str(exc))
+    command = [
+        sys.executable,
+        "-m",
+        "torch.distributed.run",
+        "--standalone",
+        f"--nproc_per_node={len(gpus)}",
+        str(Path(__file__).resolve()),
+        *sys.argv[1:],
+        "--worker",
+    ]
+    if args.dry_run:
+        print(json.dumps({"gpus": gpus, "command": command}, indent=2))
+        return
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = ",".join(gpus)
+    subprocess.run(command, env=env, check=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("train", "stats", "muon"), default="train")
@@ -655,13 +1037,30 @@ def main():
     parser.add_argument(
         "--config", type=Path, help="optional JSON case matrix for train mode"
     )
-    parser.add_argument(
-        "--gpu", type=int, required=True, help="physical nvidia-smi GPU index"
-    )
+    parser.add_argument("--gpu", type=int, help="physical nvidia-smi GPU index")
     parser.add_argument("--memory-fraction", type=float, default=0.15)
-    parser.add_argument("--json-out", type=Path, required=True)
+    parser.add_argument("--json-out", type=Path)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--compare", choices=COMPARES)
+    parser.add_argument("--gpus", help="physical GPU indices, e.g. 4,5,6,7")
+    parser.add_argument("--model", default="models/astrai_seq_0831")
+    parser.add_argument("--output")
+    parser.add_argument("--batch", type=int)
+    parser.add_argument("--seq", type=int, default=2048)
+    parser.add_argument("--accum", type=int)
+    parser.add_argument("--rounds", type=int, default=3)
+    parser.add_argument("--warmup", type=int, default=1)
+    parser.add_argument("--ns-batch-size", type=int, default=4)
+    parser.add_argument("--loss-chunk-size", type=int, default=512)
+    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.compare:
+        if not args.output:
+            parser.error("--output is required with --compare")
+        _run_distributed_cli(args, parser)
+        return
+    if args.gpu is None or args.json_out is None:
+        parser.error("--gpu and --json-out are required without --compare")
     if not 0 < args.memory_fraction <= 0.5:
         parser.error("memory-fraction must be in (0, 0.5]")
     if args.mode == "stats":

@@ -1,6 +1,6 @@
 """Legacy Muon + AdamW combined optimizer."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
@@ -79,19 +79,75 @@ def _single_tensor_muon_reuse_buffers(
                 param.add_(update, alpha=-adjusted_lr)
 
 
-def _sharded_orthogonalize(update: Tensor, group: Mapping) -> Tensor:
-    """Newton-Schulz for a sharded DTensor momentum update.
+_MatrixTriple = tuple[Tensor, Tensor, Tensor]
+_Orthogonalize = Callable[[Tensor, tuple[float, float, float], int, float], Tensor]
 
-    NS needs global matmuls, so gather the update to the full matrix,
-    orthogonalize it, and scatter the result back onto the update's
-    shard layout. ``full_tensor()`` returns the same gathered matrix on
-    every rank, so the scatter is a uniform collective.
-    """
-    full = update.full_tensor()
-    ortho = _zeropower_via_newtonschulz(
-        full, group["ns_coefficients"], group["ns_steps"], group["eps"]
-    )
-    return distribute_tensor(ortho, update.device_mesh, update.placements)
+
+def _batched_sharded_matrices(
+    triples: list[_MatrixTriple], batch_size: int
+) -> Iterator[list[_MatrixTriple]]:
+    """Group matrices that can share one gather and Newton-Schulz call."""
+    buckets: dict[tuple[Any, ...], list[_MatrixTriple]] = {}
+    for param, grad, buf in triples:
+        key = (
+            tuple(grad.shape),
+            grad.device,
+            grad.dtype,
+            buf.dtype,
+            param.dtype,
+            id(grad.device_mesh),
+            tuple(grad.placements),
+        )
+        buckets.setdefault(key, []).append((param, grad, buf))
+    for bucket in buckets.values():
+        for start in range(0, len(bucket), batch_size):
+            yield bucket[start : start + batch_size]
+
+
+def _kernel_orthogonalize(
+    matrix: Tensor, coefficients: tuple[float, float, float], steps: int, eps: float
+) -> Tensor:
+    return newton_schulz(matrix, coefficients, steps, eps, backend="auto")
+
+
+def _step_sharded_muon(
+    chunks: Iterable[list[_MatrixTriple]],
+    group: Mapping,
+    orthogonalize: _Orthogonalize,
+) -> None:
+    """Apply the same sharded momentum and parameter update for either NS path."""
+    lr = _scalar_lr(group["lr"])
+    momentum = group["momentum"]
+    nesterov = group["nesterov"]
+    for chunk in chunks:
+        updates = []
+        for _, grad, buf in chunk:
+            buf.lerp_(grad, 1 - momentum)
+            updates.append(grad.lerp(buf, momentum) if nesterov else buf)
+        packed = torch.stack(updates) if len(updates) > 1 else updates[0]
+        full = packed.full_tensor()
+        ortho = orthogonalize(
+            full, group["ns_coefficients"], group["ns_steps"], group["eps"]
+        )
+        # A one-rank BF16 NS call may normalize its input in place. Stacking
+        # creates new storage, so propagate that state transition to momentum.
+        if (
+            len(updates) > 1
+            and not nesterov
+            and full.dtype == torch.bfloat16
+            and packed.device_mesh.size() == 1
+        ):
+            for index, (_, _, buf) in enumerate(chunk):
+                buf.to_local().copy_(full[index])
+        # Every rank owns the full result after NS and selects its local shard.
+        sharded = distribute_tensor(
+            ortho, packed.device_mesh, packed.placements, src_data_rank=None
+        )
+        results = torch.unbind(sharded, dim=0) if len(updates) > 1 else (sharded,)
+        for (param, _, _), update in zip(chunk, results):
+            adjusted_lr = _adjust_lr(lr, group["adjust_lr_fn"], param.shape)
+            param.mul_(1 - lr * group["weight_decay"])
+            param.add_(update, alpha=-adjusted_lr)
 
 
 class _ShardedMuon(optim.Muon):
@@ -99,8 +155,8 @@ class _ShardedMuon(optim.Muon):
 
     FSDP2 hands this optimizer dim-0 sharded DTensor parameters. The NS
     iteration needs global matmuls: run it on the gathered full matrix,
-    then scatter the orthogonalized update back onto the parameter's
-    sharded layout so momentum buffers and weight decay stay sharded.
+    then select each rank's local orthogonalized shard so momentum
+    buffers and weight decay stay sharded.
     Without this, ``og @ og.T`` produces ``Partial(sum)`` DTensors that
     downstream ``addmm`` calls consume without completing the reduction,
     silently corrupting every update (measured 2e-4-9e-4 relative error
@@ -174,14 +230,14 @@ class _ShardedMuon(optim.Muon):
                     **extra_kwargs,
                 )
 
-            lr = _scalar_lr(group["lr"])
-            for param, grad, buf in sharded:
-                buf.lerp_(grad, 1 - group["momentum"])
-                update = grad.lerp(buf, group["momentum"]) if group["nesterov"] else buf
-
-                adjusted_lr = _adjust_lr(lr, group["adjust_lr_fn"], param.shape)
-                param.mul_(1 - lr * group["weight_decay"])
-                param.add_(_sharded_orthogonalize(update, group), alpha=-adjusted_lr)
+            if sharded:
+                if self.use_ns_kernels:
+                    chunks = _batched_sharded_matrices(sharded, self.ns_batch_size)
+                    orthogonalize = _kernel_orthogonalize
+                else:
+                    chunks = ([triple] for triple in sharded)
+                    orthogonalize = _zeropower_via_newtonschulz
+                _step_sharded_muon(chunks, group, orthogonalize)
         return loss
 
 
