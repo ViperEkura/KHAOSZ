@@ -6,7 +6,7 @@ import threading
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from functools import wraps
-from typing import Callable, Optional
+from typing import Callable, Dict, Optional
 
 import torch
 import torch.distributed as dist
@@ -118,7 +118,7 @@ def _run_single_rank(
     master_port: str,
     device_type: str,
     func: Callable,
-    kwargs: dict,
+    kwargs: Dict,
 ):
     install_early_signal_handlers()
     with setup_parallel(

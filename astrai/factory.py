@@ -22,7 +22,7 @@ T = TypeVar("T")
 
 
 def _resolve_base_type(
-    arg: Union[Type, str, ForwardRef], factory_cls: type
+    arg: Union[Type, str, ForwardRef], factory_cls: Type
 ) -> Optional[Type]:
     """Resolve the generic type-arg T to a concrete class.
 
@@ -149,7 +149,7 @@ class BaseFactory(ABC, Generic[T]):
         return component_cls(*args, **kwargs)
 
     @classmethod
-    def create_from_config(cls, name: str, config: dict, **explicit) -> T:
+    def create_from_config(cls, name: str, config: Dict, **explicit) -> T:
         """Map a broad model config to one registered component's parameters."""
         component_cls = cls.get_component_class(name)
         sig = inspect.signature(component_cls)

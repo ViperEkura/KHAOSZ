@@ -10,6 +10,8 @@ Only the model forward is captured — sampling runs outside the graph
 (via ``torch.multinomial`` which consumes a mutable RNG state).
 """
 
+from typing import Dict, Optional, Set, Tuple
+
 import torch
 from torch import Tensor
 
@@ -44,10 +46,10 @@ class CUDAGraphRunner:
 
     def __init__(self, enabled: bool = False):
         self._enabled = enabled
-        self._graphs: dict[tuple, torch.cuda.CUDAGraph] = {}
-        self._outputs: dict[tuple, dict[str, Tensor]] = {}
-        self._warmed: set[tuple] = set()
-        self._capture_stream: torch.cuda.Stream | None = None
+        self._graphs: Dict[Tuple, torch.cuda.CUDAGraph] = {}
+        self._outputs: Dict[Tuple, Dict[str, Tensor]] = {}
+        self._warmed: Set[Tuple] = set()
+        self._capture_stream: Optional[torch.cuda.Stream] = None
         self._captures_frozen = False
 
     @property
@@ -80,7 +82,7 @@ class CUDAGraphRunner:
         """
         self._captures_frozen = True
 
-    def forward(self, model, *, key, **kwargs) -> dict[str, Tensor]:
+    def forward(self, model, *, key, **kwargs) -> Dict[str, Tensor]:
         """Run ``model(**kwargs)`` via graph replay or live forward.
 
         Args:
@@ -120,5 +122,5 @@ class CUDAGraphRunner:
             self._outputs[key] = model(**kwargs)
         return self._outputs[key]
 
-    def has_graph(self, key: tuple) -> bool:
+    def has_graph(self, key: Tuple) -> bool:
         return key in self._graphs

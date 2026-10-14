@@ -8,7 +8,7 @@ chunk type carries structured output to protocol adapters.
 import asyncio
 import threading
 from collections import deque
-from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
+from typing import Any, Callable, Deque, Dict, List, Optional, Set, Tuple
 
 from astrai.inference.core.events import (
     FINISH_ABORTED,
@@ -48,7 +48,7 @@ class EventQueueSink(OutputEventSink):
     ):
         self._lock = threading.Lock()
         self._queues: Dict[str, Deque[Any]] = {}
-        self._terminal: set[str] = set()
+        self._terminal: Set[str] = set()
         self._async_subscribers: Dict[
             str, Tuple[asyncio.AbstractEventLoop, asyncio.Queue]
         ] = {}

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import statistics
-from typing import Callable, Hashable, TypeVar
+from typing import Callable, Dict, Hashable, List, TypeVar
 
 import torch
 
@@ -22,7 +22,7 @@ def time_operation(operation: Callable[[], torch.Tensor], iterations: int) -> fl
     return start.elapsed_time(end) / iterations
 
 
-def summarize(values: list[float]) -> dict[str, float]:
+def summarize(values: List[float]) -> Dict[str, float]:
     ordered = sorted(values)
     return {
         "median_ms": statistics.median(ordered),
@@ -31,18 +31,18 @@ def summarize(values: list[float]) -> dict[str, float]:
 
 
 def measure_operations(
-    operations: dict[_Key, Callable[[], torch.Tensor]],
+    operations: Dict[_Key, Callable[[], torch.Tensor]],
     *,
     warmup: int,
     iterations: int,
     trials: int,
-) -> dict[_Key, list[float]]:
+) -> Dict[_Key, List[float]]:
     for operation in operations.values():
         for _ in range(warmup):
             operation()
     torch.cuda.synchronize()
 
-    samples: dict[_Key, list[float]] = {name: [] for name in operations}
+    samples: Dict[_Key, List[float]] = {name: [] for name in operations}
     order = tuple(operations)
     # A-B-B-A (or A-B-C-C-B-A) balances cache, clock, and temperature drift.
     for _ in range(trials):

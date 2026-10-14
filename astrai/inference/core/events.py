@@ -12,6 +12,7 @@ that ordering to release per-request state.
 """
 
 from dataclasses import dataclass
+from typing import Tuple
 
 # Finish reasons shared by every entry point.  Protocol adapters map these
 # onto their own vocabularies (OpenAI ``finish_reason``, Anthropic
@@ -48,7 +49,7 @@ class RequestFinished:
     completion_tokens: int = 0
     # Sampled token ids, filled when the consumer asked to keep them
     # (such as rollout); streaming consumers leave it empty.
-    token_ids: tuple = ()
+    token_ids: Tuple = ()
 
 
 @dataclass(frozen=True)

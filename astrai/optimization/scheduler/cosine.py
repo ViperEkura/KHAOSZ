@@ -1,6 +1,7 @@
 """Cosine decay with warmup."""
 
 import math
+from typing import List
 
 from astrai.optimization.scheduler.base import BaseScheduler, SchedulerFactory
 
@@ -23,7 +24,7 @@ class CosineScheduler(BaseScheduler):
         self.total_steps = warmup_steps + lr_decay_steps
         super().__init__(optimizer, last_epoch)
 
-    def get_lr(self) -> list[float]:
+    def get_lr(self) -> List[float]:
         # warmup
         if self.last_epoch < self.warmup_steps:
             warmup_factor = max(

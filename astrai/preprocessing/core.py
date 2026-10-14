@@ -35,7 +35,7 @@ def build_preprocessing_components(config: PipelineConfig, tokenizer_path: str):
     return tokenizer, mask_builder, position_strategy
 
 
-def primary_ids(result: dict) -> List[int]:
+def primary_ids(result: Dict) -> List[int]:
     """Return the first flat int-list value in *result*.
 
     Used for token counting and position-id generation when the
@@ -56,11 +56,11 @@ def infer_dtype(ids: List) -> torch.dtype:
 
 
 def iter_raw_records(
-    records: List[dict],
+    records: List[Dict],
     mask_builder,
     config: PipelineConfig,
     tokenizer,
-) -> Iterator[dict]:
+) -> Iterator[Dict]:
     """Yield mask-builder output dicts for each record, skipping failures.
 
     Drops ``domain`` from the result (callers that need it should read
@@ -79,7 +79,7 @@ def iter_raw_records(
 
 
 def to_per_record_tensors(
-    raw: Dict[str, list],
+    raw: Dict[str, List],
 ) -> Dict[str, List[torch.Tensor]]:
     """Convert an accumulated ``{key: [per-record ids]}`` dict to tensors.
 

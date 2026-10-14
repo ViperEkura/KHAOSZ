@@ -3,7 +3,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional, Self
+from typing import Any, Dict, Optional, Self, Tuple
 
 import torch
 from torch import nn
@@ -56,17 +56,17 @@ class TrainContext:
     scheduler: SchedulerProtocol = field(default=None)
     checkpoint: Checkpoint = field(default=None)
     config: TrainConfig = field(default=None)
-    model_config: dict = field(default_factory=dict)
+    model_config: Dict = field(default_factory=dict)
     executor: BaseExecutor = field(default=None)
     epoch: int = field(default=0)
     consumed_samples: int = field(default=0)
     loss: float = field(default=0.0)
-    metrics: dict[str, float] = field(default_factory=dict)
-    grad_norm: float | None = field(default=None)
+    metrics: Dict[str, float] = field(default_factory=dict)
+    grad_norm: Optional[float] = field(default=None)
     grad_snr_tracker: GradSNRTracker = field(default_factory=GradSNRTracker)
-    grad_snr_value: float | None = field(default=None)
-    val_dataloader: DataLoader | None = field(default=None)
-    val_loss: float | None = field(default=None)
+    grad_snr_value: Optional[float] = field(default=None)
+    val_dataloader: Optional[DataLoader] = field(default=None)
+    val_loss: Optional[float] = field(default=None)
     #: Online-strategy validation: reward-statistics evaluator under its
     #: own sampling params. ``None`` keeps the legacy validate_online path.
     val_evaluator: Optional["RolloutEvaluator"] = field(default=None)
@@ -76,9 +76,9 @@ class TrainContext:
 
     world_size: int = field(default=1)
     rank: int = field(default=0)
-    topology: ParallelTopology | None = field(default=None)
-    kwargs: dict[str, Any] = field(default_factory=dict)
-    param_path: str | None = field(default=None)
+    topology: Optional[ParallelTopology] = field(default=None)
+    kwargs: Dict[str, Any] = field(default_factory=dict)
+    param_path: Optional[str] = field(default=None)
 
     _stop_event: threading.Event = field(default_factory=threading.Event)
 
@@ -117,20 +117,20 @@ class TrainContext:
 
 @dataclass
 class _PreloadedState:
-    model_config: dict = field(default_factory=dict)
-    state_dict: dict | None = None
+    model_config: Dict = field(default_factory=dict)
+    state_dict: Optional[Dict] = None
     epoch: int = 0
     consumed_samples: int = 0
-    checkpoint: Checkpoint | None = None
+    checkpoint: Optional[Checkpoint] = None
 
 
 def create_ref_model(
     model_fn: Callable[[], nn.Module],
-    executor: BaseExecutor | None = None,
-    model: nn.Module | None = None,
-    state_dict: dict[str, torch.Tensor] | None = None,
-    device: str | None = None,
-) -> nn.Module | None:
+    executor: Optional[BaseExecutor] = None,
+    model: Optional[nn.Module] = None,
+    state_dict: Optional[Dict[str, torch.Tensor]] = None,
+    device: Optional[str] = None,
+) -> Optional[nn.Module]:
     """Create a frozen reference model from executor or state dict.
 
     Training-domain helper for the DPO/GRPO reference and old policies: it
@@ -169,11 +169,11 @@ class TrainContextBuilder:
     ):
         self.config = config
         self.runtime = _TrainRuntimeDependencies.capture(config)
-        self._param_path: str | None = None
+        self._param_path: Optional[str] = None
         self._resume: bool = False
-        self._topology: ParallelTopology | None = None
+        self._topology: Optional[ParallelTopology] = None
 
-    def with_param_path(self, param_path: str | None, resume: bool = False) -> Self:
+    def with_param_path(self, param_path: Optional[str], resume: bool = False) -> Self:
         self._param_path = param_path
         self._resume = resume
         return self
@@ -433,7 +433,7 @@ class TrainContextBuilder:
                     )
             restore_checkpoint_extras(context.checkpoint.extra)
 
-    def _create_strategy(self, context: TrainContext, executor: BaseExecutor) -> dict:
+    def _create_strategy(self, context: TrainContext, executor: BaseExecutor) -> Dict:
         cfg = self.config
         cp_state = None
         if self._topology is not None and self._topology.cp_size > 1:
@@ -549,7 +549,7 @@ class TrainContextBuilder:
 
     def _create_critic(
         self, context: TrainContext, executor: BaseExecutor
-    ) -> tuple[nn.Module, OptimizerProtocol]:
+    ) -> Tuple[nn.Module, OptimizerProtocol]:
         """Build the PPO critic and its optimizer, restoring persisted state.
 
         The critic backbone warm-starts from the policy weights (standard
@@ -607,7 +607,7 @@ class TrainContextBuilder:
             )
         return critic, critic_optimizer
 
-    def _configure_rollout(self, context: TrainContext, strategy_kwargs: dict) -> None:
+    def _configure_rollout(self, context: TrainContext, strategy_kwargs: Dict) -> None:
         configure_rollout(
             context=context,
             config=self.config,

@@ -1,7 +1,7 @@
 """Mask contracts for full and recurrent decoder attention."""
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 from torch import Tensor
@@ -46,11 +46,11 @@ def process_attention_mask(
 
 def prepare_decoder_masks(
     input_mask: Optional[Tensor],
-    layer_types: tuple[str, ...],
-) -> dict[str, LayerAttentionMask]:
+    layer_types: Tuple[str, ...],
+) -> Dict[str, LayerAttentionMask]:
     """Prepare one mask per attention type, shared by all matching layers."""
     kinds = set(layer_types)
-    result: dict[str, LayerAttentionMask] = {}
+    result: Dict[str, LayerAttentionMask] = {}
     full_attention = kinds & {"gqa", "mla"}
     if full_attention:
         # Keep a 2-D padding mask on its key axis. The attention backend applies

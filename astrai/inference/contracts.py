@@ -5,7 +5,7 @@ An identity includes an incarnation so a late result cannot hit a reused id.
 """
 
 from dataclasses import dataclass
-from typing import Literal, Optional, Tuple
+from typing import FrozenSet, Literal, Optional, Tuple
 
 
 @dataclass(frozen=True, eq=False)
@@ -118,7 +118,7 @@ class SchedulerOutput:
         return cached
 
     @property
-    def _identity_set(self) -> frozenset:
+    def _identity_set(self) -> FrozenSet:
         # Commit-side membership checks use this instead of rebuilding a
         # set from the tuple on every pending commit.
         cached = self.__dict__.get("_identity_set_cache")

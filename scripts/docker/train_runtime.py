@@ -5,6 +5,7 @@ import math
 import re
 import shlex
 from pathlib import Path
+from typing import Dict
 
 import yaml
 
@@ -12,7 +13,7 @@ ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 DP_MODES = {"auto", "none", "ddp", "fsdp"}
 
 
-def _mapping(value, name: str) -> dict:
+def _mapping(value, name: str) -> Dict:
     if value is None:
         return {}
     if not isinstance(value, dict):
@@ -29,7 +30,7 @@ def _path(value, name: str, config_dir: Path) -> str:
     return str(path.resolve())
 
 
-def load_runtime(config_path: str) -> dict[str, str]:
+def load_runtime(config_path: str) -> Dict[str, str]:
     path = Path(config_path).resolve()
     with path.open(encoding="utf-8") as file:
         config = yaml.safe_load(file) or {}
@@ -153,7 +154,7 @@ def load_runtime(config_path: str) -> dict[str, str]:
     return values
 
 
-def shell_exports(runtime: dict[str, str]) -> str:
+def shell_exports(runtime: Dict[str, str]) -> str:
     return "\n".join(
         f"export {name}={shlex.quote(value)}"
         for name, value in runtime.items()

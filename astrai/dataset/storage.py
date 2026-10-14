@@ -244,7 +244,7 @@ class Store(ABC):
 
     def _normalize(
         self,
-        raw: Dict[str, list],
+        raw: Dict[str, List],
         offsets: Optional[Dict[str, List[int]]] = None,
     ):
         """Register segments and pre-compute indices for both access modes.
@@ -469,22 +469,22 @@ class JsonlSource:
 
     def __init__(self, path: str):
         self.path = Path(path)
-        self._records: Optional[List[dict]] = None
+        self._records: Optional[List[Dict]] = None
 
-    def load(self) -> List[dict]:
+    def load(self) -> List[Dict]:
         if self._records is None:
             self._records = self._read(self.path)
         return self._records
 
     @staticmethod
-    def _read(root: Path) -> List[dict]:
+    def _read(root: Path) -> List[Dict]:
         if root.is_file():
             return JsonlSource._read_file(root)
         return JsonlSource._read_dir(root)
 
     @staticmethod
-    def _read_file(path: Path) -> List[dict]:
-        records: List[dict] = []
+    def _read_file(path: Path) -> List[Dict]:
+        records: List[Dict] = []
         with open(path, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -497,8 +497,8 @@ class JsonlSource:
         return records
 
     @staticmethod
-    def _read_dir(root: Path) -> List[dict]:
-        records: List[dict] = []
+    def _read_dir(root: Path) -> List[Dict]:
+        records: List[Dict] = []
         for jsonl_path in sorted(root.glob("*.jsonl")):
             records.extend(JsonlSource._read_file(jsonl_path))
         return records
@@ -543,7 +543,7 @@ class JsonlStore(Store, Streamable, Recordable):
     ):
         super().__init__(window_size=window_size, stride=stride)
         self._source: Optional[JsonlSource] = None
-        self._processor: Optional[Callable[[dict], Dict[str, Tensor]]] = None
+        self._processor: Optional[Callable[[Dict], Dict[str, Tensor]]] = None
         self._keys_cache: Optional[List[str]] = None
 
     def load(self, path: str, transform=None, processor=None, **kwargs):

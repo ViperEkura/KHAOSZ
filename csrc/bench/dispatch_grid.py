@@ -25,6 +25,7 @@ import csv
 import statistics
 from collections import Counter
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 import click
 import torch
@@ -39,7 +40,7 @@ COMBOS = {
 }
 
 
-def parse_range(value: str) -> list[int]:
+def parse_range(value: str) -> List[int]:
     """START:END:STEP (end inclusive) — the same grid format as -m/-n/-k
     everywhere else in the bench scripts."""
     start, stop, step = (int(x) for x in value.split(":"))
@@ -48,7 +49,7 @@ def parse_range(value: str) -> list[int]:
     return list(range(start, stop + 1, step))
 
 
-def recipe_name(probe: dict, names: list[str]) -> str:
+def recipe_name(probe: Dict, names: List[str]) -> str:
     return f"{names[probe['cta']][1:]}_s{probe['k_stages']}_k_tile{probe['k_tile']}"
 
 
@@ -87,12 +88,12 @@ def recipe_name(probe: dict, names: list[str]) -> str:
 )
 @click.option("--csv", "csv_path", default=None, type=click.Path(path_type=Path))
 def main(
-    m_grid: list[int],
-    n_grid: list[int],
-    k_grid: list[int],
+    m_grid: List[int],
+    n_grid: List[int],
+    k_grid: List[int],
     combos: str,
     planner: str,
-    csv_path: Path | None,
+    csv_path: Optional[Path],
 ):
     # A clean logic map: the shipped builtin rows, no runtime override or
     # injected tier shadowing them (model_capture's --check does the same).
@@ -101,19 +102,19 @@ def main(
     kernel.gemm.set_planner(planner)
     names = kernel.gemm.get_module("gemm").tile_class_names()
 
-    rows_out: list[dict] | None = [] if csv_path is not None else None
+    rows_out: Optional[List[Dict]] = [] if csv_path is not None else None
     for combo in (c for c in combos.split(",") if c):
         act, weight = COMBOS[combo]
-        decisions: Counter[tuple[str, str]] = Counter()
+        decisions: Counter[Tuple[str, str]] = Counter()
         # m boundaries where any (n, k) slice flips its pick, and whether k
         # moves the pick at all for a fixed (m, n).
         m_flips: Counter[int] = Counter()
         k_varies = 0
-        prev_by_nk: dict[tuple[int, int], tuple[str, str]] = {}
-        prev_m: dict[tuple[int, int], int] = {}
+        prev_by_nk: Dict[Tuple[int, int], Tuple[str, str]] = {}
+        prev_m: Dict[Tuple[int, int], int] = {}
         for m in m_grid:
             for n in n_grid:
-                pick_by_k: dict[tuple[str, str], int] = {}
+                pick_by_k: Dict[Tuple[str, str], int] = {}
                 for k in k_grid:
                     d = kernel.gemm.probe(m, n, k, act, weight)
                     dec = (d["source"], recipe_name(d, names))

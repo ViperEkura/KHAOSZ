@@ -1,7 +1,7 @@
 import json
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import click
 import torch
@@ -57,7 +57,7 @@ class BenchmarkResult:
         seq_len: int,
         tokens_per_second: float,
         latency_ms: float,
-        metadata: Optional[dict] = None,
+        metadata: Optional[Dict] = None,
     ):
         self.name = name
         self.batch_size = batch_size
@@ -134,7 +134,7 @@ class GenerationBenchmark:
         workspace: InferenceWorkspace,
         skip_lm_head: bool = False,
         prefill_chunk_size: Optional[int] = None,
-    ) -> list:
+    ) -> List:
         token_ids = torch.randint(
             0,
             self.config.vocab_size,
@@ -173,7 +173,7 @@ class GenerationBenchmark:
         self,
         pool: BlockPool,
         task_cache: KVCacheManager,
-        request_ids: list,
+        request_ids: List,
         seq_len: int,
         workspace: InferenceWorkspace,
     ):
@@ -633,7 +633,7 @@ def benchmark_command(
     config_path: Optional[Path],
 ) -> None:
     """Benchmark model throughput and latency."""
-    dtype_map: dict[str, torch.dtype] = {
+    dtype_map: Dict[str, torch.dtype] = {
         "bfloat16": torch.bfloat16,
         "float16": torch.float16,
         "float32": torch.float32,

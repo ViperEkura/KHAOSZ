@@ -14,6 +14,7 @@ import types
 import typing as t
 from collections import OrderedDict
 from collections.abc import Sequence
+from typing import Dict, List, Optional, Set, Tuple, Type
 
 import click
 import yaml
@@ -31,7 +32,7 @@ class GroupedCommand(click.Command):
     """A ``click.Command`` that renders options grouped by their ``group``."""
 
     def format_options(self, ctx, formatter):
-        groups: OrderedDict[str, list] = OrderedDict()
+        groups: OrderedDict[str, List] = OrderedDict()
         for param in self.get_params(ctx):
             record = param.get_help_record(ctx)
             if record is None:
@@ -78,12 +79,12 @@ def _enable_yaml12_floats() -> None:
 
 def merge_yaml_into_kwargs(
     config_path: str,
-    passed_kwargs: dict,
-    explicit_keys: set[str] | None = None,
+    passed_kwargs: Dict,
+    explicit_keys: Optional[Set[str]] = None,
     sections: Sequence[str] = DEFAULT_YAML_SECTIONS,
-    allowed_keys: Sequence[str] | None = None,
+    allowed_keys: Optional[Sequence[str]] = None,
     strict_unknown: bool = False,
-) -> dict:
+) -> Dict:
     """Merge option defaults, YAML values, then explicit CLI values.
 
     ``sections`` selects which top-level YAML mappings feed the flat kwargs
@@ -98,7 +99,7 @@ def merge_yaml_into_kwargs(
         raise click.UsageError(f"config must be a mapping: {config_path}")
 
     merged = dict(passed_kwargs)
-    seen: set[str] = set()
+    seen: Set[str] = set()
     for section in sections:
         values = cfg.get(section) or {}
         if not isinstance(values, dict):
@@ -144,15 +145,15 @@ class OptSpec:
     group: str
     type: t.Any = AUTO
     default: t.Any = AUTO
-    help: str | None = None
-    choices: Sequence[str] | None = None
+    help: Optional[str] = None
+    choices: Optional[Sequence[str]] = None
     multiple: bool = False
     is_flag: bool = False
     required: bool = False
-    param_decls: tuple[str, ...] = ()
+    param_decls: Tuple[str, ...] = ()
 
 
-def _resolve_hints(config_cls: type) -> dict[str, t.Any]:
+def _resolve_hints(config_cls: Type) -> Dict[str, t.Any]:
     """Resolve field annotations with ``typing.get_type_hints``.
 
     Raw ``Field.type`` stays a string under PEP 563 (``from __future__
@@ -166,7 +167,7 @@ def _resolve_hints(config_cls: type) -> dict[str, t.Any]:
         return {}
 
 
-def _unwrap_optional(annotation: t.Any) -> t.Any | None:
+def _unwrap_optional(annotation: t.Any) -> Optional[t.Any]:
     """Return the single non-None member of an optional annotation."""
     if annotation is None or isinstance(annotation, str):
         return None
@@ -181,8 +182,8 @@ def _unwrap_optional(annotation: t.Any) -> t.Any | None:
 
 def _annotation(
     spec: OptSpec,
-    field: dataclasses.Field | None,
-    hints: dict[str, t.Any] | None = None,
+    field: Optional[dataclasses.Field],
+    hints: Optional[Dict[str, t.Any]] = None,
 ) -> t.Any:
     if field is not None:
         if hints and spec.name in hints:
@@ -195,8 +196,8 @@ def _annotation(
 
 def _click_type(
     spec: OptSpec,
-    field: dataclasses.Field | None,
-    hints: dict[str, t.Any] | None = None,
+    field: Optional[dataclasses.Field],
+    hints: Optional[Dict[str, t.Any]] = None,
     annotation: t.Any = None,
 ) -> t.Any:
     if spec.choices is not None:
@@ -224,7 +225,7 @@ def _click_type(
     )
 
 
-def _resolve_default(spec: OptSpec, field: dataclasses.Field | None) -> t.Any:
+def _resolve_default(spec: OptSpec, field: Optional[dataclasses.Field]) -> t.Any:
     if spec.default is not AUTO:
         return spec.default
     if field is not None:
@@ -237,8 +238,8 @@ def _resolve_default(spec: OptSpec, field: dataclasses.Field | None) -> t.Any:
 
 def _is_flag_pair(
     spec: OptSpec,
-    field: dataclasses.Field | None,
-    hints: dict[str, t.Any] | None = None,
+    field: Optional[dataclasses.Field],
+    hints: Optional[Dict[str, t.Any]] = None,
 ) -> bool:
     if spec.is_flag:
         return False
@@ -248,15 +249,15 @@ def _is_flag_pair(
 
 def option_from_spec(
     spec: OptSpec,
-    fields_by_name: dict[str, dataclasses.Field] | None = None,
-    hints: dict[str, t.Any] | None = None,
+    fields_by_name: Optional[Dict[str, dataclasses.Field]] = None,
+    hints: Optional[Dict[str, t.Any]] = None,
 ) -> t.Callable:
     """Build a grouped ``click.option`` decorator from one spec."""
     fields_by_name = fields_by_name or {}
     hints = hints or {}
     field = fields_by_name.get(spec.name)
 
-    kwargs: dict[str, t.Any] = {
+    kwargs: Dict[str, t.Any] = {
         "cls": GroupedOption,
         "group": spec.group,
     }
@@ -295,7 +296,7 @@ def option_from_spec(
 
 def apply_specs(
     specs: Sequence[OptSpec],
-    config_cls: type | None = None,
+    config_cls: Optional[Type] = None,
 ) -> t.Callable:
     """Apply a table of specs as click options, in table order.
 
@@ -304,8 +305,8 @@ def apply_specs(
     reversed). ``config_cls`` supplies type/default inference for specs whose
     name matches one of its fields.
     """
-    fields_by_name: dict[str, dataclasses.Field] = {}
-    hints: dict[str, t.Any] = {}
+    fields_by_name: Dict[str, dataclasses.Field] = {}
+    hints: Dict[str, t.Any] = {}
     if config_cls is not None:
         fields_by_name = {f.name: f for f in dataclasses.fields(config_cls)}
         hints = _resolve_hints(config_cls)

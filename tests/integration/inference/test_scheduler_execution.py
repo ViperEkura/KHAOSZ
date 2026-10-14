@@ -1,6 +1,7 @@
 """Tests for scheduler concurrency."""
 
 from types import SimpleNamespace
+from typing import List
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -258,7 +259,7 @@ def test_steady_decode_submit_path_is_sync_free(device):
             torch.Tensor.any,
             torch.Tensor.all,
         )
-        calls: list = []
+        calls: List = []
 
         def _spy(name, orig):
             def _impl(self, *a, **k):

@@ -8,6 +8,7 @@ Reference: https://arxiv.org/abs/2601.23000
 """
 
 import math
+from typing import Dict
 
 import torch
 from torch import nn, optim
@@ -187,10 +188,10 @@ class ManoAdamW(Optimizer):
             set_to_none,
         )
 
-    def state_dict(self) -> dict:
+    def state_dict(self) -> Dict:
         return composite_state_dict({"mano": self.mano, "adamw": self.adamw})
 
-    def load_state_dict(self, state_dict: dict):
+    def load_state_dict(self, state_dict: Dict):
         if "muon" in state_dict or "nora" in state_dict:
             raise ValueError(
                 "Checkpoint uses a different optimizer; select the matching "

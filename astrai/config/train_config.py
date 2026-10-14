@@ -9,7 +9,7 @@ from dataclasses import (
     dataclass as plain_dataclass,
 )
 from math import isfinite
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Type
 
 import torch.nn as nn
 from pydantic import ConfigDict, field_validator, model_validator
@@ -163,7 +163,7 @@ class TrainConfig(BaseConfig):
     batch_per_device: int = 4
     grad_accum_steps: int = 1
     max_grad_norm: Optional[float] = 1.0
-    gradient_checkpointing_modules: List[type] = field(default_factory=list)
+    gradient_checkpointing_modules: List[Type] = field(default_factory=list)
     compile_mode: Optional[str] = None
 
     start_epoch: int = 0

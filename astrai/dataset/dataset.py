@@ -71,10 +71,10 @@ def _build_jsonl_transform(
 
 
 def dpo_tokenize(
-    record: dict,
+    record: Dict,
     tokenizer,
     max_len: int = 2048,
-) -> Optional[dict]:
+) -> Optional[Dict]:
     """Tokenize one DPO record into chosen/rejected + masks.
 
     Applies the tokenizer's chat template so token sequences match the
@@ -133,7 +133,7 @@ def dpo_tokenize(
     }
 
 
-def _to_messages(value) -> list:
+def _to_messages(value) -> List:
     """Accept str or conversation list; return message list."""
     if isinstance(value, str):
         return [{"role": "user", "content": value}]
@@ -154,7 +154,7 @@ def _extract_text(value) -> Optional[str]:
 
 
 def dpo_processor(
-    record: dict,
+    record: Dict,
     tokenizer,
     max_len: int = 2048,
 ) -> Dict[str, Tensor]:
@@ -412,7 +412,7 @@ class DatasetFactory(BaseFactory["BaseDataset"]):
         storage_type: str,
         tokenizer_path: Optional[str],
         max_len: int,
-    ) -> Optional[Callable[[dict], Dict[str, Tensor]]]:
+    ) -> Optional[Callable[[Dict], Dict[str, Tensor]]]:
         """Build an on-the-fly tokenisation processor if applicable.
 
         Only raw JSONL + record datasets (DPO/GRPO) need a processor;

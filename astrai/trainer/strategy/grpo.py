@@ -7,6 +7,7 @@ from typing import (
     Dict,
     Iterator,
     Optional,
+    Tuple,
 )
 
 import torch
@@ -122,7 +123,7 @@ class GRPOStrategy(BaseStrategy):
     @staticmethod
     def _validate_overlong_window(
         max_len: Optional[int], buffer_len: int
-    ) -> tuple[Optional[int], int]:
+    ) -> Tuple[Optional[int], int]:
         if max_len is None:
             if buffer_len != 0:
                 raise ValueError(
@@ -158,7 +159,7 @@ class GRPOStrategy(BaseStrategy):
 
     def _shape_overlong_rewards(
         self, rewards: Tensor, token_masks: Tensor
-    ) -> tuple[Tensor, Optional[Tensor]]:
+    ) -> Tuple[Tensor, Optional[Tensor]]:
         if self.overlong_max_len is None:
             return rewards, None
 

@@ -7,6 +7,8 @@ tune, which never do), the candidate filter, the winner's interval
 growth, and the per-device persistence roundtrip.
 """
 
+from typing import List
+
 import pytest
 import torch
 
@@ -79,7 +81,7 @@ class FakeGemm:
     def __init__(self, source: str = "heuristic", override_rows: int = 0):
         self.source = source
         self.override_rows = override_rows
-        self.installs: list[str] = []
+        self.installs: List[str] = []
         self.probes = 0
 
     def config_state(self):
@@ -231,7 +233,7 @@ class TestTuneFlow:
 
     def test_heuristic_shape_tunes_and_persists(self, tmp_path):
         fake = FakeGemm(source="heuristic")
-        measured: list = []
+        measured: List = []
 
         def fake_measure(key, candidates, *call_args):
             measured.extend(candidates)

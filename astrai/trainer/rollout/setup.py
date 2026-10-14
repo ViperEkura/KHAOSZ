@@ -5,7 +5,7 @@ this module owns rollout wiring without owning model restoration or topology.
 """
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Callable, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Type
 
 import torch
 
@@ -98,11 +98,11 @@ def configure_rollout(
     context: "TrainContext",
     config: TrainConfig,
     param_path: Optional[str],
-    strategy_kwargs: dict,
+    strategy_kwargs: Dict,
     create_ref_model: Callable,
     validate: Callable[[BaseExecutor], None],
-    engine_core_cls: type,
-    tokenizer_cls: type,
+    engine_core_cls: Type,
+    tokenizer_cls: Type,
 ) -> None:
     cfg = config
     if not StrategyFactory.capabilities(cfg.strategy).online:
@@ -133,7 +133,7 @@ def configure_rollout(
         )
     train_device = next(context.model.parameters()).device
 
-    def _resolve_device(name: str, value: str | None) -> str | None:
+    def _resolve_device(name: str, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
         if value.startswith("cuda"):
@@ -240,7 +240,7 @@ def configure_rollout(
         return
 
     batch_capacity = group_size * max(1, cfg.batch_per_device)
-    publishers: list = []
+    publishers: List = []
     if rollout_device is None:
         train_backend = _colocated(batch_capacity)
     else:

@@ -32,7 +32,7 @@ import tempfile
 import time
 from datetime import date
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 import click
 import torch
@@ -51,7 +51,7 @@ def cli() -> None:
 # Combo name -> (activation dtype, weight dtype). Scales: int8 operands
 # require their dequant scale, fp8 accept one optionally (a [1] per-tensor
 # scalar), bf16 rejects one. Matches the csrc dispatch (gemm/entry.cu).
-COMBOS: dict[str, tuple[torch.dtype, torch.dtype]] = {
+COMBOS: Dict[str, Tuple[torch.dtype, torch.dtype]] = {
     "w16a16": (torch.bfloat16, torch.bfloat16),
     "w8a16": (torch.bfloat16, torch.int8),
     "w8a8": (torch.int8, torch.int8),
@@ -60,7 +60,7 @@ COMBOS: dict[str, tuple[torch.dtype, torch.dtype]] = {
 }
 
 # GemmPerfClass ids (gemm.cuh): W16A16 / W8A16 / W8A8 / F8A8.
-PERF_CLASS: dict[str, int] = {
+PERF_CLASS: Dict[str, int] = {
     "w16a16": 0,
     "w8a16": 1,
     "w8a8": 2,
@@ -85,7 +85,7 @@ PERF_CLASS: dict[str, int] = {
 # ---------------------------------------------------------------------------
 
 # Operand widths per GemmPerfClass id: W16A16 / W8A16 / W8A8 / F8A8.
-PERF_WIDTH: dict[int, tuple[int, int]] = {0: (2, 2), 1: (2, 1), 2: (1, 1), 3: (1, 1)}
+PERF_WIDTH: Dict[int, Tuple[int, int]] = {0: (2, 2), 1: (2, 1), 2: (1, 1), 3: (1, 1)}
 
 # Name tokens in dataset rows and run headers (the structural spelling the
 # bench writes; the vocabulary itself comes from the binding below).
@@ -102,7 +102,7 @@ _SHARED = (
 )
 
 
-def tile_facts(name: str) -> tuple[int, int, int]:
+def tile_facts(name: str) -> Tuple[int, int, int]:
     """A tile's dispatch key: (cta class, k_stages, k_tile)."""
     m, n, k, _wm, _wn, k_stages = _FACTS_RE.fullmatch(name).groups()
     try:
@@ -120,12 +120,12 @@ def _binding_vocabulary():
     so the vocabulary cannot drift from the compiled manifests."""
     from astrai.extension import kernel  # host-only: no kernel, no device
 
-    ladders: dict[str, list[str]] = {
+    ladders: Dict[str, List[str]] = {
         "TileManifestCross": [],
         "TileManifest": [],
         "TileManifestByte": [],
     }
-    class_of: dict[tuple[int, int], int] = {}
+    class_of: Dict[Tuple[int, int], int] = {}
     for row in kernel.gemm.tile_vocabulary():
         tile = Tile(*row)  # a record that still unpacks like its row
         cw, ba, bb, cta, _k_stages, _k_tile, bm, bn, _wm, _wn, _threads, _smem = tile
@@ -147,11 +147,11 @@ def _binding_vocabulary():
 # match per key — the extension's own rule), so the ladders are the reachable
 # sets as-is.
 LADDERS, _CLASS_OF = _binding_vocabulary()
-REACHABLE: dict[str, tuple[str, ...]] = {
+REACHABLE: Dict[str, Tuple[str, ...]] = {
     ladder: tuple(tiles) for ladder, tiles in LADDERS.items()
 }
 # Every recipe the ladders carry, by name: cta class, ring depth, k-tile depth.
-RECIPES: dict[str, tuple[int, int, int]] = {
+RECIPES: Dict[str, Tuple[int, int, int]] = {
     tile: tile_facts(tile) for tiles in REACHABLE.values() for tile in tiles
 }
 _missing = [t for t in _SHARED if t not in RECIPES]
@@ -182,7 +182,7 @@ def ladder_for(perf_class: int) -> str:
     return ladder_for_widths(*PERF_WIDTH[perf_class])
 
 
-def order_for(perf_class: int) -> tuple[str, ...]:
+def order_for(perf_class: int) -> Tuple[str, ...]:
     """Tie preference for one dtype class: its ladder's manifest order, with
     the model (no row) last — a tie carries no information, so it resolves the
     way dispatch_tile itself would."""
@@ -194,7 +194,7 @@ def short_name(tile: str) -> str:
     return tile.removeprefix("Tile_").removesuffix("_Fast")
 
 
-def reachability_report() -> list[str]:
+def reachability_report() -> List[str]:
     """No lines since the vocabulary came from the binding: the extension
     dedupes on the dispatch key itself (first manifest match per key), so
     every entry this file can see is reachable by construction."""
@@ -205,14 +205,14 @@ def reachability_report() -> list[str]:
 # An over-budget recipe would silently fall back to cp.async during a sweep.
 # class -> CTA (M, N), the inverse of the same map that names the ordinals
 # (policy/gemm/manifest.h's kTileClassCta is the C++ home for these numbers).
-CTA_GEOM: dict[int, tuple[int, int]] = {v: k for k, v in _CLASS_OF.items()}
+CTA_GEOM: Dict[int, Tuple[int, int]] = {v: k for k, v in _CLASS_OF.items()}
 _DTYPE_BYTES = {
     torch.bfloat16: 2,
     torch.int8: 1,
     torch.float8_e4m3fn: 1,
     torch.float8_e5m2: 1,
 }
-BYTES: dict[str, tuple[int, int]] = {
+BYTES: Dict[str, Tuple[int, int]] = {
     combo: (_DTYPE_BYTES[a], _DTYPE_BYTES[b]) for combo, (a, b) in COMBOS.items()
 }
 
@@ -222,7 +222,7 @@ def ring_smem_bytes(k_stages: int, cta: int, k_tile: int, ba: int, bb: int) -> i
     return (k_stages + 1) * k_tile * (bm * ba + bn * bb)
 
 
-def candidate_recipes(combo: str) -> tuple[str, ...]:
+def candidate_recipes(combo: str) -> Tuple[str, ...]:
     """Every recipe a row can select for this combo, in preference order, plus
     the model (no table) reference. Ladder membership carries the width and
     depth rules for free — a kK=32 tile is in no 1-byte ladder, the wide CTA in
@@ -294,7 +294,7 @@ def _check_recipe(perf_class: int, recipe: str) -> None:
         )
 
 
-def _candidate_rows() -> dict[str, str]:
+def _candidate_rows() -> Dict[str, str]:
     """One synthetic open row per candidate, as inline row text — the
     recipe's (cta, k_stages, k_tile) on -1/-1 keys, so the row is the only plan
     source and the planner gates it on the ring and the operand widths,
@@ -305,7 +305,7 @@ def _candidate_rows() -> dict[str, str]:
     }
 
 
-def parse_positive_ints(value: str) -> tuple[int, ...]:
+def parse_positive_ints(value: str) -> Tuple[int, ...]:
     """START:END:STEP (end inclusive) or a comma list.
 
     The stride form is what a tuning grid is described in
@@ -323,7 +323,7 @@ def parse_positive_ints(value: str) -> tuple[int, ...]:
     return tuple(int(part) for part in parts)
 
 
-def parse_gpu_ids(value: Optional[str]) -> Optional[tuple[int, ...]]:
+def parse_gpu_ids(value: Optional[str]) -> Optional[Tuple[int, ...]]:
     if value is None or not value.strip():
         return None
     try:
@@ -337,12 +337,14 @@ def parse_gpu_ids(value: Optional[str]) -> Optional[tuple[int, ...]]:
     return ids
 
 
-def parse_shape(value: str) -> tuple[str, int, int]:
+def parse_shape(value: str) -> Tuple[str, int, int]:
     name, n, k = value.split(":")
     return name, int(n), int(k)
 
 
-def make_scale(operand_dtype: torch.dtype, device: torch.device) -> torch.Tensor | None:
+def make_scale(
+    operand_dtype: torch.dtype, device: torch.device
+) -> Optional[torch.Tensor]:
     # bf16 operands reject scales; int8 requires its dequant scale, fp8
     # takes one optionally — a [1] per-tensor float32 scalar covers both.
     if operand_dtype == torch.bfloat16:
@@ -351,7 +353,7 @@ def make_scale(operand_dtype: torch.dtype, device: torch.device) -> torch.Tensor
 
 
 def random_operand(
-    shape: tuple[int, ...], dtype: torch.dtype, device: torch.device
+    shape: Tuple[int, ...], dtype: torch.dtype, device: torch.device
 ) -> torch.Tensor:
     base = torch.rand(shape, device=device, dtype=torch.float32) * 0.2 - 0.1
     return base.to(dtype)
@@ -373,15 +375,15 @@ def measure(fn, warmup: int, iterations: int, trials: int) -> float:
 
 
 def sweep(
-    m_values: tuple[int, ...],
-    shapes: list[tuple[str, int, int]],
-    combos: tuple[str, ...],
+    m_values: Tuple[int, ...],
+    shapes: List[Tuple[str, int, int]],
+    combos: Tuple[str, ...],
     batch: int,
     warmup: int,
     iterations: int,
     trials: int,
-    wanted: tuple[str, ...] = (),
-) -> list[dict]:
+    wanted: Tuple[str, ...] = (),
+) -> List[Dict]:
     """One process, shape outer loop — every candidate measured back-to-back."""
     if not torch.cuda.is_available():
         raise click.ClickException("CUDA is required")
@@ -394,7 +396,7 @@ def sweep(
     # Compare forced rows with the default no-row heuristic in one process.
     # Keep the serialized recipe label "model" for existing result readers.
     candidate_rows = _candidate_rows()
-    tags: dict[tuple[str, str], str] = {}
+    tags: Dict[Tuple[str, str], str] = {}
     device = torch.device(torch.cuda.current_device())
     no_row_source = "heuristic"
     torch.manual_seed(0)
@@ -473,7 +475,7 @@ def sweep(
     return results
 
 
-def band_edges(values: tuple[int, ...]) -> list[tuple[int, int]]:
+def band_edges(values: Tuple[int, ...]) -> List[Tuple[int, int]]:
     """(min, max] bands for sorted unique values; 0 = open upper."""
     uniq = sorted(set(values))
     if len(uniq) <= 1:
@@ -487,14 +489,14 @@ def band_edges(values: tuple[int, ...]) -> list[tuple[int, int]]:
 
 
 def build_rows(
-    results: list[dict],
+    results: List[Dict],
     min_gain: float = 0.0,
     full_coverage: bool = False,
-) -> list[str]:
+) -> List[str]:
     # (perf_class, m, n) -> {recipe: best tflops across the k/batch grid}.
-    aggregate: dict[tuple[int, int, int], dict[str, float]] = {}
-    m_values: set[int] = set()
-    n_values: set[int] = set()
+    aggregate: Dict[Tuple[int, int, int], Dict[str, float]] = {}
+    m_values: Set[int] = set()
+    n_values: Set[int] = set()
     for point in results:
         expected = (
             {"model", "heuristic"} if point["recipe"] == "model" else {"override"}
@@ -516,7 +518,7 @@ def build_rows(
     m_bands = band_edges(tuple(sorted_m))
     n_bands = band_edges(tuple(sorted_n))
 
-    rows: list[str] = []
+    rows: List[str] = []
     for perf_class in sorted({pt[0] for pt in aggregate}):
         for n_idx, (n_min, n_max) in enumerate(n_bands):
             # Winner per m band at this n band; merge adjacent m runs that
@@ -562,7 +564,7 @@ def build_rows(
     return list(dict.fromkeys(rows))
 
 
-def emit_cpp_rows(rows: list[str]) -> str:
+def emit_cpp_rows(rows: List[str]) -> str:
     """The same rows as TableRow initializers, grouped per class.
 
     Field order is TableRow's own (cta first, then the bands), the cta
@@ -571,7 +573,7 @@ def emit_cpp_rows(rows: list[str]) -> str:
     paste is a straight replacement. The planner checks each class ordinal before storing a row.
     """
     names = get_module("gemm").tile_class_names()
-    by_class: dict[int, list[str]] = {}
+    by_class: Dict[int, List[str]] = {}
     for line in rows:
         m_min, m_max, n_min, n_max, perf, crosswise, cta, k_stages, _raster, k_tile = (
             line.split()
@@ -599,8 +601,8 @@ def emit_cpp_rows(rows: list[str]) -> str:
 
 
 def _best_forced(
-    aggregate: dict[tuple[int, int, int], dict[str, float]],
-    key: tuple[int, int, int],
+    aggregate: Dict[Tuple[int, int, int], Dict[str, float]],
+    key: Tuple[int, int, int],
 ) -> str:
     # Best measured recipe; a tie carries no information, so it resolves the
     # way dispatch_tile itself would: the ladder's manifest order.
@@ -616,8 +618,8 @@ def _best_forced(
 
 
 def _winner(
-    aggregate: dict[tuple[int, int, int], dict[str, float]],
-    key: tuple[int, int, int],
+    aggregate: Dict[Tuple[int, int, int], Dict[str, float]],
+    key: Tuple[int, int, int],
     min_gain: float = 0.0,
 ) -> str:
     # A forced recipe only wins when it beats every other option (model
@@ -643,17 +645,17 @@ def _winner(
 
 
 def _sweep_parallel(
-    m_values: tuple[int, ...],
-    shapes: list[tuple[str, int, int]],
-    combos: tuple[str, ...],
+    m_values: Tuple[int, ...],
+    shapes: List[Tuple[str, int, int]],
+    combos: Tuple[str, ...],
     batch: int,
     warmup: int,
     iterations: int,
     trials: int,
-    wanted: tuple[str, ...],
-    gpu_ids: tuple[int, ...],
+    wanted: Tuple[str, ...],
+    gpu_ids: Tuple[int, ...],
     output: Path,
-) -> list[dict]:
+) -> List[Dict]:
     output = output.resolve()
     if not torch.cuda.is_available():
         raise click.ClickException("CUDA is required")
@@ -683,7 +685,7 @@ def _sweep_parallel(
 
     # Balance approximate work by M while keeping each M's full N x K grid
     # on one GPU. build_rows aggregates over K for each (dtype, M, N).
-    m_shards: list[list[int]] = [[] for _ in gpu_ids]
+    m_shards: List[List[int]] = [[] for _ in gpu_ids]
     shard_costs = [0] * len(gpu_ids)
     for m in sorted(m_values, reverse=True):
         shard = min(
@@ -771,7 +773,7 @@ def _sweep_parallel(
             break
         time.sleep(2)
 
-    results: list[dict] = []
+    results: List[Dict] = []
     for gpu, _process, shard_json, shard_log in workers:
         if not shard_json.is_file():
             raise click.ClickException(
@@ -892,12 +894,12 @@ def _sweep_parallel(
     "with the tiles no row can reach, and exit.",
 )
 def plan_table_command(
-    m_values: tuple[int, ...],
-    shape_values: tuple[str, ...],
-    n_values: tuple[int, ...] | None,
-    k_values: tuple[int, ...] | None,
+    m_values: Tuple[int, ...],
+    shape_values: Tuple[str, ...],
+    n_values: Optional[Tuple[int, ...]],
+    k_values: Optional[Tuple[int, ...]],
     batch: int,
-    combos: tuple[str, ...],
+    combos: Tuple[str, ...],
     output: Path,
     emit: str,
     warmup: int,
@@ -905,10 +907,10 @@ def plan_table_command(
     trials: int,
     min_gain: float,
     full_coverage: bool,
-    save_results: Path | None,
-    results_json: Path | None,
-    recipe_filter: str | None,
-    gpu_ids: Optional[tuple[int, ...]],
+    save_results: Optional[Path],
+    results_json: Optional[Path],
+    recipe_filter: Optional[str],
+    gpu_ids: Optional[Tuple[int, ...]],
     list_recipes: bool,
 ) -> None:
     """Sweep every candidate recipe (interleaved) at the M x shape grid."""
@@ -1020,12 +1022,12 @@ def plan_table_command(
         click.echo(f"use: plan.set_table({output!r})")
 
 
-def parse_holdout_shape(value: str) -> tuple[str, int, int, int]:
+def parse_holdout_shape(value: str) -> Tuple[str, int, int, int]:
     name, m, n, k = value.split(":")
     return name, int(m), int(n), int(k)
 
 
-def apply_table(name: str, path: str | None, hybrid: bool = False) -> None:
+def apply_table(name: str, path: Optional[str], hybrid: bool = False) -> None:
     # Retain explicit old-model comparison and the no-row heuristic reference.
     # Partial tables require hybrid mode; table-only misses are errors.
     if name in ("model", "none"):
@@ -1037,15 +1039,15 @@ def apply_table(name: str, path: str | None, hybrid: bool = False) -> None:
 
 
 def validate(
-    tables: dict[str, str | None],
-    shapes: list[tuple[str, int, int, int]],
-    combos: tuple[str, ...],
+    tables: Dict[str, Optional[str]],
+    shapes: List[Tuple[str, int, int, int]],
+    combos: Tuple[str, ...],
     batch: int,
     warmup: int,
     iterations: int,
     trials: int,
     hybrid: bool = False,
-) -> dict[tuple[str, str], dict[str, float]]:
+) -> Dict[Tuple[str, str], Dict[str, float]]:
     """(combo, shape name) -> {table: best ms}, tables round-robin interleaved."""
     if not torch.cuda.is_available():
         raise click.ClickException("CUDA is required")
@@ -1058,7 +1060,7 @@ def validate(
     device = torch.device(torch.cuda.current_device())
     torch.manual_seed(0)
     names = list(tables)
-    records: dict[tuple[str, str], dict[str, float]] = {}
+    records: Dict[Tuple[str, str], Dict[str, float]] = {}
     for shape_idx, (name, m, n, k) in enumerate(shapes):
         # Alternate the table order per shape so a slow GPU clock drift
         # does not favor whichever table runs first throughout.
@@ -1158,21 +1160,21 @@ def validate(
     help="Optional JSON dump of the per-task best-ms records.",
 )
 def validate_command(
-    tables: tuple[str, ...],
-    shape_values: tuple[str, ...],
-    m_grid: tuple[int, ...] | None,
-    n_grid: tuple[int, ...] | None,
-    k_grid: tuple[int, ...] | None,
-    combos: tuple[str, ...],
+    tables: Tuple[str, ...],
+    shape_values: Tuple[str, ...],
+    m_grid: Optional[Tuple[int, ...]],
+    n_grid: Optional[Tuple[int, ...]],
+    k_grid: Optional[Tuple[int, ...]],
+    combos: Tuple[str, ...],
     batch: int,
     warmup: int,
     iterations: int,
     trials: int,
     mode: str,
-    output: Path | None,
+    output: Optional[Path],
 ) -> None:
     """Holdout: score candidate tables on out-of-grid and llm-ish shapes."""
-    table_map: dict[str, str | None] = {}
+    table_map: Dict[str, Optional[str]] = {}
     for spec in tables:
         name, _, path = spec.partition(":")
         table_map[name] = path if path else None
@@ -1214,7 +1216,7 @@ def validate_command(
         )
         click.echo(f"{table:14s} {total * 1e3:10.1f} ms  {delta:+7.2f}%")
     click.echo("\n=== per-shape deltas vs baseline (%) ===")
-    worst: list[tuple[str, str, float]] = []
+    worst: List[Tuple[str, str, float]] = []
     for (combo, name), best in records.items():
         base = best[baseline]
         parts = []
@@ -1286,7 +1288,7 @@ def _clamp_m_domain(rows_path: Path, floor: int) -> None:
     rows_path.write_text("\n".join(out) + "\n")
 
 
-def _drop_classes(rows_path: Path, classes: set[int]) -> None:
+def _drop_classes(rows_path: Path, classes: Set[int]) -> None:
     """Remove every row keyed for `classes`; their shapes fall through the
     injected file to the class's builtin table at lookup."""
     kept = [
@@ -1297,7 +1299,7 @@ def _drop_classes(rows_path: Path, classes: set[int]) -> None:
     rows_path.write_text("\n".join(kept) + "\n")
 
 
-def _device_facts() -> dict:
+def _device_facts() -> Dict:
     """The device facts the planner prices against, straight from the
     binding (the cache key cannot drift from the autotuner's)."""
     if not torch.cuda.is_available():
@@ -1307,7 +1309,7 @@ def _device_facts() -> dict:
     return facts()
 
 
-def _run(cmd: list[str]) -> str:
+def _run(cmd: List[str]) -> str:
     click.echo(f"+ {' '.join(str(c) for c in cmd)}")
     proc = subprocess.run(
         [str(c) for c in cmd], capture_output=True, text=True, cwd=REPO
@@ -1319,7 +1321,7 @@ def _run(cmd: list[str]) -> str:
     return proc.stdout + proc.stderr
 
 
-def _install(rows_path: Path, out_dir: Path, sig: str, argv: list[str]) -> Path:
+def _install(rows_path: Path, out_dir: Path, sig: str, argv: List[str]) -> Path:
     assert device_signature(_device_facts()) == sig, "signature drifted mid-run"
     out_dir.mkdir(parents=True, exist_ok=True)
     dest = out_dir / f"{sig}.rows"
@@ -1383,19 +1385,19 @@ def _install(rows_path: Path, out_dir: Path, sig: str, argv: list[str]) -> Path:
     " or ~/.astrai/cache/gemm_plans).",
 )
 def main(
-    m_values: str | None,
-    shape_values: tuple[str, ...],
-    n_values: str | None,
-    k_values: str | None,
-    combos: str | None,
+    m_values: Optional[str],
+    shape_values: Tuple[str, ...],
+    n_values: Optional[str],
+    k_values: Optional[str],
+    combos: Optional[str],
     gpus: Optional[str],
     batch: int,
-    warmup: int | None,
-    iterations: int | None,
-    trials: int | None,
-    holdout: tuple[str, ...],
+    warmup: Optional[int],
+    iterations: Optional[int],
+    trials: Optional[int],
+    holdout: Tuple[str, ...],
     skip_validate: bool,
-    out_dir: Path | None,
+    out_dir: Optional[Path],
 ) -> None:
     facts = _device_facts()
     sig = device_signature(facts)
@@ -1462,7 +1464,7 @@ def main(
                 val_cmd += ["--combos", combos]
             val_cmd += timing
 
-            def summarize(report: str) -> list[str]:
+            def summarize(report: str) -> List[str]:
                 regressions = [
                     line for line in report.splitlines() if line.startswith("  tuned ")
                 ]
@@ -1571,7 +1573,7 @@ def diff_command(
     trials,
 ):
     """Emit rows from an interleaved winner-versus-model comparison."""
-    winners: dict[tuple[str, int, int, int], tuple[str, float]] = {}
+    winners: Dict[Tuple[str, int, int, int], Tuple[str, float]] = {}
     for point in json.loads(sweep_json.read_text()):
         if point["recipe"] == "model":
             continue
@@ -1594,7 +1596,7 @@ def diff_command(
     device = torch.device(torch.cuda.current_device())
     torch.manual_seed(0)
 
-    results: list[dict] = []
+    results: List[Dict] = []
     for combo in combos:
         act_dtype, weight_dtype = COMBOS[combo]
         a_scale = make_scale(act_dtype, device)

@@ -6,6 +6,7 @@ import json
 import time
 from functools import partial
 from pathlib import Path
+from typing import Dict, List
 
 import torch
 import torch.distributed as dist
@@ -30,7 +31,7 @@ class MetricCallback(TrainCallback):
         self,
         ckpt_dir: str,
         save_interval: int,
-        metrics: list[str] = None,
+        metrics: List[str] = None,
         val_step: int = 0,
         grad_snr_interval: int = 1,
     ):
@@ -130,7 +131,7 @@ class MetricCallback(TrainCallback):
         context.model.train()
         return avg_loss
 
-    def _run_rollout_validation(self, context: TrainContext) -> dict[str, float]:
+    def _run_rollout_validation(self, context: TrainContext) -> Dict[str, float]:
         """Validation for online strategies via :class:`RolloutEvaluator`.
 
         Reports reward statistics under the evaluator's own sampling
@@ -139,7 +140,7 @@ class MetricCallback(TrainCallback):
         eval mode itself, so no global mode switch is needed here; the
         replay cache and its cadence stay untouched by construction.
         """
-        totals: dict[str, float] = {}
+        totals: Dict[str, float] = {}
         num_batches = 0
         for batch in context.val_dataloader:
             metrics = context.val_evaluator.evaluate(batch)

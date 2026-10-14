@@ -3,6 +3,7 @@
 import threading
 import time
 import uuid
+from typing import Dict
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -114,10 +115,10 @@ def test_online_loop_overlap_generates_and_admits_midstream(device):
 
     scheduler.scheduler._requests.tokenizer = _UnwrappingTokenizer(tok)
 
-    token_counts: dict = {"first": 0, "second": 0}
-    done: dict = {"first": threading.Event(), "second": threading.Event()}
+    token_counts: Dict = {"first": 0, "second": 0}
+    done: Dict = {"first": threading.Event(), "second": threading.Event()}
     tag_by_prompt = {"a" * 8: "first", "b" * 8: "second"}
-    sink_rids: dict = {}
+    sink_rids: Dict = {}
 
     def sink(events):
         for event in events:
@@ -204,7 +205,7 @@ def test_overlap_loop_matches_synchronous_tokens(device):
 
         # Collect the committed token stream through the event sink before
         # release_finished discards the finished requests.
-        stream: dict = {}
+        stream: Dict = {}
         lock = threading.Lock()
 
         def sink(events):

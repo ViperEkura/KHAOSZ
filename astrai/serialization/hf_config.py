@@ -3,13 +3,13 @@
 import json
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, Optional, Union
 
 HF_MAPPING_FILENAME = "hf_mapping.json"
 _MISSING = object()
 
 
-def load_hf_mapping(model_dir: str | Path) -> dict[str, Any] | None:
+def load_hf_mapping(model_dir: Union[str, Path]) -> Optional[Dict[str, Any]]:
     """Read the model-owned mapping, if present."""
     path = Path(model_dir) / HF_MAPPING_FILENAME
     if not path.exists():
@@ -58,7 +58,7 @@ def _get_path(raw: Mapping[str, Any], path: str) -> Any:
     return value
 
 
-def _set_path(result: dict, path: str, value: Any) -> None:
+def _set_path(result: Dict, path: str, value: Any) -> None:
     if not path or any(not part for part in path.split(".")):
         raise ValueError(f"invalid target path: {path!r}")
     target = result
@@ -81,7 +81,7 @@ def _resolve_operand(source: Mapping[str, Any], operand: Any) -> Any:
     raise ValueError("operation operands must be source paths or constant objects")
 
 
-def _apply_operation(source: Mapping[str, Any], result: dict, operation: dict) -> None:
+def _apply_operation(source: Mapping[str, Any], result: Dict, operation: Dict) -> None:
     if not isinstance(operation, dict):
         raise ValueError("each mapping operation must be an object")
     name = operation.get("op")
@@ -122,8 +122,8 @@ def _apply_operation(source: Mapping[str, Any], result: dict, operation: dict) -
 
 
 def convert_hf_config(
-    raw: dict[str, Any], mapping: Mapping[str, Any]
-) -> dict[str, Any]:
+    raw: Dict[str, Any], mapping: Mapping[str, Any]
+) -> Dict[str, Any]:
     """Convert a config with an explicit model-directory mapping."""
     if not isinstance(mapping, Mapping) or mapping.get("version") != 1:
         raise ValueError("HF mapping must be a version 1 object")
@@ -142,7 +142,7 @@ def convert_hf_config(
         raise NotImplementedError(
             "attention_bias / mlp_bias checkpoints are not supported"
         )
-    result: dict[str, Any] = {
+    result: Dict[str, Any] = {
         "model_type": "autoregressive_lm",
         "source_model_type": source.get("model_type", raw.get("model_type")),
     }

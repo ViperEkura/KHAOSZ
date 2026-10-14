@@ -25,7 +25,7 @@ import json
 import statistics
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Dict, Optional, Tuple
 
 import click
 import torch
@@ -65,7 +65,7 @@ GEMM_COMBOS = (
 OP_ORDER = ("bf16", *(label for label, _, _ in GEMM_COMBOS))
 
 
-def parse_positive_ints(value: str) -> tuple[int, ...]:
+def parse_positive_ints(value: str) -> Tuple[int, ...]:
     """START:END:STEP (end inclusive) or a comma list — same grid format as
     the -m/-n/-k options in the other bench scripts."""
     value = value.strip()
@@ -86,7 +86,7 @@ def parse_positive_ints(value: str) -> tuple[int, ...]:
     return values
 
 
-def parse_shape(value: str) -> tuple[str, int, int]:
+def parse_shape(value: str) -> Tuple[str, int, int]:
     parts = value.split(":")
     if len(parts) != 3 or not parts[0]:
         raise click.BadParameter("shape must use NAME:ROWS:COLS")
@@ -101,7 +101,7 @@ def parse_shape(value: str) -> tuple[str, int, int]:
 
 def quantize_operand(
     t: torch.Tensor, dtype: torch.dtype, max_val: float, per_channel: bool
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """Estimate a multiplier and cast through the shared quantize entry.
 
     Weights go per-channel (``[N]`` scales); activations per-tensor (one
@@ -120,15 +120,15 @@ def quantize_operand(
 
 def make_combo_op(
     a: torch.Tensor,
-    a_scale: torch.Tensor | None,
+    a_scale: Optional[torch.Tensor],
     b: torch.Tensor,
-    b_scale: torch.Tensor | None,
+    b_scale: Optional[torch.Tensor],
 ) -> Callable[[], torch.Tensor]:
     """Bind one combo cell into a zero-arg op (lambdas in loops bind late)."""
     return lambda: quant_gemm(a, b, a_scale=a_scale, b_scale=b_scale)
 
 
-def dequantize(t: torch.Tensor, scale: torch.Tensor | None) -> torch.Tensor:
+def dequantize(t: torch.Tensor, scale: Optional[torch.Tensor]) -> torch.Tensor:
     """Undo a quantize pair for the F.linear reference."""
     if scale is None:
         return t
@@ -146,14 +146,14 @@ def benchmark_gemm(
     warmup: int,
     iterations: int,
     trials: int,
-) -> dict[str, object]:
+) -> Dict[str, object]:
     x = (torch.randn(m, k, device="cuda") * 0.05).to(torch.bfloat16)
     w = (torch.randn(n, k, device="cuda") * 0.05).to(torch.bfloat16)
-    acts: dict[str, tuple[torch.Tensor, torch.Tensor | None]] = {
+    acts: Dict[str, Tuple[torch.Tensor, Optional[torch.Tensor]]] = {
         "bf16": (x, None),
         "int8": quantize_operand(x, torch.int8, 127.0, per_channel=True),
     }
-    weights: dict[str, tuple[torch.Tensor, torch.Tensor | None]] = {
+    weights: Dict[str, Tuple[torch.Tensor, Optional[torch.Tensor]]] = {
         "bf16": (w, None),
         "int8": quantize_operand(w, torch.int8, 127.0, per_channel=True),
     }
@@ -161,7 +161,7 @@ def benchmark_gemm(
         acts[label] = quantize_operand(x, dtype, max_val, per_channel=False)
         weights[label] = quantize_operand(w, dtype, max_val, per_channel=True)
 
-    operations: dict[str, Callable[[], torch.Tensor]] = {"bf16": lambda: F.linear(x, w)}
+    operations: Dict[str, Callable[[], torch.Tensor]] = {"bf16": lambda: F.linear(x, w)}
     ref = {}
     for label, a_kind, b_kind in GEMM_COMBOS:
         operations[label] = make_combo_op(*acts[a_kind], *weights[b_kind])
@@ -225,9 +225,9 @@ def benchmark_gemm(
 @click.option("--trials", type=click.IntRange(min=1), default=3, show_default=True)
 @click.option("--seed", type=int, default=0, show_default=True)
 def benchmark_command(
-    output: Path | None,
-    m_values: tuple[int, ...],
-    shape_values: tuple[str, ...],
+    output: Optional[Path],
+    m_values: Tuple[int, ...],
+    shape_values: Tuple[str, ...],
     warmup: int,
     iterations: int,
     trials: int,
@@ -327,7 +327,7 @@ SHAPES = (
 )
 
 
-def dtype_pair(kind: str) -> tuple[torch.dtype, torch.dtype]:
+def dtype_pair(kind: str) -> Tuple[torch.dtype, torch.dtype]:
     return (FP8, FP8) if kind == "fp8" else (torch.bfloat16, torch.bfloat16)
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 from collections.abc import Callable
+from typing import Dict, Optional
 
 from astrai.serialization import Checkpoint
 from astrai.trainer.callbacks.base import CallbackFactory, TrainCallback
@@ -21,7 +22,7 @@ _TOKENIZER_FILES = (
 )
 
 
-def _copy_tokenizer_files(param_path: str | None, save_path: str):
+def _copy_tokenizer_files(param_path: Optional[str], save_path: str):
     """Snapshot tokenizer files into the checkpoint directory.
 
     ``param_path`` is the launch model directory (or, on resume, a
@@ -54,7 +55,7 @@ class CheckpointCallback(TrainCallback):
         save_dir: str,
         interval: int,
         weight_only: bool = False,
-        save_extra_fn: Callable[["TrainContext"], dict] | None = None,
+        save_extra_fn: Optional[Callable[["TrainContext"], Dict]] = None,
     ):
         self.save_dir = save_dir
         self.interval = interval
@@ -113,7 +114,7 @@ class CheckpointCallback(TrainCallback):
             self._save_checkpoint(context)
 
     @staticmethod
-    def save_extra(context: TrainContext) -> dict:
+    def save_extra(context: TrainContext) -> Dict:
         extra = {}
         for name in CheckpointCallback.extra_keys:
             obj = getattr(context, name, None)

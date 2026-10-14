@@ -2,7 +2,7 @@
 
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Dict, List, Set, Tuple
 
 import torch
 from torch import Tensor, nn
@@ -143,7 +143,7 @@ class NAdamW(Optimizer):
         self,
         params,
         lr: float = 3e-4,
-        betas: tuple[float, float] = (0.9, 0.999),
+        betas: Tuple[float, float] = (0.9, 0.999),
         eps: float = 1e-8,
         weight_decay: float = 0.1,
     ):
@@ -215,15 +215,15 @@ class NAdamW(Optimizer):
 
 @dataclass
 class OptimizerParameterGroups:
-    nora: list[Tensor]
-    nadamw_decay: list[Tensor]
-    nadamw_no_decay: list[Tensor]
+    nora: List[Tensor]
+    nadamw_decay: List[Tensor]
+    nadamw_no_decay: List[Tensor]
 
 
 def partition_optimizer_parameters(model: nn.Module) -> OptimizerParameterGroups:
     """Partition trainable parameters by module role and parameter identity."""
-    nora_ids: set[int] = set()
-    no_decay_ids: set[int] = set()
+    nora_ids: Set[int] = set()
+    no_decay_ids: Set[int] = set()
 
     for module_name, module in model.named_modules():
         if isinstance(module, LoRALinear):
@@ -250,10 +250,10 @@ def partition_optimizer_parameters(model: nn.Module) -> OptimizerParameterGroups
         elif module.weight.ndim == 2:
             nora_ids.add(id(module.weight))
 
-    nora: list[Tensor] = []
-    nadamw_decay: list[Tensor] = []
-    nadamw_no_decay: list[Tensor] = []
-    seen: set[int] = set()
+    nora: List[Tensor] = []
+    nadamw_decay: List[Tensor] = []
+    nadamw_no_decay: List[Tensor] = []
+    seen: Set[int] = set()
     for param in model.parameters():
         param_id = id(param)
         if not param.requires_grad or param_id in seen:
@@ -343,10 +343,10 @@ class NoraNAdamW(Optimizer):
             set_to_none,
         )
 
-    def state_dict(self) -> dict[str, Any]:
+    def state_dict(self) -> Dict[str, Any]:
         return composite_state_dict({"nora": self.nora, "nadamw": self.nadamw})
 
-    def load_state_dict(self, state_dict: dict[str, Any]):
+    def load_state_dict(self, state_dict: Dict[str, Any]):
         if "muon" in state_dict or "adamw" in state_dict:
             raise ValueError(
                 "Checkpoint uses muon_adamw state; select optimizer='muon_adamw' "

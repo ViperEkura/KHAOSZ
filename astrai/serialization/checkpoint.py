@@ -24,11 +24,11 @@ _MANIFEST_FILE = "manifest.json"
 _CHECKPOINT_FORMAT_VERSION = 1
 
 
-def save_safetensors(state_dict: dict, path: Union[str, Path]):
+def save_safetensors(state_dict: Dict, path: Union[str, Path]):
     st.save_file(state_dict, str(path))
 
 
-def _broadcast_load(loader: Callable[[], dict], broadcast: bool) -> dict:
+def _broadcast_load(loader: Callable[[], Dict], broadcast: bool) -> Dict:
     """Load on rank 0 and broadcast the object to all ranks."""
     if not broadcast or not dist.is_initialized():
         return loader()
@@ -42,16 +42,16 @@ def _broadcast_load(loader: Callable[[], dict], broadcast: bool) -> dict:
     return tmp[0]
 
 
-def load_safetensors(path: Union[str, Path], broadcast: bool = False) -> dict:
+def load_safetensors(path: Union[str, Path], broadcast: bool = False) -> Dict:
     return _broadcast_load(lambda: st.load_file(str(path)), broadcast)
 
 
-def save_json(data: dict, path: Union[str, Path]):
+def save_json(data: Dict, path: Union[str, Path]):
     with open(str(path), "w") as f:
         json.dump(data, f, indent=2)
 
 
-def load_json(path: Union[str, Path], broadcast: bool = False) -> dict:
+def load_json(path: Union[str, Path], broadcast: bool = False) -> Dict:
     return _broadcast_load(lambda: json.loads(Path(path).read_text()), broadcast)
 
 
@@ -133,8 +133,8 @@ def _validate_manifest(
     save_path: Path,
     verify_checksums: bool = False,
     broadcast: bool = False,
-) -> dict:
-    def validate() -> dict:
+) -> Dict:
+    def validate() -> Dict:
         manifest = load_json(save_path / _MANIFEST_FILE)
         if manifest.get("format_version") != _CHECKPOINT_FORMAT_VERSION:
             raise ValueError(
@@ -164,18 +164,18 @@ def _validate_manifest(
     return _broadcast_load(validate, broadcast)
 
 
-def save_model(config: dict, state_dict: dict, save_directory: str):
+def save_model(config: Dict, state_dict: Dict, save_directory: str):
     save_path = Path(save_directory)
     save_path.mkdir(parents=True, exist_ok=True)
     save_json(config, save_path / _CONFIG_FILE)
     save_safetensors(state_dict, save_path / _WEIGHTS_FILE)
 
 
-def load_model_config(save_directory: str) -> dict:
+def load_model_config(save_directory: str) -> Dict:
     return load_json(Path(save_directory) / _CONFIG_FILE)
 
 
-def load_model_weights(save_directory: str) -> dict:
+def load_model_weights(save_directory: str) -> Dict:
     save_path = Path(save_directory)
     weights_file = save_path / _WEIGHTS_FILE
     if weights_file.exists():
@@ -193,7 +193,7 @@ def load_model_weights(save_directory: str) -> dict:
     raise FileNotFoundError(f"No model weights found in {save_directory}")
 
 
-def load_state_dict(path: Union[str, Path], broadcast: bool = False) -> dict:
+def load_state_dict(path: Union[str, Path], broadcast: bool = False) -> Dict:
     path = Path(path)
     if not broadcast or not dist.is_initialized():
         return load_safetensors(path)

@@ -25,6 +25,7 @@ import json
 import math
 from collections import defaultdict
 from pathlib import Path
+from typing import Dict
 
 import click
 import torch
@@ -42,7 +43,7 @@ def _load_tune():
 tpt = _load_tune()
 
 
-def device_facts() -> dict:
+def device_facts() -> Dict:
     """The queried device geometry, the same fields the C++ prices against
     (common/device.cuh DeviceFacts). smem is the PER-SM figure and smem_max
     the PER-BLOCK opt-in ceiling: residency prices from the former, ring
@@ -60,7 +61,7 @@ def device_facts() -> dict:
     }
 
 
-def geometry(name: str) -> dict:
+def geometry(name: str) -> Dict:
     m = tpt._FACTS_RE.fullmatch(name)
     bm, bn, k_tile, wm, wn, k_stages = m.groups()
     bm, bn, k_tile, wm, wn, k_stages = map(int, (bm, bn, k_tile, wm, wn, k_stages))
@@ -88,10 +89,10 @@ def priced(
     k: int,
     ba: int,
     bb: int,
-    dev: dict,
+    dev: Dict,
     tma: bool,
     batch: int = 1,
-) -> dict:
+) -> Dict:
     g = geometry(name)
     # widening: 2-byte operand, small CTA, k_tile=64 (policy/gemm/manifest.h warp_widened_t)
     widened = ba + bb >= 3 and g["bm"] == 64 and g["bn"] == 64 and g["k_tile"] == 64
@@ -142,7 +143,7 @@ def attach_resources(ctx, combo, m, n, k, batch, tma):
     ctx["resources"] = {tuple(row[:3]): row for row in info["resources"]}
 
 
-def rules() -> dict:
+def rules() -> Dict:
     """Candidate orderings: (name, key fn) — larger key wins. Each key fn
     takes (features, problem) so a rule may consult the shape, like the
     model's own byte-pair floor does."""

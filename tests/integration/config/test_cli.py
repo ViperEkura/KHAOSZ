@@ -1,5 +1,6 @@
 import dataclasses
 import typing as t
+from typing import List, Optional
 
 import click
 import pytest
@@ -145,8 +146,8 @@ def test_annotation_styles_old_and_new():
 
     @dataclasses.dataclass
     class NewStyle:
-        opt_int: int | None = None
-        names: list[str] = dataclasses.field(default_factory=lambda: ["loss"])
+        opt_int: Optional[int] = None
+        names: List[str] = dataclasses.field(default_factory=lambda: ["loss"])
         flag: bool = False
 
     @click.command()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import List, Optional, Type
 
 from torch import nn
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
@@ -38,7 +39,7 @@ class GradientCheckpointingCallback(TrainCallback):
         modules: Module types to apply checkpointing to.
     """
 
-    def __init__(self, modules: list[type] | None = None):
+    def __init__(self, modules: Optional[List[Type]] = None):
         self.modules = tuple(modules) if modules else ()
 
     def _enable(self, module: nn.Module):

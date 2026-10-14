@@ -7,7 +7,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import torch
 
@@ -107,7 +107,7 @@ class Row:
         return (self.cta, self.k_stages, self.k_tile)
 
 
-def device_signature(facts: dict) -> str:
+def device_signature(facts: Dict) -> str:
     """Cache key from the device geometry a band bound prices against."""
     return (
         f"cc{facts['cc']}-sms{facts['sms']}"
@@ -128,13 +128,13 @@ class GemmAutotuner:
         self._lock = threading.Lock()
         self._tuning = False
         self._active = False
-        self._tiers: dict = {}  # probe answers (diagnostics)
-        self._perf_of: dict = {}  # dtype pair -> perf class, from the probe
-        self._covered: dict = {}  # the tune decision, cached on the cheap key
-        self._misses: dict = {}
-        self._done: set = set()  # problems already tuned (or refused) here
+        self._tiers: Dict = {}  # probe answers (diagnostics)
+        self._perf_of: Dict = {}  # dtype pair -> perf class, from the probe
+        self._covered: Dict = {}  # the tune decision, cached on the cheap key
+        self._misses: Dict = {}
+        self._done: Set = set()  # problems already tuned (or refused) here
         self._rows: List[Row] = []  # measured winners, newest first
-        self._facts: Optional[dict] = None
+        self._facts: Optional[Dict] = None
         self._vocab: Optional[Sequence[Sequence[int]]] = None
         self._tuned = 0
         self._max_shapes = int(
@@ -257,7 +257,7 @@ class GemmAutotuner:
         self,
         a: torch.Tensor,
         b: torch.Tensor,
-        key: tuple,
+        key: Tuple,
         trans_a: bool,
         trans_b: bool,
     ) -> Optional[bool]:
@@ -292,10 +292,10 @@ class GemmAutotuner:
         self,
         a: torch.Tensor,
         b: torch.Tensor,
-        key: tuple,
+        key: Tuple,
         trans_a: bool,
         trans_b: bool,
-    ) -> dict:
+    ) -> Dict:
         """The dispatch decision for this shape. The probe receives the
         FOLDED trans tags (storage flips included), so the C++ side derives
         the same layout pair the real call instantiates with."""
@@ -307,7 +307,7 @@ class GemmAutotuner:
         )
 
     # -- tuning ------------------------------------------------------------
-    def _candidates(self, key: tuple) -> List[Row]:
+    def _candidates(self, key: Tuple) -> List[Row]:
         """The recipe vocabulary filtered to this staging pair and the
         device's smem ceiling — the compiled truth from tile_vocabulary,
         not a Python-side re-parse of policy/gemm.cuh."""
@@ -355,7 +355,7 @@ class GemmAutotuner:
 
     def _tune(
         self,
-        key: tuple,
+        key: Tuple,
         a: torch.Tensor,
         b: torch.Tensor,
         a_scale: Optional[torch.Tensor],
@@ -408,7 +408,7 @@ class GemmAutotuner:
 
     def _measure(
         self,
-        key: tuple,
+        key: Tuple,
         candidates: List[Row],
         a: torch.Tensor,
         b: torch.Tensor,
@@ -538,7 +538,7 @@ class GemmAutotuner:
 
 def _problem_key(
     a: torch.Tensor, b: torch.Tensor, trans_a: bool, trans_b: bool
-) -> tuple:
+) -> Tuple:
     """The cheap pre-probe key: shapes, the folded crosswise count and the
     dtypes (the perf class it implies comes from the probe, never a
     Python-side mirror of the C++ switch)."""

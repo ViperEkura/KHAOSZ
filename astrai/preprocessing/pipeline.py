@@ -30,7 +30,7 @@ from astrai.preprocessing.writer import StoreWriterFactory
 
 logger = logging.getLogger(__name__)
 
-_STR_TO_DTYPE: dict[str, torch.dtype] = {
+_STR_TO_DTYPE: Dict[str, torch.dtype] = {
     "bool": torch.bool,
     "uint8": torch.uint8,
     "int8": torch.int8,
@@ -59,7 +59,7 @@ class Pipeline:
     def __init__(
         self,
         config: PipelineConfig,
-        input_paths: list[str],
+        input_paths: List[str],
         output_dir: str,
         tokenizer_path: str,
     ):
@@ -77,16 +77,16 @@ class Pipeline:
         )
         self._writer = StoreWriterFactory.create_checked(config.output.storage_format)
 
-    def transform(self, item: dict) -> Optional[dict]:
+    def transform(self, item: Dict) -> Optional[Dict]:
         return self.mask_builder.build(item, self.config, self.tokenizer)
 
-    def transform_batch(self, items: list[dict]) -> list[Optional[dict]]:
+    def transform_batch(self, items: List[Dict]) -> List[Optional[Dict]]:
         return self.mask_builder.build_batch(items, self.config, self.tokenizer)
 
     def run(self):
-        domains: dict = defaultdict(lambda: defaultdict(list))
+        domains: Dict = defaultdict(lambda: defaultdict(list))
         total_tokens = 0
-        shard_idx: dict[str, int] = defaultdict(int)
+        shard_idx: Dict[str, int] = defaultdict(int)
         count = 0
 
         pp = self.config.preprocessing
@@ -145,7 +145,7 @@ class Pipeline:
             self._flush(domains, shard_idx)
 
     @staticmethod
-    def _align_bucket(bucket: dict, result: dict, ids: list):
+    def _align_bucket(bucket: Dict, result: Dict, ids: List):
         """Pad previously-accumulated keys that are missing from *result*.
 
         Builders omit all-ones masks (``loss_mask`` / ``*_mask``) to save
@@ -211,10 +211,10 @@ class Pipeline:
 
     def _inject_doc_reset_position_ids(
         self,
-        keys: Dict[str, list],
+        keys: Dict[str, List],
         mode: str,
         original_sequences: List[List[int]],
-    ) -> Dict[str, list]:
+    ) -> Dict[str, List]:
         """Attach per-document position_ids before packing (``doc_reset``).
 
         ``doc_reset`` position ids must enter the packer so that each
@@ -249,7 +249,7 @@ class Pipeline:
             tensors["position_ids"] = [torch.tensor(pos_ids, dtype=torch.int32)]
         return tensors
 
-    def _to_tensors(self, keys: Dict[str, list]) -> Dict[str, List[torch.Tensor]]:
+    def _to_tensors(self, keys: Dict[str, List]) -> Dict[str, List[torch.Tensor]]:
         """Convert packed per-key id lists to tensors.
 
         Honours ``config.output.dtype`` overrides per key; falls back to

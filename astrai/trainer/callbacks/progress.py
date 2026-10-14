@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from typing import IO
+from typing import IO, Optional
 
 from tqdm import tqdm
 
@@ -19,7 +19,7 @@ class ProgressBarCallback(TrainCallback):
     """
 
     def __init__(
-        self, num_epoch: int, log_interval: int = 100, file: IO[str] | None = None
+        self, num_epoch: int, log_interval: int = 100, file: Optional[IO[str]] = None
     ):
         self.num_epoch = num_epoch
         self.log_interval = log_interval

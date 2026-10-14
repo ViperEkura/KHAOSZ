@@ -25,7 +25,7 @@ stay untouched.
 import logging
 import random
 from dataclasses import dataclass
-from typing import Any, Iterable, Literal, Optional
+from typing import Any, Dict, Iterable, Literal, Optional, Tuple
 
 import numpy as np
 import torch
@@ -35,16 +35,16 @@ from astrai.extension.policy.quantization import autocast
 logger = logging.getLogger(__name__)
 
 
-def _fp8_extra() -> dict | None:
+def _fp8_extra() -> Optional[Dict]:
     sd = autocast.fp8_state_dict()
     return sd if sd["entries"] else None
 
 
-def _fp8_restore(sd: dict) -> None:
+def _fp8_restore(sd: Dict) -> None:
     autocast.fp8_load_state_dict(sd)
 
 
-def _rng_extra() -> dict:
+def _rng_extra() -> Dict:
     """Snapshot every RNG the training loop draws from.
 
     Covers python's ``random``, torch CPU and (when initialized) CUDA
@@ -52,7 +52,7 @@ def _rng_extra() -> dict:
     dropout masks, init draws, and rollout sampling diverge from the
     uninterrupted run from the very first step.
     """
-    state: dict[str, Any] = {
+    state: Dict[str, Any] = {
         "python": random.getstate(),
         "torch": torch.get_rng_state(),
     }
@@ -62,7 +62,7 @@ def _rng_extra() -> dict:
     return state
 
 
-def _rng_restore(state: dict) -> None:
+def _rng_restore(state: Dict) -> None:
     random.setstate(state["python"])
     torch.set_rng_state(state["torch"])
     if "torch_cuda" in state and torch.cuda.is_available():
@@ -75,15 +75,15 @@ def _rng_restore(state: dict) -> None:
 
 # (checkpoint key, snapshot provider, restorer) — provider returns None when
 # the component has nothing to persist under the current configuration.
-_EXTRAS: tuple[tuple[str, Any, Any], ...] = (
+_EXTRAS: Tuple[Tuple[str, Any, Any], ...] = (
     ("fp8_state", _fp8_extra, _fp8_restore),
     ("rng_state", _rng_extra, _rng_restore),
 )
 
 
-def checkpoint_extras() -> dict[str, Any]:
+def checkpoint_extras() -> Dict[str, Any]:
     """Snapshot every optional component that has state worth persisting."""
-    extra: dict[str, Any] = {}
+    extra: Dict[str, Any] = {}
     for name, provider, _ in _EXTRAS:
         sd = provider()
         if sd is not None:
@@ -91,7 +91,7 @@ def checkpoint_extras() -> dict[str, Any]:
     return extra
 
 
-def restore_checkpoint_extras(extra: dict[str, Any]) -> None:
+def restore_checkpoint_extras(extra: Dict[str, Any]) -> None:
     """Restore whatever of the known optional extras is present in a loaded
     checkpoint; unknown keys are ignored."""
     for name, _, restorer in _EXTRAS:
@@ -129,7 +129,7 @@ class ComponentExtra:
     purpose: str = ""
 
 
-COMPONENT_EXTRAS: tuple[ComponentExtra, ...] = (
+COMPONENT_EXTRAS: Tuple[ComponentExtra, ...] = (
     ComponentExtra(
         key="value_model",
         attribute="critic",
@@ -153,8 +153,8 @@ COMPONENT_EXTRAS: tuple[ComponentExtra, ...] = (
 
 def _index_by_key(
     entries: Iterable[ComponentExtra],
-) -> dict[str, ComponentExtra]:
-    by_key: dict[str, ComponentExtra] = {}
+) -> Dict[str, ComponentExtra]:
+    by_key: Dict[str, ComponentExtra] = {}
     for entry in entries:
         if entry.key in by_key:
             raise ValueError(f"duplicate component extra key: {entry.key!r}")
@@ -175,15 +175,15 @@ def component_extra(key: str) -> ComponentExtra:
     return entry
 
 
-def component_extra_keys(*attributes: str) -> tuple[str, ...]:
+def component_extra_keys(*attributes: str) -> Tuple[str, ...]:
     """Declared extra keys owned by the given strategy attributes."""
     wanted = set(attributes)
     return tuple(e.key for e in COMPONENT_EXTRAS if e.attribute in wanted)
 
 
-def snapshot_component_extras(strategy, config: Any = None) -> dict[str, Any]:
+def snapshot_component_extras(strategy, config: Any = None) -> Dict[str, Any]:
     """Collect every declared component extra the strategy currently owns."""
-    extra: dict[str, Any] = {}
+    extra: Dict[str, Any] = {}
     for entry in COMPONENT_EXTRAS:
         if entry.save_flag is not None and not getattr(config, entry.save_flag, True):
             continue
@@ -200,7 +200,7 @@ def snapshot_component_extras(strategy, config: Any = None) -> dict[str, Any]:
 
 
 def require_component_extras(
-    extra: dict[str, Any],
+    extra: Dict[str, Any],
     keys: Iterable[str],
     *,
     strategy: str,
@@ -216,7 +216,7 @@ def require_component_extras(
 
 
 def load_component_extra(
-    extra: dict[str, Any],
+    extra: Dict[str, Any],
     key: str,
     target: Any,
     config: Any = None,

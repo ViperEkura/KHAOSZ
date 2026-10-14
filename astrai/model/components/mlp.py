@@ -1,4 +1,4 @@
-from typing import Optional, TypedDict
+from typing import Optional, Tuple, TypedDict
 
 import torch
 import torch.nn as nn
@@ -126,7 +126,7 @@ class DeepSeekMoE(nn.Module):
             / self.n_shared_experts
         )
 
-    def _select_experts(self, router_logits: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+    def _select_experts(self, router_logits: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
         """Return FP32 probabilities and the actual dispatch decision."""
         router_probs = torch.softmax(router_logits.float(), dim=-1)
         topk_weights, topk_indices = torch.topk(

@@ -189,7 +189,7 @@ class CPState:
         ):
             yield
 
-    def mean_loss(self, loss_sum: Tensor, token_count: Tensor) -> tuple[Tensor, Tensor]:
+    def mean_loss(self, loss_sum: Tensor, token_count: Tensor) -> Tuple[Tensor, Tensor]:
         """Global-mean loss and its cp-scaled training counterpart.
 
         Returns ``(mean, scaled)``: ``mean`` is the true global mean (sum

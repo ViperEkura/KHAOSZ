@@ -1,5 +1,7 @@
 """Warmup-stable-decay learning-rate schedule."""
 
+from typing import List
+
 from astrai.optimization.scheduler.base import BaseScheduler, SchedulerFactory
 
 
@@ -29,7 +31,7 @@ class WSDScheduler(BaseScheduler):
         self.total_steps = warmup_steps + stable_steps + decay_steps
         super().__init__(optimizer, last_epoch)
 
-    def get_lr(self) -> list[float]:
+    def get_lr(self) -> List[float]:
         if self.last_epoch < self.warmup_steps:
             factor = max(self.min_rate, self.last_epoch / max(self.warmup_steps, 1))
             return [base_lr * factor for base_lr in self.base_lrs]

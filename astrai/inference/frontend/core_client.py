@@ -5,7 +5,7 @@ Both remain in the training model's process; request submission and
 cancellation share the core's operation lock with model execution.
 """
 
-from typing import List
+from typing import Dict, List
 
 from astrai.extension.runtime.context import OpSelection
 from astrai.inference.core.engine_core import EngineCore
@@ -48,7 +48,7 @@ class EngineCoreClient:
         """Cancel one request; False when it was already gone."""
         raise NotImplementedError
 
-    def stats(self) -> dict:
+    def stats(self) -> Dict:
         raise NotImplementedError
 
     def shutdown(self) -> None:
@@ -97,7 +97,7 @@ class InprocClient(EngineCoreClient):
     def abort_request(self, request_id: str) -> bool:
         return self._core.cancel_request(request_id)
 
-    def stats(self) -> dict:
+    def stats(self) -> Dict:
         return self._core.get_stats()
 
     def shutdown(self) -> None:

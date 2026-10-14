@@ -2,6 +2,7 @@ import importlib
 import os
 from collections.abc import Callable
 from functools import partial
+from typing import Dict, List
 
 import click
 import torch
@@ -589,7 +590,7 @@ def train_command(ctx, config_path, dry_run, metrics, **kwargs):
         raise click.UsageError(str(exc)) from exc
 
 
-def _print_dry_run(kwargs: dict) -> None:
+def _print_dry_run(kwargs: Dict) -> None:
     """Print training plan summary."""
     dp_size = kwargs.get("dp_size", 1) or 1
     cp_size = kwargs.get("cp_size", 1) or 1
@@ -690,7 +691,7 @@ def train(
     ckpt_dir: str,
     val_split: float,
     val_step: int,
-    metrics: list[str],
+    metrics: List[str],
     max_grad_norm: float,
     random_seed: int,
     num_workers: int,

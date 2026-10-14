@@ -1,3 +1,5 @@
+from typing import Optional
+
 from tokenizers import Tokenizer, models, pre_tokenizers, trainers
 
 from astrai.tokenize import AutoTokenizer, ChatTemplate
@@ -19,7 +21,7 @@ def build_test_tokenizer(
     special_token_map=None,
     add_prefix_space: bool = True,
     train_data=None,
-    chat_template: str | None = None,
+    chat_template: Optional[str] = None,
 ) -> AutoTokenizer:
     """Build a lightweight BPE ``AutoTokenizer`` for tests.
 

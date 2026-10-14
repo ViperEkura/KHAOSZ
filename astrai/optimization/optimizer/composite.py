@@ -1,14 +1,14 @@
 """Helpers shared by composite optimizers."""
 
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 import torch
 from torch.optim import Optimizer
 
 
 def composite_step(
-    sub_optimizers: list[Optimizer], closure=None
-) -> torch.Tensor | None:
+    sub_optimizers: List[Optimizer], closure=None
+) -> Optional[torch.Tensor]:
     """Step each child optimizer and evaluate a closure once."""
     loss = None
     if closure is not None:
@@ -20,15 +20,15 @@ def composite_step(
 
 
 def composite_zero_grad(
-    sub_optimizers: list[Optimizer], set_to_none: bool = True
+    sub_optimizers: List[Optimizer], set_to_none: bool = True
 ) -> None:
     for sub in sub_optimizers:
         sub.zero_grad(set_to_none=set_to_none)
 
 
 def composite_state_dict(
-    named_sub_optimizers: dict[str, Optimizer | None],
-) -> dict[str, Any]:
+    named_sub_optimizers: Dict[str, Optional[Optimizer]],
+) -> Dict[str, Any]:
     """Serialize child optimizers while preserving empty slots."""
     return {
         name: sub.state_dict() if sub is not None else None
@@ -36,9 +36,9 @@ def composite_state_dict(
     }
 
 
-def refresh_param_groups(sub_optimizers: list[Optimizer]) -> list[dict]:
+def refresh_param_groups(sub_optimizers: List[Optimizer]) -> List[Dict]:
     """Concatenate parameter groups from each non-empty child optimizer."""
-    groups: list[dict] = []
+    groups: List[Dict] = []
     for sub in sub_optimizers:
         if sub is not None:
             groups.extend(sub.param_groups)

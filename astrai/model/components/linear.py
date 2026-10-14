@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -38,7 +40,7 @@ class LinearCrossEntropyHead(Linear):
     def forward(
         self,
         x: Tensor,
-        targets: Tensor | None = None,
+        targets: Optional[Tensor] = None,
         *,
         label_smoothing: float = 0.0,
         chunk_size: int = 512,
