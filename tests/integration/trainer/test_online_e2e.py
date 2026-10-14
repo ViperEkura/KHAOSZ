@@ -293,6 +293,6 @@ def test_async_round_rejects_moe_before_starting_workers():
             strategy_kwargs={"group_size": 2},
             create_ref_model=lambda **_kwargs: None,
             validate=lambda _executor: None,
-            scheduler_cls=object,
+            engine_core_cls=object,
             tokenizer_cls=tokenizer_cls,
         )

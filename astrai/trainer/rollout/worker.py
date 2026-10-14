@@ -112,7 +112,7 @@ def run_rollout_worker(conn, spec: RolloutWorkerSpec):
                 request_id=0,
                 policy_version=spec.policy_version,
                 payload=WorkerReady(
-                    backend.scheduler.cuda_graph_enabled,
+                    backend.engine_core.cuda_graph_enabled,
                     torch.cuda.max_memory_allocated(device),
                 ),
             ),

@@ -16,6 +16,7 @@ from astrai.model.autoregressive_lm import AutoRegressiveLM
 from astrai.parallel import get_rank
 from astrai.parallel.executor import DDPExecutor, FSDPExecutor, NoneExecutor
 from astrai.trainer import train_context
+from astrai.trainer.backend import run_batch
 from astrai.trainer.rollout.setup import configure_rollout, resolve_async_rollout
 from astrai.trainer.rollout.types import SamplingParams
 from astrai.trainer.train_context import TrainContextBuilder
@@ -137,11 +138,11 @@ def test_train_context_passes_ddp_inference_view_to_rollout(tmp_path, monkeypatc
     _init_single_rank_process_group(tmp_path, "gloo")
     captured = {}
 
-    class _Scheduler:
+    class _EngineCore:
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr(train_context, "Scheduler", _Scheduler)
+    monkeypatch.setattr(train_context, "EngineCore", _EngineCore)
     monkeypatch.setattr(
         train_context.AutoTokenizer,
         "from_pretrained",
@@ -159,7 +160,8 @@ def test_train_context_passes_ddp_inference_view_to_rollout(tmp_path, monkeypatc
         assert captured["max_seq_len"] == 32
         assert captured["max_batch_size"] == 2
         assert (
-            context.strategy.runner.generator.backend.scheduler.__class__ is _Scheduler
+            context.strategy.runner.generator.backend.engine_core.__class__
+            is _EngineCore
         )
     finally:
         dist.destroy_process_group()
@@ -254,7 +256,8 @@ def _multi_rank_rollout_then_train_worker():
     scheduler = make_cpu_scheduler(
         inference_model, FakeTokenizer(), max_batch_size=1, max_seq_len=64
     )
-    result = scheduler.run_batch(
+    result = run_batch(
+        scheduler,
         [[5 + rank, 6 + rank, 7 + rank]],
         max_tokens=2 + rank,
         temperature=0,
@@ -286,7 +289,7 @@ def _multi_rank_rollout_then_train_worker():
     # generation agrees across replicas after invalidating stale KV state.
     scheduler.update_weights(1)
     inference_model.eval()
-    post_update = scheduler.run_batch([[11, 12, 13]], max_tokens=3, temperature=0)
+    post_update = run_batch(scheduler, [[11, 12, 13]], max_tokens=3, temperature=0)
     gathered = [None] * dist.get_world_size()
     dist.all_gather_object(gathered, post_update)
     assert all(tokens == gathered[0] for tokens in gathered)
@@ -355,7 +358,7 @@ def test_runtime_world_size_rejected_before_loading_models(monkeypatch):
     load = Mock()
     builder._load_preloaded_state = load
     monkeypatch.setattr("astrai.trainer.train_context.get_world_size", lambda: 2)
-    with pytest.raises(ValueError, match="actual world_size=1"):
+    with pytest.raises(ValueError, match="world_size must match configured nprocs"):
         builder.build()
     load.assert_not_called()
 
@@ -410,6 +413,10 @@ def test_effective_grpo_defaults_and_all_worker_parameters(monkeypatch):
     assert cfg.rollout_max_policy_lag == values["max_policy_lag"] == 1
     assert values["model_dtype"] == torch.bfloat16
     assert values["devices"] == ["cuda:1", "cuda:2"]
+    assert (
+        context.async_rollout is context.strategy.set_rollout_runner.call_args.args[0]
+    )
+    assert context.async_rollout.coordinator is coordinator.return_value
 
 
 @pytest.mark.parametrize("devices", [["cuda:0"], ["cuda:3"]])
@@ -423,3 +430,36 @@ def test_device_conflicts_fail_before_startup(monkeypatch, devices):
             256,
             0,
         )
+
+
+def test_ddp_rollout_devices_are_partitioned_by_learner_rank(monkeypatch):
+    monkeypatch.setattr("torch.cuda.device_count", lambda: 8)
+    config = _config(
+        dp_size=2,
+        dp_mode="ddp",
+        rollout_devices=["cuda:2", "cuda:3", "cuda:4", "cuda:5"],
+        batch_per_device=5,
+    )
+    resolved = [
+        resolve_async_rollout(
+            config,
+            torch.device(f"cuda:{rank}"),
+            SamplingParams(group_size=4),
+            256,
+            12,
+            rank=rank,
+            world_size=2,
+        )
+        for rank in range(2)
+    ]
+    assert resolved[0].devices == ("cuda:2", "cuda:4")
+    assert resolved[1].devices == ("cuda:3", "cuda:5")
+    assert all(item.sample_cursor == 6 for item in resolved)
+    assert all(item.max_prompts_per_worker == 3 for item in resolved)
+
+
+def test_ddp_rollout_rejects_shared_or_missing_worker_devices():
+    with pytest.raises(ValueError, match="exclude all learner devices"):
+        _config(dp_size=2, dp_mode="ddp", rollout_devices=["cuda:1", "cuda:2"])
+    with pytest.raises(ValueError, match="at least one rollout device per learner"):
+        _config(dp_size=2, dp_mode="ddp", rollout_devices=["cuda:2"])

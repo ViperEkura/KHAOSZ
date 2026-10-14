@@ -163,6 +163,40 @@ def test_ddp_online_grpo_end_to_end(base_test_env):
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(torch.cuda.device_count() < 4, reason="four CUDA devices required")
+def test_async_round_ddp_two_learners_two_workers(base_test_env):
+    test_dir = base_test_env["test_dir"]
+    tokenizer = base_test_env["tokenizer"]
+    tokenizer.set_chat_template(CHAT_TEMPLATE)
+    tokenizer.save_pretrained(test_dir)
+    config = TrainConfig(
+        strategy="online_grpo",
+        model_fn=partial(make_online_model, base_test_env["transformer_config"]),
+        dataset=InstructionDataset(repeats=1),
+        optimizer_fn=make_online_optimizer,
+        scheduler_fn=make_online_lr_scheduler,
+        ckpt_dir=os.path.join(test_dir, "ckpt"),
+        n_epoch=1,
+        batch_per_device=2,
+        grad_accum_steps=1,
+        device_type="cuda",
+        dp_size=2,
+        dp_mode="ddp",
+        strategy_kwargs={"clip_eps": 0.2, "kl_coef": 0.01, "group_size": 2},
+        rollout_mode="async_round",
+        rollout_devices=["cuda:2", "cuda:3"],
+        rollout_interval=1,
+        rollout_max_tokens=4,
+        reward_model_fn=LengthRewardModel,
+        collate_fn=instruction_collate_fn,
+    )
+    Trainer(config).train(param_path=test_dir)
+    checkpoint = Checkpoint.load(os.path.join(test_dir, "ckpt", "epoch_0_step_1"))
+    assert checkpoint.meta["policy_version"] == 1
+    assert checkpoint.consumed_samples == 4
+
+
+@pytest.mark.integration
 @pytest.mark.skipif(torch.cuda.device_count() < 5, reason="five CUDA devices required")
 def test_async_round_online_grpo_five_gpus(base_test_env, monkeypatch):
     """Four simultaneous replicas feed one optimizer update per round."""

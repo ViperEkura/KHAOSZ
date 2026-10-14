@@ -272,7 +272,7 @@ class GPUModelRunner:
         # The most recent submitted-but-not-necessarily-committed decode
         # step.  ``submit_decode`` consults it to refuse the one unsafe
         # overlap (frequency penalty reading stale host histories); the
-        # SchedulerStep's commit phase clears it.  Synchronous callers commit
+        # EngineCore's commit phase clears it.  Synchronous callers commit
         # immediately, so it is usually already consumed.
         self._pending: Optional[PendingExecution] = None
 
@@ -552,7 +552,7 @@ class GPUModelRunner:
         :class:`PendingExecution` carrying the device-resident tokens (and
         optional logprobs).  Nothing here touches host copies of the
         sampled values or mutates request output state — that is exclusively
-        :meth:`PendingExecution.commit`'s job, invoked by the SchedulerStep's commit
+        :meth:`PendingExecution.commit`'s job, invoked by the EngineCore's commit
         phase.
 
         Frequency penalty needs each request's host-side output history at

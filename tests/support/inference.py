@@ -1,7 +1,7 @@
 from typing import Optional
 
 from astrai.extension import op_backend
-from astrai.inference.core.scheduler import Scheduler
+from astrai.inference.core.engine_core import EngineCore
 from astrai.model.autoregressive_lm import AutoRegressiveLM
 from tests.support.models import make_rollout_config
 from tests.support.tokenizers import FakeTokenizer
@@ -17,10 +17,10 @@ def make_cpu_scheduler(
     enable_cuda_graph: bool = False,
     device: Optional[str] = None,
     **overrides,
-) -> Scheduler:
+) -> EngineCore:
     """Standard test scheduler: CPU-safe defaults, arbitrary overrides.
 
-    Every keyword lands in ``Scheduler(...)`` verbatim, so tests keep direct
+    Every keyword lands in ``EngineCore(...)`` verbatim, so tests keep direct
     control of page_size/kv_tokens/token_budget while sharing the no-graph,
     torch-native baseline that keeps the suite CPU-runnable.
     """
@@ -36,7 +36,7 @@ def make_cpu_scheduler(
         kwargs["device"] = device
     kwargs.update(overrides)
     with op_backend(attention="torch"):
-        return Scheduler(model=model, tokenizer=tokenizer, **kwargs)
+        return EngineCore(model=model, tokenizer=tokenizer, **kwargs)
 
 
 def make_cpu_model(max_position_embeddings: int = 64):

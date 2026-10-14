@@ -317,6 +317,24 @@ class RequestManager:
         self._request_event.set()
         return request_ids_out
 
+    def enqueue_tokenized_requests(self, requests: List[Request]) -> None:
+        """Atomically enqueue already-tokenized requests in caller order."""
+        if not requests:
+            return
+        ids = [request.request_id for request in requests]
+        with self._lock:
+            if len(set(ids)) != len(ids) or any(
+                request_id in self._requests for request_id in ids
+            ):
+                raise ValueError("duplicate live request id in batch")
+            for request in requests:
+                self.waiting.append(request)
+                self._requests[request.request_id] = request
+                self._total_requests += 1
+                if self._metrics is not None:
+                    self._metrics.register(request.request_id)
+        self._request_event.set()
+
     def _register_request(self, request: "Request") -> None:
         with self._lock:
             if request.request_id in self._requests:

@@ -1,13 +1,14 @@
 """In-process request and event boundary for the inference frontend.
 
-The Scheduler facade delegates execution and lifecycle operations to its
-EngineCore. Both remain in the training model's process; request submission
-and cancellation share the core's operation lock with model execution.
+The client delegates request and lifecycle operations to EngineCore.
+Both remain in the training model's process; request submission and
+cancellation share the core's operation lock with model execution.
 """
 
 from typing import List
 
 from astrai.extension.runtime.context import OpSelection
+from astrai.inference.core.engine_core import EngineCore
 from astrai.inference.core.scheduler import Scheduler
 
 
@@ -55,49 +56,49 @@ class EngineCoreClient:
 
 
 class InprocClient(EngineCoreClient):
-    """Direct client of the Scheduler facade and its in-process EngineCore."""
+    """Direct client of an in-process EngineCore."""
 
-    def __init__(self, scheduler: Scheduler):
-        self._scheduler = scheduler
+    def __init__(self, core: EngineCore):
+        self._core = core
 
     @property
     def scheduler(self) -> Scheduler:
-        return self._scheduler
+        return self._core.scheduler
 
     def set_event_sink(self, sink) -> None:
-        self._scheduler.set_event_sink(sink)
+        self._core.set_event_sink(sink)
 
     def start(self) -> None:
-        self._scheduler.start()
+        self._core.start()
 
     @property
     def max_batch_size(self) -> int:
-        return self._scheduler.max_batch_size
+        return self._core.max_batch_size
 
     @property
     def op_selection(self) -> OpSelection:
-        return self._scheduler.op_selection
+        return self._core.op_selection
 
     @property
     def cuda_graph_enabled(self) -> bool:
-        return self._scheduler.cuda_graph_enabled
+        return self._core.cuda_graph_enabled
 
     def score_ids(self, prompt_ids_list, continuation_ids_list, per_token=False):
-        return self._scheduler.score_ids(
+        return self._core.score_ids(
             prompt_ids_list, continuation_ids_list, per_token=per_token
         )
 
     def send_request(self, **kwargs) -> str:
-        return self._scheduler.add_request(**kwargs)
+        return self._core.add_request(**kwargs)
 
     def send_requests(self, prompts: List[str], **kwargs) -> List[str]:
-        return self._scheduler.add_requests(prompts, **kwargs)
+        return self._core.add_requests(prompts, **kwargs)
 
     def abort_request(self, request_id: str) -> bool:
-        return self._scheduler.cancel_request(request_id)
+        return self._core.cancel_request(request_id)
 
     def stats(self) -> dict:
-        return self._scheduler.get_stats()
+        return self._core.get_stats()
 
     def shutdown(self) -> None:
-        self._scheduler.stop()
+        self._core.stop()

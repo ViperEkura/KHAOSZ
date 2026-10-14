@@ -35,12 +35,21 @@ logger = logging.getLogger(__name__)
 
 
 def _response_seeds(
-    base_seed: int, sample_cursor: int, prompts: int, group_size: int
+    base_seed: int,
+    sample_cursor: int,
+    prompts: int,
+    group_size: int,
+    rank: Optional[int] = None,
 ) -> List[int]:
     return [
         int.from_bytes(
             hashlib.blake2b(
-                f"{base_seed}:{sample_cursor + i}:{g}".encode(), digest_size=8
+                (
+                    f"{base_seed}:{sample_cursor + i}:{g}"
+                    if rank is None
+                    else f"{base_seed}:{rank}:{sample_cursor + i}:{g}"
+                ).encode(),
+                digest_size=8,
             ).digest(),
             "little",
         )
@@ -85,6 +94,7 @@ class AsyncRoundCoordinator:
         weight_timeout_s: Optional[float] = None,
         random_seed: int = 3407,
         sample_cursor: int = 0,
+        learner_rank: Optional[int] = None,
     ):
         try:
             pickle.dumps(model_fn)
@@ -100,6 +110,7 @@ class AsyncRoundCoordinator:
         )
         self.random_seed = random_seed
         self._sample_cursor = sample_cursor
+        self.learner_rank = learner_rank
         self._group_size = params.group_size
         self._devices = list(devices)
         self._round_id = 0
@@ -356,7 +367,11 @@ class AsyncRoundCoordinator:
         fresh = seeds is None
         if fresh:
             seeds = _response_seeds(
-                self.random_seed, self._sample_cursor, total, self._group_size
+                self.random_seed,
+                self._sample_cursor,
+                total,
+                self._group_size,
+                self.learner_rank,
             )
         if len(seeds) != total * self._group_size:
             raise ValueError("rollout seeds must match the prompt/response count")

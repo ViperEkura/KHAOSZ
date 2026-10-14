@@ -25,7 +25,7 @@ def test_engine_generate_non_streaming_single():
     # Mock tokenizer returns a flat list for both single and batch shapes.
     mock_tokenizer.encode.return_value = [1, 2, 3]
 
-    with patch("astrai.inference.frontend.engine.Scheduler") as MockSched:
+    with patch("astrai.inference.frontend.engine.EngineCore") as MockSched:
         instance = MockSched.return_value
         instance.add_requests.side_effect = lambda prompts, **kw: [
             f"request-{i}" for i in range(len(prompts))
@@ -72,7 +72,7 @@ def test_engine_generate_streaming_yields_token_ids():
     mock_model, mock_tokenizer = _make_engine_mocks(decode="tok")
     mock_tokenizer.encode.return_value = [1, 2, 3]
 
-    with patch("astrai.inference.frontend.engine.Scheduler") as MockSched:
+    with patch("astrai.inference.frontend.engine.EngineCore") as MockSched:
         instance = MockSched.return_value
         instance.add_requests.side_effect = lambda prompts, **kw: [
             f"request-{i}" for i in range(len(prompts))
@@ -109,7 +109,7 @@ def test_engine_generate_non_streaming_batch():
     mock_model, mock_tokenizer = _make_engine_mocks(decode="r")
     mock_tokenizer.encode.return_value = [1, 2, 3]
 
-    with patch("astrai.inference.frontend.engine.Scheduler") as MockSched:
+    with patch("astrai.inference.frontend.engine.EngineCore") as MockSched:
         instance = MockSched.return_value
         instance.add_requests.side_effect = lambda prompts, **kw: [
             f"request-{i}" for i in range(len(prompts))
@@ -147,7 +147,7 @@ def test_engine_generate_non_streaming_batch():
 def test_engine_generate_zero_max_tokens_returns_empty():
     mock_model, mock_tokenizer = _make_engine_mocks()
 
-    with patch("astrai.inference.frontend.engine.Scheduler") as MockSched:
+    with patch("astrai.inference.frontend.engine.EngineCore") as MockSched:
         instance = MockSched.return_value
         instance.remove_request.return_value = []
 
@@ -159,7 +159,7 @@ def test_engine_generate_zero_max_tokens_returns_empty():
 def test_engine_generate_zero_max_tokens_stream_is_empty():
     mock_model, mock_tokenizer = _make_engine_mocks()
 
-    with patch("astrai.inference.frontend.engine.Scheduler") as MockSched:
+    with patch("astrai.inference.frontend.engine.EngineCore") as MockSched:
         instance = MockSched.return_value
         eng = InferenceEngine(mock_model, mock_tokenizer, max_batch_size=1)
         assert list(eng.generate("hello", stream=True, max_tokens=0)) == []
@@ -169,7 +169,7 @@ def test_engine_generate_zero_max_tokens_stream_is_empty():
 def test_engine_uses_attention_scope_at_scheduler_creation():
     mock_model, mock_tokenizer = _make_engine_mocks()
     seen = []
-    with patch("astrai.inference.frontend.engine.Scheduler") as MockSched:
+    with patch("astrai.inference.frontend.engine.EngineCore") as MockSched:
         MockSched.side_effect = lambda **kwargs: (
             seen.append(snapshot_op_selection().choice("attention")[0]) or MagicMock()
         )
@@ -182,7 +182,7 @@ def test_engine_uses_attention_scope_at_scheduler_creation():
 def test_engine_passes_overlap_to_scheduler(enable_overlap):
     mock_model, mock_tokenizer = _make_engine_mocks()
 
-    with patch("astrai.inference.frontend.engine.Scheduler") as MockSched:
+    with patch("astrai.inference.frontend.engine.EngineCore") as MockSched:
         InferenceEngine(
             mock_model,
             mock_tokenizer,
@@ -197,7 +197,7 @@ def test_generate_does_not_send_per_request_attention_choice():
     mock_model, mock_tokenizer = _make_engine_mocks()
     captured = []
 
-    with patch("astrai.inference.frontend.engine.Scheduler") as MockSched:
+    with patch("astrai.inference.frontend.engine.EngineCore") as MockSched:
         instance = MockSched.return_value
         instance.cancel_request.return_value = True
 
@@ -243,14 +243,14 @@ def test_build_engine_from_live_objects_starts_scheduler():
     try:
         assert isinstance(engine, InferenceEngine)
         assert engine.tokenizer is tokenizer
-        assert engine.scheduler._stop_event.is_set() is False
+        assert engine._core._core.stop_event.is_set() is False
     finally:
         engine.shutdown()
 
 
 def test_build_engine_passes_engine_kwargs_through():
     model, _ = make_model("cpu", max_position_embeddings=64)
-    with patch("astrai.inference.frontend.engine.Scheduler") as MockSched:
+    with patch("astrai.inference.frontend.engine.EngineCore") as MockSched:
         instance = MockSched.return_value
         instance.cancel_request.return_value = True
 

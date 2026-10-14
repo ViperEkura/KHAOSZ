@@ -47,7 +47,7 @@ class RequestFinished:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     # Sampled token ids, filled when the consumer asked to keep them
-    # (run_batch-style callers); streaming consumers leave it empty.
+    # (such as rollout); streaming consumers leave it empty.
     token_ids: tuple = ()
 
 

@@ -1,12 +1,12 @@
 """Tests for scheduler concurrency."""
 
 import threading
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import torch
 
-from astrai.inference import Scheduler
+from astrai.inference import EngineCore
 from astrai.model.autoregressive_lm import AutoRegressiveLM
 from tests.support.models import make_rollout_config
 from tests.support.tokenizers import FakeTokenizer
@@ -54,16 +54,12 @@ def mock_model_and_tokenizer():
 def _make_mock_scheduler(mock_model_and_tokenizer):
     """Build a CPU scheduler over mocks, patching scheduler-internal imports."""
     mock_model, mock_tokenizer = mock_model_and_tokenizer
-    with (
-        patch("astrai.inference.core.scheduler.AutoModel"),
-        patch("astrai.inference.core.scheduler.AutoTokenizer"),
-    ):
-        return Scheduler(
-            model=mock_model,
-            tokenizer=mock_tokenizer,
-            max_batch_size=4,
-            device="cpu",
-        )
+    return EngineCore(
+        model=mock_model,
+        tokenizer=mock_tokenizer,
+        max_batch_size=4,
+        device="cpu",
+    )
 
 
 def _run_threads(*workers, timeout=10.0):
@@ -77,7 +73,9 @@ def _run_threads(*workers, timeout=10.0):
 
 def _make_contract_scheduler():
     scheduler, _, _ = _make_real_scheduler("cpu")
-    kv = scheduler._kv_manager = MagicMock()
+    kv = MagicMock()
+    scheduler.scheduler._kv_manager = kv
+    scheduler.scheduler._planner.kv_manager = kv
     kv.cached_tokens.return_value = 0
     kv.extend_slots_batch.side_effect = lambda ids, positions: [True] * len(ids)
     return scheduler
@@ -88,7 +86,7 @@ def _make_real_scheduler(device):
     cfg = make_rollout_config(max_position_embeddings=64)
     model = AutoRegressiveLM(cfg).to(device=device, dtype=torch.bfloat16).eval()
     tokenizer = FakeTokenizer()
-    scheduler = Scheduler(
+    scheduler = EngineCore(
         model=model,
         tokenizer=tokenizer,
         max_batch_size=8,

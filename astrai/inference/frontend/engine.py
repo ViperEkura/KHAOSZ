@@ -28,6 +28,7 @@ import torch.nn as nn
 
 from astrai.extension.runtime.context import OpSelection
 from astrai.inference.core.cache.pool import BlockPool
+from astrai.inference.core.engine_core import EngineCore
 from astrai.inference.core.events import RequestError, TokenDelta
 from astrai.inference.core.scheduler import Scheduler
 from astrai.inference.frontend.core_client import EngineCoreClient, InprocClient
@@ -64,7 +65,7 @@ class InferenceEngine:
         self.model = model
         self.tokenizer = tokenizer
         if core_client is None:
-            scheduler = Scheduler(
+            core = EngineCore(
                 model=self.model,
                 tokenizer=self.tokenizer,
                 max_batch_size=max_batch_size,
@@ -73,7 +74,7 @@ class InferenceEngine:
                 enable_cuda_graph=enable_cuda_graph,
                 enable_overlap=enable_overlap,
             )
-            core_client = InprocClient(scheduler)
+            core_client = InprocClient(core)
         self._core = core_client
         self._tracker = RequestTracker()
         self._core.set_event_sink(self._tracker.sink)
@@ -216,7 +217,7 @@ class InferenceEngine:
             reaching the engine's ``max_seq_len``).
 
         Note:
-            Synchronous and not re-entrant: like ``run_batch`` it drives the
+            Synchronous and not re-entrant: like rollout batch execution it drives the
             executor on the calling thread, so do not overlap it with
             generation on the same engine.
         """

@@ -159,7 +159,13 @@ class _Reward:
         return torch.ones(len(prompts), 1)
 
 
-def _coordinator(devices=None, timeout=3.0, max_prompts_per_worker=1):
+def _coordinator(
+    devices=None,
+    timeout=3.0,
+    max_prompts_per_worker=1,
+    learner_rank=None,
+    sample_cursor=0,
+):
     source = torch.nn.Linear(2, 2)
     return source, AsyncRoundCoordinator(
         source=source,
@@ -176,6 +182,8 @@ def _coordinator(devices=None, timeout=3.0, max_prompts_per_worker=1):
         max_prompts_per_worker=max_prompts_per_worker,
         worker_target=_fake_worker,
         weight_channel=_FakeWeightChannel(source, 0),
+        learner_rank=learner_rank,
+        sample_cursor=sample_cursor,
     )
 
 
@@ -399,3 +407,36 @@ def test_prefetch_resume_cursor_and_retry_keep_response_seeds():
         pool.close()
 
     assert next_round.seeds == _response_seeds(pool.random_seed, 4, 2, 1)
+
+
+def test_two_learners_keep_local_order_and_distinct_response_seeds():
+    sources = []
+    coordinators = []
+    try:
+        for rank, devices in enumerate((["r0a", "r0b"], ["r1a", "r1b"])):
+            source, coordinator = _coordinator(
+                devices=devices, learner_rank=rank, sample_cursor=6
+            )
+            sources.append(source)
+            coordinators.append(coordinator)
+        handles = [
+            coordinator.submit_round({"instruction": ["10", "11", "12", "13"]})
+            for coordinator in coordinators
+        ]
+        for rank, (coordinator, handle) in enumerate(zip(coordinators, handles)):
+            assert handle.jobs == {0: [0, 2], 1: [1, 3]}
+            assert handle.seeds == _response_seeds(3407, 6, 4, 1, rank)
+            result = coordinator.collect_round(handle)
+            assert result.prompts[:, 0].tolist() == [10, 11, 12, 13]
+            assert result.policy_version == 0
+            assert coordinator.weights.broadcast_calls == 1
+        assert handles[0].seeds != handles[1].seeds
+        for source, coordinator in zip(sources, coordinators):
+            coordinator.apply_weight_update(
+                None, lambda _version, source=source: source.weight.data.add_(1)
+            )
+            assert _collect(coordinator, [20, 21]).policy_version == 1
+            assert coordinator.weights.broadcast_calls == 2
+    finally:
+        for coordinator in coordinators:
+            coordinator.close()

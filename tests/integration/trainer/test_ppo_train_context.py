@@ -273,7 +273,7 @@ def test_builder_right_sizes_rollout_pool(device, temp_dir, monkeypatch):
         rollout_pool_seq_len=32,
     )
     context = TrainContextBuilder(cfg).with_param_path(temp_dir).build()
-    scheduler = context.strategy._rollout_runner.generator.backend.scheduler
+    scheduler = context.strategy._rollout_runner.generator.backend.engine_core
     assert scheduler.max_seq_len == 32
 
     cfg = _ppo_config(
@@ -282,7 +282,7 @@ def test_builder_right_sizes_rollout_pool(device, temp_dir, monkeypatch):
         ckpt_dir=os.path.join(temp_dir, "ckpt2"),
     )
     context = TrainContextBuilder(cfg).with_param_path(temp_dir).build()
-    scheduler = context.strategy._rollout_runner.generator.backend.scheduler
+    scheduler = context.strategy._rollout_runner.generator.backend.engine_core
     assert scheduler.max_seq_len == make_rollout_config().max_position_embeddings
 
 

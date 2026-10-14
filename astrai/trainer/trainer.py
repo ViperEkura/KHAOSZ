@@ -74,7 +74,7 @@ class Trainer:
                     context.optimizer.zero_grad()
                     if context.scheduler:
                         context.scheduler.step()
-                    context.consumed_samples += batch.prompts.shape[0]
+                    context.consumed_samples += batch.prompts.shape[0] * context.dp_size
                     context.optimizer_steps_completed += 1
                     context.checkpoint_safe = True
         self._call_callbacks("after_optimizer_step", context)

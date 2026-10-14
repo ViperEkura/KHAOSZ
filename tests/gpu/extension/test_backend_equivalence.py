@@ -1,7 +1,7 @@
 """Numerical equivalence between Torch and CUDA attention implementations.
 
 Covers training forward, inference prefill, inference decode (mixed
-seq_lens with padding mask), and end-to-end scheduler.run_batch.
+seq_lens with padding mask), and end-to-end rollout run_batch.
 """
 
 import pytest
@@ -11,9 +11,10 @@ from astrai.extension import op_backend
 from astrai.extension.kernel.attention import attn_paged_decode
 from astrai.extension.runtime.loader import is_available
 from astrai.inference.core.cache import BlockPool, KVCacheManager
-from astrai.inference.core.scheduler import Scheduler
+from astrai.inference.core.engine_core import EngineCore
 from astrai.inference.worker.graph import CUDAGraphRunner
 from astrai.inference.worker.workspace import InferenceWorkspace
+from astrai.trainer.backend import run_batch
 from tests.support.capabilities import skip_no_cuda
 from tests.support.models import D
 from tests.support.tokenizers import FakeTokenizer
@@ -351,7 +352,7 @@ def test_run_batch_cuda_matches_torch_greedy(cuda_model):
 
     prompts = [[1, 2, 3, 4, 5], [10, 11, 12, 13, 14, 15, 16]]
 
-    sched = Scheduler(
+    sched = EngineCore(
         model=model,
         tokenizer=tokenizer,
         max_batch_size=4,
@@ -359,7 +360,7 @@ def test_run_batch_cuda_matches_torch_greedy(cuda_model):
         device="cuda",
         dtype=torch.bfloat16,
     )
-    out_torch = sched.run_batch(prompts, max_tokens=5, temperature=0.0)
+    out_torch = run_batch(sched, prompts, max_tokens=5, temperature=0.0)
     sched.stop()
 
     cache_cuda = BlockPool(
@@ -371,7 +372,7 @@ def test_run_batch_cuda_matches_torch_greedy(cuda_model):
         device="cuda",
         dtype=torch.bfloat16,
     )
-    sched2 = Scheduler(
+    sched2 = EngineCore(
         model=model,
         tokenizer=tokenizer,
         max_batch_size=4,
@@ -381,7 +382,7 @@ def test_run_batch_cuda_matches_torch_greedy(cuda_model):
         cache=cache_cuda,
     )
     with op_backend(attention="cuda"):
-        out_cuda = sched2.run_batch(prompts, max_tokens=5, temperature=0.0)
+        out_cuda = run_batch(sched2, prompts, max_tokens=5, temperature=0.0)
     sched2.stop()
 
     assert out_torch == out_cuda, f"Torch={out_torch} != CUDA={out_cuda}"

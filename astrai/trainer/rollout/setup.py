@@ -50,6 +50,8 @@ def resolve_async_rollout(
     params: SamplingParams,
     max_seq_len: Optional[int],
     sample_cursor: int,
+    rank: int = 0,
+    world_size: int = 1,
 ) -> ResolvedAsyncRolloutConfig:
     devices = tuple(torch.device(name) for name in config.rollout_devices)
     if not devices or any(d.type != "cuda" or d.index is None for d in devices):
@@ -61,24 +63,34 @@ def resolve_async_rollout(
         raise ValueError(f"rollout_devices exceed available CUDA devices ({available})")
     if learner_device.type != "cuda" or learner_device.index is None:
         raise ValueError("async_round learner must use an indexed CUDA device")
-    if learner_device in devices:
-        raise ValueError("rollout_devices must exclude the learner device")
+    if world_size < 1 or not 0 <= rank < world_size:
+        raise ValueError("invalid async_round learner rank or world_size")
+    if sample_cursor < 0 or sample_cursor % world_size:
+        raise ValueError("async_round global sample cursor must divide by world_size")
+    learner_devices = {torch.device(f"cuda:{index}") for index in range(world_size)}
+    if learner_device != torch.device(f"cuda:{rank}"):
+        raise ValueError("async_round learner device must match its training rank")
+    if learner_devices.intersection(devices):
+        raise ValueError("rollout_devices must exclude all learner devices")
+    if len(devices) < world_size:
+        raise ValueError("each learner rank requires at least one rollout device")
+    assigned = devices[rank::world_size]
     if params.group_size < 2:
         raise ValueError("online_grpo group_size must be >= 2")
     return ResolvedAsyncRolloutConfig(
         learner_device=str(learner_device),
-        devices=tuple(str(d) for d in devices),
+        devices=tuple(str(d) for d in assigned),
         params=params,
         max_seq_len=max_seq_len,
         max_prompts_per_worker=max(
-            1, (config.batch_per_device + len(devices) - 1) // len(devices)
+            1, (config.batch_per_device + len(assigned) - 1) // len(assigned)
         ),
         startup_timeout_s=config.rollout_startup_timeout_s,
         generation_timeout_s=config.rollout_worker_timeout_s,
         weight_timeout_s=config.rollout_weight_timeout_s,
         max_policy_lag=config.rollout_max_policy_lag,
         random_seed=config.random_seed,
-        sample_cursor=sample_cursor,
+        sample_cursor=sample_cursor // world_size,
     )
 
 
@@ -89,7 +101,7 @@ def configure_rollout(
     strategy_kwargs: dict,
     create_ref_model: Callable,
     validate: Callable[[BaseExecutor], None],
-    scheduler_cls: type,
+    engine_core_cls: type,
     tokenizer_cls: type,
 ) -> None:
     cfg = config
@@ -139,7 +151,7 @@ def configure_rollout(
 
     def _colocated(max_batch_size: int) -> ColocatedBackend:
         return ColocatedBackend(
-            scheduler_cls(
+            engine_core_cls(
                 model=inference_model,
                 tokenizer=tokenizer,
                 max_batch_size=max_batch_size,
@@ -186,9 +198,15 @@ def configure_rollout(
             top_p=cfg.rollout_top_p,
         )
         resolved = resolve_async_rollout(
-            cfg, train_device, params, max_seq_len, context.consumed_samples
+            cfg,
+            train_device,
+            params,
+            max_seq_len,
+            context.consumed_samples,
+            rank=getattr(context, "rank", 0),
+            world_size=getattr(context, "dp_size", 1),
         )
-        context.async_rollout = AsyncRoundCoordinator(
+        coordinator = AsyncRoundCoordinator(
             source=inference_model,
             model_fn=cfg.model_fn,
             param_path=param_path,
@@ -206,7 +224,13 @@ def configure_rollout(
             weight_timeout_s=resolved.weight_timeout_s,
             random_seed=resolved.random_seed,
             sample_cursor=resolved.sample_cursor,
+            learner_rank=(
+                getattr(context, "rank", 0)
+                if getattr(context, "dp_size", 1) > 1
+                else None
+            ),
         )
+        context.async_rollout = RolloutRunner(coordinator=coordinator)
         context.optimizer_steps_completed = (
             context.checkpoint.meta.get("optimizer_step", context.optimizer_step)
             if context.checkpoint is not None

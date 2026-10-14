@@ -115,7 +115,7 @@ class RolloutGenerator:
         prompt_texts, flat_prompt_ids = self._prepare_prompts(batch)
         B = len(prompt_texts)
         G = params.group_size
-        # Re-expand flat list to G copies per prompt for run_batch.
+        # Re-expand flat list to G copies per prompt for the rollout batch call.
         expanded_prompt_ids: List[List[int]] = []
         for ids in flat_prompt_ids:
             expanded_prompt_ids.extend([list(ids)] * G)

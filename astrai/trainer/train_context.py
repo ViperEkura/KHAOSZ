@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, random_split
 from astrai.config.model_config import ConfigFactory
 from astrai.config.train_config import TrainConfig, _TrainRuntimeDependencies
 from astrai.dataset import RDSampler
-from astrai.inference.core.scheduler import Scheduler
+from astrai.inference.core.engine_core import EngineCore
 from astrai.model.components.lora import inject_lora
 from astrai.optimization.protocols import OptimizerProtocol, SchedulerProtocol
 from astrai.parallel.cp import CPState, CPStrategy, LossReduction
@@ -40,8 +40,7 @@ from astrai.trainer.optional_extras import (
     require_component_extras,
     restore_checkpoint_extras,
 )
-from astrai.trainer.rollout import RolloutEvaluator
-from astrai.trainer.rollout.async_round import AsyncRoundCoordinator
+from astrai.trainer.rollout import RolloutEvaluator, RolloutRunner
 from astrai.trainer.rollout.setup import configure_rollout
 from astrai.trainer.strategy import BaseStrategy, StrategyFactory
 
@@ -71,7 +70,7 @@ class TrainContext:
     #: Online-strategy validation: reward-statistics evaluator under its
     #: own sampling params. ``None`` keeps the legacy validate_online path.
     val_evaluator: Optional["RolloutEvaluator"] = field(default=None)
-    async_rollout: Optional["AsyncRoundCoordinator"] = field(default=None)
+    async_rollout: Optional["RolloutRunner"] = field(default=None)
     optimizer_steps_completed: Optional[int] = field(default=None)
     checkpoint_safe: bool = field(default=True)
 
@@ -180,10 +179,11 @@ class TrainContextBuilder:
         return self
 
     def build(self) -> TrainContext:
-        if self.config.rollout_mode == "async_round" and get_world_size() != 1:
-            raise ValueError(
-                "async_round requires actual world_size=1; check torchrun and distributed state"
-            )
+        if (
+            self.config.rollout_mode == "async_round"
+            and get_world_size() != self.config.nprocs
+        ):
+            raise ValueError("async_round world_size must match configured nprocs")
         # Resolve the (dp, cp, tp) rank layout before anything consumes it.
         self._topology = build_topology(
             cp_size=self.config.cp_size,
@@ -615,7 +615,7 @@ class TrainContextBuilder:
             strategy_kwargs=strategy_kwargs,
             create_ref_model=create_ref_model,
             validate=self._validate_rollout_configuration,
-            scheduler_cls=Scheduler,
+            engine_core_cls=EngineCore,
             tokenizer_cls=AutoTokenizer,
         )
 

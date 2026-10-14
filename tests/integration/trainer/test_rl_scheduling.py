@@ -225,6 +225,7 @@ def test_shared_train_batch_commits_async_round_once():
         executor=Executor(),
         config=SimpleNamespace(async_train_microbatch_prompts=1),
         async_rollout=coordinator,
+        dp_size=1,
         optimizer=optimizer,
         scheduler=None,
         consumed_samples=0,

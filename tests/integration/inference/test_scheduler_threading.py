@@ -9,7 +9,13 @@ from tests.support.core_contracts import scheduler as scheduler
 
 def test_stop_cannot_clear_a_restarted_successor_after_join():
     sched = MagicMock()
-    core = EngineCore(sched, threading.RLock())
+    core = object.__new__(EngineCore)
+    core.scheduler = sched
+    core.lock = threading.RLock()
+    core.stop_event = threading.Event()
+    core._lifecycle_lock = threading.Lock()
+    core._closing = False
+    core._shutdown_failed = False
     old, new = MagicMock(), MagicMock()
     old.is_alive.return_value = True
     new.is_alive.return_value = True
@@ -56,7 +62,7 @@ def test_score_holds_policy_lock_through_forward_and_cleanup(scheduler):
         except BaseException as exc:
             errors.append(exc)
 
-    with patch.object(sched._executor, "execute_score", side_effect=score):
+    with patch.object(sched.model_runner, "execute_score", side_effect=score):
         score_thread = threading.Thread(target=do_score)
         update_thread = threading.Thread(target=update)
         score_thread.start()
@@ -83,7 +89,7 @@ def test_start_waits_for_weight_mutation(scheduler):
     update.start()
     assert entered.wait(3)
     start.start()
-    assert sched._loop_thread is None
+    assert sched.loop_thread is None
     release.set()
     update.join(3)
     start.join(3)
