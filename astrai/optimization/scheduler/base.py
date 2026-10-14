@@ -1,8 +1,11 @@
 """Base class for training learning-rate schedulers."""
 
 from abc import ABC, abstractmethod
+from typing import List
 
 from torch.optim.lr_scheduler import LRScheduler
+
+from astrai.factory import BaseFactory
 
 
 class BaseScheduler(LRScheduler, ABC):
@@ -12,6 +15,10 @@ class BaseScheduler(LRScheduler, ABC):
         super().__init__(optimizer, last_epoch)
 
     @abstractmethod
-    def get_lr(self) -> list[float]:
+    def get_lr(self) -> List[float]:
         """Calculate the current learning rate."""
         raise NotImplementedError
+
+
+class SchedulerFactory(BaseFactory[BaseScheduler]):
+    """Factory for registered training schedulers."""

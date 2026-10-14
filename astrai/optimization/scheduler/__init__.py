@@ -1,10 +1,9 @@
 """Training learning-rate schedulers and factory registration."""
 
-from .base import BaseScheduler
-from .cosine import CosineScheduler
-from .factory import SchedulerFactory
-from .sgdr import SGDRScheduler
-from .wsd import WSDScheduler
+from astrai.optimization.scheduler.base import BaseScheduler, SchedulerFactory
+from astrai.optimization.scheduler.cosine import CosineScheduler
+from astrai.optimization.scheduler.sgdr import SGDRScheduler
+from astrai.optimization.scheduler.wsd import WSDScheduler
 
 __all__ = [
     "BaseScheduler",

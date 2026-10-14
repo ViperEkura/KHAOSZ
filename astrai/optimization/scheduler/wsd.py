@@ -1,7 +1,6 @@
 """Warmup-stable-decay learning-rate schedule."""
 
-from .base import BaseScheduler
-from .factory import SchedulerFactory
+from astrai.optimization.scheduler.base import BaseScheduler, SchedulerFactory
 
 
 @SchedulerFactory.register("wsd")

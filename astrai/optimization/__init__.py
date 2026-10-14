@@ -1,6 +1,6 @@
 """Training optimizers, learning-rate schedulers and their protocols."""
 
-from .optimizer import (
+from astrai.optimization.optimizer import (
     Mano,
     ManoAdamW,
     MuonAdamW,
@@ -17,8 +17,8 @@ from .optimizer import (
     partition_optimizer_parameters,
     refresh_param_groups,
 )
-from .protocols import OptimizerProtocol, SchedulerProtocol
-from .scheduler import (
+from astrai.optimization.protocols import OptimizerProtocol, SchedulerProtocol
+from astrai.optimization.scheduler import (
     BaseScheduler,
     CosineScheduler,
     SchedulerFactory,
