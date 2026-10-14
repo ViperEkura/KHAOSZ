@@ -1,5 +1,5 @@
-"""Muon optimizer and its sharded update strategies."""
+"""Muon and AdamW composite optimizer."""
 
-from .optimizer import MuonAdamW
+from astrai.optimization.optimizer.muon.optimizer import MuonAdamW
 
 __all__ = ["MuonAdamW"]

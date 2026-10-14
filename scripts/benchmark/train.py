@@ -779,7 +779,7 @@ def _muon_reshard(args, candidate):
         yield
         return
     module = importlib.import_module(
-        "astrai.optimization.optimizer.muon.strategies.dtensor"
+        "astrai.optimization.optimizer.muon.sharded_update"
     )
     distribute = module.distribute_tensor
 

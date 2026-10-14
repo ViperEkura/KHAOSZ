@@ -37,7 +37,7 @@ def _compare_reshard(rank, port, use_ns_kernels):
         device_id=torch.device("cuda", rank),
     )
     module = importlib.import_module(
-        "astrai.optimization.optimizer.muon.strategies.dtensor"
+        "astrai.optimization.optimizer.muon.sharded_update"
     )
     distribute = module.distribute_tensor
     try:

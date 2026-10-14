@@ -1,6 +1,6 @@
 """Muon plus AdamW combined optimizer."""
 
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 import torch
 from torch import Tensor, nn, optim
@@ -12,9 +12,7 @@ from astrai.optimization.optimizer.composite import (
     refresh_param_groups,
 )
 from astrai.optimization.optimizer.factory import OptimizerFactory
-
-from .sharded_update import _ShardedMuon
-from .strategies.dtensor import DTensorTransferPolicy
+from astrai.optimization.optimizer.muon.sharded_update import _ShardedMuon
 
 
 @OptimizerFactory.register("muon_adamw")
@@ -35,9 +33,8 @@ class MuonAdamW(optim.Optimizer):
         reuse_ns_buffers: bool = False,
         use_ns_kernels: bool = False,
         ns_batch_size: int = 4,
-        ns_backend: str | None = None,
-        batch_ns_updates: bool | None = None,
-        dtensor_transfer_policy: DTensorTransferPolicy | None = None,
+        ns_backend: Optional[str] = None,
+        batch_ns_updates: Optional[bool] = None,
     ):
         defaults = {
             "lr": lr,
@@ -50,8 +47,8 @@ class MuonAdamW(optim.Optimizer):
         params = [param for param in model.parameters() if param.requires_grad]
         super().__init__(params, defaults)
 
-        matrix_params: list[Tensor] = []
-        other_params: list[Tensor] = []
+        matrix_params: List[Tensor] = []
+        other_params: List[Tensor] = []
         for name, param in model.named_parameters():
             if not param.requires_grad:
                 continue
@@ -79,7 +76,6 @@ class MuonAdamW(optim.Optimizer):
             ns_batch_size=ns_batch_size,
             ns_backend=ns_backend,
             batch_ns_updates=batch_ns_updates,
-            dtensor_transfer_policy=dtensor_transfer_policy,
         )
         self.adamw = optim.AdamW(
             [{"params": other_params, "weight_decay": 0.0}],
@@ -97,10 +93,10 @@ class MuonAdamW(optim.Optimizer):
     def zero_grad(self, set_to_none: bool = True):
         composite_zero_grad([self.muon, self.adamw], set_to_none)
 
-    def state_dict(self) -> dict[str, Any]:
+    def state_dict(self) -> Dict[str, Any]:
         return composite_state_dict({"muon": self.muon, "adamw": self.adamw})
 
-    def load_state_dict(self, state_dict: dict[str, Any]):
+    def load_state_dict(self, state_dict: Dict[str, Any]):
         if "muon" not in state_dict or "adamw" not in state_dict:
             raise ValueError(
                 "Checkpoint optimizer state is not compatible with muon_adamw"
