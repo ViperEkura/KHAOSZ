@@ -143,7 +143,7 @@ def step_sharded_muon(
             param.add_(update, alpha=-adjusted_lr)
 
 
-class _ShardedMuon(optim.Muon):
+class ShardedMuon(optim.Muon):
     """Muon that gathers matrix DTensors for global Newton-Schulz matmuls."""
 
     def __init__(

@@ -12,7 +12,7 @@ from astrai.optimization.optimizer.composite import (
     refresh_param_groups,
 )
 from astrai.optimization.optimizer.factory import OptimizerFactory
-from astrai.optimization.optimizer.muon.sharded_update import _ShardedMuon
+from astrai.optimization.optimizer.muon.sharded_update import ShardedMuon
 
 
 @OptimizerFactory.register("muon_adamw")
@@ -63,7 +63,7 @@ class MuonAdamW(optim.Optimizer):
             else:
                 other_params.append(param)
 
-        self.muon = _ShardedMuon(
+        self.muon = ShardedMuon(
             matrix_params,
             lr=lr,
             weight_decay=weight_decay,
