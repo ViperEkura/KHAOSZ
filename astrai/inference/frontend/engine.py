@@ -26,7 +26,7 @@ from typing import (
 import torch
 import torch.nn as nn
 
-from astrai.extension import ATTN_BACKEND, AttentionBackend, get_backend
+from astrai.extension.runtime.context import OpSelection
 from astrai.inference.core.cache.pool import BlockPool
 from astrai.inference.core.events import RequestError, TokenDelta
 from astrai.inference.core.scheduler import Scheduler
@@ -58,7 +58,6 @@ class InferenceEngine:
         max_seq_len: Optional[int] = None,
         cache: Optional[BlockPool] = None,
         enable_cuda_graph: bool = True,
-        backend: Optional[Union[str, ATTN_BACKEND, AttentionBackend, type]] = None,
         enable_overlap: bool = False,
         core_client: Optional[EngineCoreClient] = None,
     ):
@@ -72,7 +71,6 @@ class InferenceEngine:
                 max_seq_len=max_seq_len,
                 cache=cache,
                 enable_cuda_graph=enable_cuda_graph,
-                backend=backend,
                 enable_overlap=enable_overlap,
             )
             core_client = InprocClient(scheduler)
@@ -119,7 +117,6 @@ class InferenceEngine:
         top_k: int,
         frequency_penalty: float,
         rep_window: int,
-        backend: Optional[AttentionBackend],
     ) -> ProcessedInput:
         """Tokenize + submit one prompt; the id exists before the core does."""
         processed = self._input_processor.process(prompt)
@@ -135,7 +132,6 @@ class InferenceEngine:
                 rep_window=rep_window,
                 request_id=processed.request_id,
                 prompt_ids=processed.prompt_ids,
-                backend=backend,
             )
         except BaseException:
             self._release_requests([processed.request_id])
@@ -333,9 +329,6 @@ class InferenceEngine:
         ``finish_reason``.  Protocol adapters consume this instead of
         re-tokenizing text to count tokens.
         """
-        # Capture the caller's backend, but defer submission until consumption:
-        # closing a never-started generator cannot run its finally block.
-        backend = get_backend(use_default=False)
 
         async def _agen():
             processed = self._submit_prompt(
@@ -346,7 +339,6 @@ class InferenceEngine:
                 top_k=top_k,
                 frequency_penalty=frequency_penalty,
                 rep_window=rep_window,
-                backend=backend,
             )
             request_id = processed.request_id
             tracker = self._tracker
@@ -476,7 +468,6 @@ class InferenceEngine:
         # each request's events accumulate until then.
         processed = self._input_processor.process_batch(prompts)
         request_ids = [item.request_id for item in processed]
-        backend = get_backend(use_default=False)
 
         def submit():
             for rid in request_ids:
@@ -492,7 +483,6 @@ class InferenceEngine:
                     rep_window=rep_window,
                     request_ids=request_ids,
                     prompts_ids=[item.prompt_ids for item in processed],
-                    backend=backend,
                 )
             except BaseException:
                 self._release_requests(request_ids)
@@ -540,8 +530,8 @@ class InferenceEngine:
         return self._core.stats()
 
     @property
-    def backend_name(self) -> str:
-        return self._core.backend_name
+    def op_selection(self) -> OpSelection:
+        return self._core.op_selection
 
     @property
     def cuda_graph_enabled(self) -> bool:
@@ -569,7 +559,7 @@ def build_engine(
 
     Loads model and tokenizer from *param_path*, or accepts preloaded
     objects, places the model, and returns a started InferenceEngine.
-    Extra *engine_kwargs* (cache, enable_cuda_graph, backend, enable_overlap)
+    Extra *engine_kwargs* (cache, enable_cuda_graph, enable_overlap)
     pass through to InferenceEngine. Placement parts left as None are skipped.
     """
     if param_path is not None:

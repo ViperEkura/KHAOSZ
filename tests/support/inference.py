@@ -1,5 +1,6 @@
 from typing import Optional
 
+from astrai.extension import op_backend
 from astrai.inference.core.scheduler import Scheduler
 from astrai.model.autoregressive_lm import AutoRegressiveLM
 from tests.support.models import make_rollout_config
@@ -30,12 +31,12 @@ def make_cpu_scheduler(
         max_seq_len=max_seq_len,
         enable_cuda_graph=enable_cuda_graph,
         enable_overlap=enable_overlap,
-        backend="torch_native",
     )
     if device is not None:
         kwargs["device"] = device
     kwargs.update(overrides)
-    return Scheduler(model=model, tokenizer=tokenizer, **kwargs)
+    with op_backend(attention="torch"):
+        return Scheduler(model=model, tokenizer=tokenizer, **kwargs)
 
 
 def make_cpu_model(max_position_embeddings: int = 64):

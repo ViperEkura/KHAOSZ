@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from astrai.extension import TorchNativeBackend, get_backend
+from astrai.extension import op_backend, snapshot_op_selection
 from astrai.inference import GenerationResult, Scheduler
 from astrai.inference.core.scheduler import OutputEventSink
 from astrai.model.autoregressive_lm import AutoRegressiveLM
@@ -47,20 +47,28 @@ def test_scheduler_concurrent_add_task(mock_model_and_tokenizer):
     assert len(results["request_ids"]) == 50
 
 
-def test_generation_loop_activates_backend_in_worker_thread():
-    scheduler, _, _ = _make_real_scheduler("cpu")
-    scheduler._backend = TorchNativeBackend()
+def test_generation_loop_activates_full_selection_in_worker_thread():
+    with op_backend(
+        attention="torch", rotary="torch", swiglu="torch", syrk="torch", symm="torch"
+    ):
+        scheduler, _, _ = _make_real_scheduler("cpu")
     observed = []
 
     def observe_backend(*args, **kwargs):
-        observed.append(type(get_backend()))
+        observed.append(
+            tuple(
+                snapshot_op_selection().choice(op)[0]
+                for op in ("attention", "rotary", "swiglu", "syrk", "symm")
+            )
+        )
         scheduler._stop_event.set()
 
     scheduler._requests.wait_for_requests = observe_backend
     scheduler.start()
     scheduler._loop_thread.join(timeout=5)
     assert not scheduler._loop_thread.is_alive()
-    assert observed == [TorchNativeBackend]
+    assert scheduler.op_selection.choice("rotary")[0] == "torch"
+    assert observed == [("torch",) * 5]
     scheduler.stop()
 
 

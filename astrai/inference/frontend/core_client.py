@@ -7,6 +7,7 @@ and cancellation share the core's operation lock with model execution.
 
 from typing import List
 
+from astrai.extension.runtime.context import OpSelection
 from astrai.inference.core.scheduler import Scheduler
 
 
@@ -24,7 +25,7 @@ class EngineCoreClient:
         raise NotImplementedError
 
     @property
-    def backend_name(self) -> str:
+    def op_selection(self) -> OpSelection:
         raise NotImplementedError
 
     @property
@@ -74,8 +75,8 @@ class InprocClient(EngineCoreClient):
         return self._scheduler.max_batch_size
 
     @property
-    def backend_name(self) -> str:
-        return self._scheduler.backend_name
+    def op_selection(self) -> OpSelection:
+        return self._scheduler.op_selection
 
     @property
     def cuda_graph_enabled(self) -> bool:

@@ -37,7 +37,7 @@ classDiagram
         +score_ids(prompts, continuations, per_token)
         +stats() Dict
         +max_batch_size int
-        +backend_name str
+        +op_selection OpSelection
         +cuda_graph_enabled bool
         +shutdown()
     }

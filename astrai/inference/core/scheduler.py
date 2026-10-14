@@ -3,14 +3,17 @@
 import logging
 import uuid
 from collections import deque
-from contextlib import nullcontext
 from functools import wraps
-from typing import Any, Callable, Dict, List, Optional, TypeVar, Union
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 import torch
 
 from astrai.config.inference_config import InferenceConfig
-from astrai.extension import ATTN_BACKEND, AttentionBackend, attn_backend, get_backend
+from astrai.extension.runtime.context import (
+    OpSelection,
+    snapshot_op_selection,
+    use_op_selection,
+)
 from astrai.inference.contracts import ModelRunnerOutput, SchedulerOutput
 from astrai.inference.core.cache.pool import BlockPool, KVCacheManager
 from astrai.inference.core.engine_core import EngineCore
@@ -80,7 +83,6 @@ class Scheduler:
         dtype: Optional[torch.dtype] = None,
         cache: Optional[BlockPool] = None,
         enable_cuda_graph: bool = True,
-        backend: Optional[Union[str, ATTN_BACKEND, AttentionBackend, type]] = None,
         policy_version: int = 0,
         enable_overlap: bool = False,
         page_size: Optional[int] = None,
@@ -125,11 +127,8 @@ class Scheduler:
             tokenizer, max_batch_size, self.max_seq_len, self._metrics
         )
         self._stop_ids = frozenset(tokenizer.stop_ids)
-        self._backend = None
-        with attn_backend(backend if backend is not None else get_backend()):
-            if backend is not None:
-                self._backend = get_backend()
-            self._backend_name = type(get_backend()).__name__
+        self._op_selection = snapshot_op_selection()
+        with use_op_selection(self._op_selection):
             self._executor = GPUModelRunner(
                 model=model,
                 kv_cache=cache,
@@ -184,17 +183,15 @@ class Scheduler:
         return self._requests.max_batch_size
 
     @property
-    def backend_name(self):
-        return self._backend_name
+    def op_selection(self) -> OpSelection:
+        return self._op_selection
 
     @property
     def cuda_graph_enabled(self):
         return self._executor.cuda_graph_enabled
 
-    def _backend_context(self):
-        return (
-            attn_backend(self._backend) if self._backend is not None else nullcontext()
-        )
+    def _selection_context(self):
+        return use_op_selection(self._op_selection)
 
     def set_event_sink(self, sink):
         with self._weight_lock:
@@ -522,7 +519,6 @@ class Scheduler:
             raise ValueError("seeds must contain one integer in [0, 2**63) per request")
         self._stop_ids = frozenset(self._requests.tokenizer.stop_ids)
         requests, errors = [], []
-        backend = get_backend(use_default=False)
         for index, ids in enumerate(prompt_ids_list):
             error = None
             if not ids:
@@ -547,7 +543,6 @@ class Scheduler:
                     top_k,
                     frequency_penalty,
                     rep_window,
-                    backend,
                     seed=None if seeds is None else seeds[index],
                 )
                 if not self._kv_manager.alloc_slots(
@@ -562,7 +557,7 @@ class Scheduler:
             errors.append(error)
         try:
             live = [r for r in requests if r is not None]
-            with self._backend_context():
+            with self._selection_context():
                 while live:
                     decoded, aborted = self._stepper.step(
                         live, return_logprobs=return_logprobs
@@ -622,7 +617,6 @@ class Scheduler:
         if len(prompt_ids_list) != len(continuation_ids_list):
             raise ValueError("prompt and continuation lists must have equal length")
         requests = []
-        backend = get_backend(use_default=False)
         for prompt_ids, cont_ids in zip(prompt_ids_list, continuation_ids_list):
             if (
                 not prompt_ids
@@ -635,7 +629,6 @@ class Scheduler:
                 f"score_{uuid.uuid4().hex}",
                 list(prompt_ids) + list(cont_ids),
                 max_tokens=0,
-                backend=backend,
             )
             request.cont_len = len(cont_ids)
             if not self._kv_manager.alloc_slots(request.request_id, request.prompt_ids):
@@ -648,7 +641,7 @@ class Scheduler:
         results = {}
         try:
             if live:
-                with self._backend_context():
+                with self._selection_context():
                     scored = self._executor.execute_score(
                         [r.execution("score", 0, len(r.prompt_ids)) for r in live],
                         per_token=per_token,

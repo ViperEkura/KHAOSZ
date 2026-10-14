@@ -44,13 +44,13 @@ class SchedulerStep:
                     ),
                     len(request.prompt_ids) - 1,
                 )
-                groups.setdefault((start, request.backend), []).append(request)
+                groups.setdefault(start, []).append(request)
             elif request.next_pos >= scheduler.max_seq_len:
                 scheduler.finish(request, FINISH_LENGTH)
             else:
                 decode.append(request)
 
-        for (start, _backend), group in groups.items():
+        for start, group in groups.items():
             remaining = self._token_budget
             for request in group:
                 need = len(request.prompt_ids) - start

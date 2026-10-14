@@ -5,7 +5,7 @@ An identity includes an incarnation so a late result cannot hit a reused id.
 """
 
 from dataclasses import dataclass
-from typing import Any, Literal, Optional, Tuple
+from typing import Literal, Optional, Tuple
 
 
 @dataclass(frozen=True, eq=False)
@@ -58,7 +58,6 @@ class ExecutionRequest:
     # Only frequency-penalty execution needs a host output-history snapshot.
     output_ids: Tuple[int, ...] = ()
     cont_len: int = 0
-    backend: Any = None
 
     @property
     def request_id(self) -> str:

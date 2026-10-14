@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from astrai.extension.runtime.context import OpSelection
 from astrai.inference.frontend.core_client import EngineCoreClient
 from astrai.inference.frontend.engine import InferenceEngine
 from tests.support.tokenizers import FakeTokenizer
@@ -11,7 +12,7 @@ from tests.support.tokenizers import FakeTokenizer
 def test_engine_operations_use_injected_client():
     client = MagicMock(spec=EngineCoreClient)
     client.max_batch_size = 2
-    client.backend_name = "test"
+    client.op_selection = OpSelection((("attention", "torch"), ("swiglu", "cuda")))
     client.cuda_graph_enabled = False
     client.score_ids.return_value = [0.5]
     client.stats.return_value = {"queued": 0}
@@ -23,7 +24,8 @@ def test_engine_operations_use_injected_client():
     assert engine.score([1], [2]) == 0.5
     client.score_ids.assert_called_once_with([[1]], [[2]], per_token=False)
     assert engine.get_stats() == {"queued": 0}
-    assert engine.backend_name == "test"
+    assert engine.op_selection.choice("attention")[0] == "torch"
+    assert engine.op_selection.choice("swiglu")[0] == "cuda"
     assert engine.cuda_graph_enabled is False
     engine.shutdown()
     client.shutdown.assert_called_once()

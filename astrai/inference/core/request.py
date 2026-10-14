@@ -5,7 +5,6 @@ from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 from typing import (
-    TYPE_CHECKING,
     Any,
     Deque,
     Dict,
@@ -21,9 +20,6 @@ from astrai.config.inference_config import InferenceConfig
 from astrai.inference.contracts import ExecutionRequest, RequestIdentity, SamplingParams
 from astrai.inference.core.metrics import MetricsCollector
 from astrai.tokenize.tokenizer import AutoTokenizer
-
-if TYPE_CHECKING:
-    from astrai.extension import AttentionBackend
 
 _config = InferenceConfig()
 
@@ -93,7 +89,6 @@ class Request:
         top_k: int = 50,
         frequency_penalty: float = 0.0,
         rep_window: int = _config.default_rep_window,
-        backend: Optional["AttentionBackend"] = None,
         *,
         seed: Optional[int] = None,
     ):
@@ -107,7 +102,6 @@ class Request:
         self.top_k = top_k
         self.frequency_penalty = frequency_penalty
         self.rep_window = rep_window
-        self.backend = backend
         self._sampling = SamplingParams(
             temperature, top_p, top_k, frequency_penalty, rep_window, seed
         )
@@ -143,7 +137,6 @@ class Request:
             sampling=self._sampling,
             output_ids=tuple(self.output_ids) if self.frequency_penalty else (),
             cont_len=self.cont_len,
-            backend=self.backend,
         )
 
     @property
@@ -201,7 +194,6 @@ class RequestManager:
         top_k: int = 50,
         frequency_penalty: float = 0.0,
         rep_window: int = 64,
-        backend: Optional["AttentionBackend"] = None,
         request_id: Optional[str] = None,
         prompt_ids: Optional[List[int]] = None,
     ) -> str:
@@ -234,7 +226,6 @@ class RequestManager:
             top_k=top_k,
             frequency_penalty=frequency_penalty,
             rep_window=rep_window,
-            backend=backend,
         )
 
         self._register_request(request)
@@ -249,7 +240,6 @@ class RequestManager:
         top_k: int = 50,
         frequency_penalty: float = 0.0,
         rep_window: int = 64,
-        backend: Optional["AttentionBackend"] = None,
         request_ids: Optional[List[str]] = None,
         prompts_ids: Optional[List[List[int]]] = None,
     ) -> List[str]:
@@ -307,7 +297,6 @@ class RequestManager:
                 top_k=top_k,
                 frequency_penalty=frequency_penalty,
                 rep_window=rep_window,
-                backend=backend,
             )
             requests.append(request)
             request_ids_out.append(request_id)

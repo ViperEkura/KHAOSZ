@@ -46,10 +46,10 @@ BLAS-style formulas, not a complete BLAS interface with side/uplo/trans flags.
 flowchart LR
     Optimizer --> NS[backend.newton_schulz]
     NS --> Ops[backend.newton_schulz]
-    Ops --> Registry[runtime.dispatch]
-    Registry --> Policy[policy.newton_schulz]
-    Registry --> Torch[Torch fallback]
-    Registry --> Adapter[kernel.newton_schulz]
+    Ops --> Dispatch[backend.newton_schulz dispatcher]
+    Dispatch --> Policy[policy.newton_schulz]
+    Dispatch --> Torch[Torch fallback]
+    Dispatch --> Adapter[kernel.newton_schulz]
     Adapter --> CUDA[Newton-Schulz module]
     CUDA --> Mainloop[GemmCollectiveMainloop]
     CUDA --> Epilogue[GemmCollectiveEpilogue]
@@ -62,11 +62,11 @@ surface, \`entry.cu\` validates tensors and packs GEMM parameters, and
 planner. Their declarations are private to \`newton_schulz/entry.h\`.
 
 The kernel adapter forwards execution arguments and exposes candidate and plan
-metadata. The backend owns validation, operator registration and fallback. The
+metadata. The operator dispatcher owns validation and fallback. The
 policy owns optional measured-row overrides and native planner selection; the
 optimizer has no tile, layout or shape-specific conditions.
-`op_backend(syrk="torch", symm="torch")` forces Torch through the shared
-operator registry. Explicit CUDA selection and the adapter allow candidate
+`op_backend(syrk="torch", symm="torch")` forces Torch through the two
+operator dispatchers. Explicit CUDA selection and the adapter allow candidate
 measurement without using automatic planning.
 
 SYRK has a triangular WMMA candidate and square candidates built from the

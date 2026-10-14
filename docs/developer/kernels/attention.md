@@ -3,37 +3,31 @@
 > Kernel modules `csrc/attention/` (module list in the [family overview](README.md#overview)); 
 > python adapters in `astrai/extension/kernel/attention.py`, dispatch policy in `astrai/extension/backend/attention/`.
 
-## Attention Backend
+## Attention dispatch
 
-`astrai/extension/backend/attention/` provides the backend abstraction:
+`AttentionDispatcher` builds an `AttentionSpec` for each call and selects a
+function from the `cuda`, `flash`, or `torch` modules in
+`astrai.extension.backend.attention`. There are no attention backend classes.
 
-- **`AttentionBackend`** (ABC): single abstract `forward`; each subclass branches on `fwd` ("decode" / "prefill" / None) internally, `_check_fwd` guards unknown modes
-- **`CudaBackend`**: CUDA kernel dispatch — decode via `attn_paged_decode` (page_size=1), prefill via `attn_paged_prefill` (ragged batch, `qo_indptr` + `kv_indptr`). Default on GPU.
-- **`FlashAttnBackend`**: Optional flash-attn dispatch via `flash_attn_varlen_func` over gathered flat K/V.
-- **`TorchNativeBackend`**: SDPA with indirect KV cache gather (always-available fallback)
-
-Default priority: cuda > flash > torch. Set ``ASTR_BACKEND=cuda|torch_native|flash``
-to override the default.
-
-Select a backend via context manager (mirrors `torch.nn.attention.sdpa_kernel`):
+Automatic selection tries CUDA, FlashAttention, then torch SDPA. CUDA handles
+supported inference calls with a KV cache; training calls requiring backward
+use FlashAttention or torch autograd. The compiled-kernel wrappers in
+`astrai.extension.kernel.attention` execute one exact kernel and do not fall
+back.
 
 ```python
-from astrai.extension import attn_backend, ATTN_BACKEND
+from astrai.extension import attention, op_backend
 
-with attn_backend(ATTN_BACKEND.CUDA):
-    engine.generate("hello")
+with op_backend(attention="torch"):
+    output = attention(q, k, v)
 ```
 
-The `attention(...)` policy entry point falls back to `FlashAttnBackend` (when
-flash-attn is installed and supports the call) or `TorchNativeBackend` when the
-automatically selected CUDA backend cannot handle an input. Resolution
-precedence is: explicit `attn_backend(...)` context > `ASTR_BACKEND` env >
-default. An explicit `attn_backend(...)` selection is strict and raises instead
-of silently switching implementations; the env override (and the implicit
-default) fall back to the first compatible backend when incapable. Training
-calls (`fwd=None`, no KV cache) resolve by capability: the CUDA cache kernels
-cannot run without a cache, so they fall back to flash (mask-free/causal calls
-only) and finally to torch SDPA.
+`attention(..., implementation="cuda")` overrides the context for one call.
+An explicit argument or context choice raises when unsupported.
+`set_op("attention", "cuda")` and `ASTR_OPS=attention=cuda` are soft process
+defaults with automatic fallback. An inference scheduler captures the context
+choice when it is created and installs it in its worker; requests do not carry
+an implementation choice.
 
 ## Native dtype dispatch
 
@@ -55,7 +49,7 @@ Supported-type diagnostics derive from the same list used by dispatch.
 
 ## Python Wrappers
 
-`astrai/extension/kernel/attention.py` provides Python wrappers for each compiled attention kernel. Each wrapper calls its CUDA kernel directly and raises `RuntimeError` if the `.so` is not available. Fallback to torch SDPA is handled by the attention backend, not the wrapper functions.
+`astrai/extension/kernel/attention.py` provides Python wrappers for each compiled attention kernel. Each wrapper calls its CUDA kernel directly and raises `RuntimeError` if the `.so` is not available. Fallback to torch SDPA is handled by the attention dispatcher, not the wrapper functions.
 
 
 Interface (all functions):
@@ -64,7 +58,7 @@ is_causal: True = causal mask; False = non-causal
 mask:      2D [batch, kv_len] or 3D [batch, q_len, kv_len] (bool, True=keep)
 ```
 
-Layout convention: dense q/k/v use `[batch, seq_len, n_heads, head_dim]` (BLHD); packed inference uses `[total_q, n_heads, head_dim]`. `scale=None` selects `1/sqrt(head_dim)`. The public backend accepts any finite scale; native CUDA currently accepts finite positive scales, and automatic selection routes other scales to a capable backend.
+Layout convention: dense q/k/v use `[batch, seq_len, n_heads, head_dim]` (BLHD); packed inference uses `[total_q, n_heads, head_dim]`. `scale=None` selects `1/sqrt(head_dim)`. The public attention entry point accepts any finite scale; native CUDA currently accepts finite positive scales, and automatic selection routes other scales to a capable backend.
 
 ## Q Scheduling and KV Addressing
 

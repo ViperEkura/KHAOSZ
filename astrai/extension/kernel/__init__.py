@@ -9,6 +9,7 @@ from astrai.extension.kernel.attention import (
 )
 from astrai.extension.kernel.cross_entropy import linear_cross_entropy
 from astrai.extension.kernel.rotary import rotary_emb
+from astrai.extension.kernel.swiglu import swiglu
 
 __all__ = [
     "linear_cross_entropy",
@@ -18,4 +19,5 @@ __all__ = [
     "attn_paged_prefill",
     "attn_prefill",
     "rotary_emb",
+    "swiglu",
 ]

@@ -1,7 +1,7 @@
 # CUDA Kernels
 
 AstrAI includes optional custom CUDA kernels for attention, rotary
-embedding, cross-entropy, and the quantized GEMM family. They are built when `nvcc` is
+embedding, SwiGLU, cross-entropy, and the quantized GEMM family. They are built when `nvcc` is
 available and CUDA is detected. This folder is the home of the
 per-kernel-family documentation — math contract first, then design notes;
 the family-wide infrastructure (build system, python extension layers,
@@ -16,7 +16,8 @@ maps to one family of translation units under `csrc/` (headers live in the `csrc
 | `attn_paged_decode` | `attention/paged_decode.cu` | Paged KV cache decode attention |
 | `attn_paged_prefill` | `attention/paged_prefill.cu` | Paged KV cache prefill attention (ragged batch) |
 | `symmetric` | `symmetric.cu` | Generic BF16 SYRK/SYMM with measured tile dispatch |
-| `rotary_emb` | `rotary_emb.cu` | Fused rotary embedding (cos/sin lookup + rotation) |
+| `rotary_emb` | `rotary_emb.cu` | Fused rotary forward and input gradient |
+| `swiglu` | `swiglu.cu` | Fused SwiGLU forward and both input gradients |
 | `cross_entropy` | `cross_entropy.cu` | Fused cross-entropy and chunked linear cross-entropy |
 | `quantize` | `quantize/bindings.cu` + `quantize/entry.cu` | Shared FP8/int8 quantization kernels (sm_80+) |
 | `gemm` | `gemm/entry.cu` + `gemm/instantiations/*.cu` | dtype-generic tensor-core GEMM binding + one explicit `gemm_dispatch` instantiation per dtype pair (fp8 / W8A16 / W8A8 / W16A16, sm_89+) |
@@ -36,9 +37,10 @@ Additionally, optimized `.cuh` variants with tensor-core MMA (Matrix Multiply-Ac
 | Muon Newton-Schulz | [muon_ns.md](muon_ns.md) | SYRK/SYMM or Torch | `astrai/extension/backend/newton_schulz.py` |
 | Quantize (FP8 / int8) | [quantize.md](quantize.md) | `csrc/quantize/` (bindings + entry; headers: `csrc/include/`) | `astrai/extension/kernel/quantize.py`; FP8 strategy `astrai/extension/policy/quantization/autocast.py` (`fp8_autocast`, aten::linear override) |
 | GEMM / Linear (bf16 · fp8 · w8a16 · w8a8) | [gemm.md](gemm.md) | `csrc/gemm/` (headers: `csrc/include/`) | adapter `astrai/extension/kernel/gemm.py` |
-| Attention (decode / paged / split-Q prefill, MMA variants) | [attention.md](attention.md) | `csrc/attention/` (module `attention`; headers: `csrc/include/`) | `astrai/extension/kernel/attention.py`; dispatch `astrai/extension/backend/attention.py` |
+| Attention (decode / paged / split-Q prefill, MMA variants) | [attention.md](attention.md) | `csrc/attention/` (module `attention`; headers: `csrc/include/`) | `astrai/extension/kernel/attention.py`; dispatch `astrai/extension/backend/attention/dispatcher.py` |
 | Gated DeltaNet (chunked fwd prep / bwd output stage) | [attention.md](attention.md) (§GDN) | `csrc/gated_deltanet/` (headers: `csrc/include/`) | `astrai/extension/kernel/gdn.py` |
 | Rotary embedding | [rotary.md](rotary.md) | `csrc/rotary_emb.cu` | `astrai/extension/kernel/rotary.py`; dispatch `astrai/extension/backend/rotary.py` |
+| SwiGLU | [swiglu.md](swiglu.md) | `csrc/swiglu.cu` | `astrai/extension/kernel/swiglu.py`; dispatch `astrai/extension/backend/swiglu.py` |
 | Cross-entropy | [cross_entropy.md](cross_entropy.md) | `csrc/cross_entropy.cu` | `astrai/extension/kernel/cross_entropy.py`; `astrai/trainer/strategy.py` |
 
 One entry the table does not spell out: `gemm/` also carries the **fp8
@@ -137,20 +139,24 @@ policy:
 
 ```text
 astrai/extension/
-├── __init__.py             # Public API and legacy module aliases
-├── runtime/                # Registry/dispatch and lazy module loading
-│   ├── dispatch.py
+├── __init__.py             # Public operator API
+├── runtime/                # Context, base spec/dispatcher, and lazy loader
+│   ├── context.py
+│   ├── operation.py
 │   └── loader.py
-├── backend/                # Operator strategy and fallback policy
-│   ├── attention/          # Registry plus CUDA, FlashAttention, torch backends
-│   └── rotary.py
+├── backend/                # Per-operator dispatch and fallback policy
+│   ├── attention/          # Dispatcher plus CUDA, FlashAttention, torch functions
+│   ├── rotary.py
+│   ├── swiglu.py
+│   └── newton_schulz.py
 ├── kernel/                 # Stateless compiled bindings and INT8 primitives
 │   ├── attention.py
 │   ├── cross_entropy.py
 │   ├── gdn.py
 │   ├── gemm.py
 │   ├── quantize.py
-│   └── rotary.py
+│   ├── rotary.py
+│   └── swiglu.py
 ├── policy/                 # Operator-specific execution policy
 │   ├── gemm/               # Plan configuration and runtime autotuning
 │   │   ├── plan.py
@@ -164,7 +170,7 @@ astrai/extension/
 `gemm` is an operator family; `quantization` is policy shared by operators.
 Both live under `policy/` because these modules own configuration and state.
 `backend/` owns concrete execution strategies, while `kernel/` calls exact
-bindings. Legacy module paths remain aliases of the grouped modules.
+bindings. Each operator owns its capability checks and implementation choice.
 
 The dependency direction is one-way:
 
@@ -208,46 +214,29 @@ output = attn_prefill(q, k, v, mask=mask, is_causal=True)
 If the kernel is unavailable, this call fails. Callers that need fallback and
 capability dispatch must use the public `attention(...)` entry point instead.
 
-### Backend Layer
+### Operator dispatch
 
-`astrai.extension.backend` owns execution policy:
+`astrai.extension.runtime` owns the `ContextVar` selection and the abstract
+`OpSpec` and `OpDispatcher` contracts. Each operator has its own spec and
+dispatcher in `astrai.extension.backend`; there is no shared implementation
+registry. The spec records device, dtype, phase, backward need, and
+operator-specific capability facts for one forward call.
 
-- It selects CUDA, FlashAttention, or torch-native attention.
-- It checks per-call constraints such as dtype, shape, head dimension, cache
-  availability, and installed optional dependencies.
-- It owns KV cache writes and reads because those operations differ by backend.
-- It provides torch fallbacks and raises when an explicitly requested backend
-  cannot handle a call.
-- Rotary dispatch follows the same boundary without a backend class: the
-  policy layer chooses the fused op for supported inference calls and otherwise
-  uses the autograd-compatible torch implementation.
-
-An operator family supplies call axes and a safe fallback. External packages
-can add implementations with `register_impl(ImplRecord(...))`; attention
-backends use `@AttentionBackendFactory.register("name")`. Each record declares
-`priority`, `modes` (`train`/`infer`), `available`, and a per-call capability.
-The family supplies `mode` in its axes. Explicit and `with op_backend(...)`
-selections raise when incapable; `ASTR_OPS` and `set_op(...)` fall through to
-the next capable implementation. Inference-only implementations cannot run
-on a training call, including when selected explicitly. Call
-`unregister_impl(family, name)` when unloading an external operator.
-
-Normal model and inference code should import the stable API from
-`astrai.extension`:
+Attention dispatches directly to module functions in `backend/attention/`.
+Rotary and SwiGLU use their own dispatchers; SYRK/SYMM keep shape planning in
+`policy.newton_schulz`. Exact compiled operations remain in `kernel/`. An
+explicit argument or `op_backend(...)` context is strict when unsupported.
+`ASTR_OPS` and `set_op(...)` are soft process defaults.
 
 ```python
-from astrai.extension import ATTN_BACKEND, attention, attn_backend
+from astrai.extension import attention, op_backend
 
-output = attention(q, k, v, kv_cache=cache, layer_id=layer_id, fwd="decode")
-
-with attn_backend(ATTN_BACKEND.TORCH_NATIVE):
+with op_backend(attention="torch"):
     output = attention(q, k, v)
 ```
 
-The package root re-exports the supported high-level API and selected direct
-kernel wrappers. Internal code should use `astrai.extension.backend` only when
-it needs a backend type or policy implementation, and `astrai.extension.kernel`
-only when it deliberately requires one exact kernel.
+Inference snapshots the selection when its scheduler is created and installs
+that snapshot in the worker. Requests do not carry an implementation choice.
 
 ### Placement Rules
 
@@ -257,9 +246,9 @@ When extending this package:
 |--------|----------|
 | Add a pybind call for a compiled kernel | `astrai/extension/kernel/` |
 | Add argument translation required by the compiled ABI | `astrai/extension/kernel/` |
-| Add an implementation to an existing operator family | `register_impl(ImplRecord(...))` |
-| Add a new operator family | `register_family(...)` and its family entry point |
-| Add an attention backend | `astrai/extension/backend/attention/` and `AttentionBackendFactory.register(...)` |
+| Add an implementation to an operator | Extend that operator's `select` and capability check in `backend/` |
+| Add a new operator | Add an `OpSpec` and `OpDispatcher` subclass plus its public entry point |
+| Add an attention implementation | Add functions under `backend/attention/` and update `AttentionDispatcher.select` |
 | Add attention KV cache behavior | `astrai/extension/backend/attention/` |
 | Expose a supported user-facing symbol | `astrai/extension/__init__.py` |
 

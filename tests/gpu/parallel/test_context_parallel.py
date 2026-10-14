@@ -13,7 +13,7 @@ import torch.distributed as dist
 
 from astrai.config.train_config import TrainConfig
 from astrai.dataset import RDSampler
-from astrai.extension import ATTN_BACKEND, attn_backend
+from astrai.extension import op_backend
 from astrai.parallel.cp import CPState, CPStrategy
 from astrai.parallel.setup import spawn_parallel_fn
 from astrai.parallel.topology import ParallelTopology
@@ -95,7 +95,7 @@ def _cp_equivalence_worker():
         ),
     }
 
-    with attn_backend(ATTN_BACKEND.TORCH_NATIVE):
+    with op_backend(attention="torch"):
         _assert_shard_mechanics(CPState(topology), device)
         # Both ranks hold identical weights and inputs, so each verifies
         # the single-device reference locally.
@@ -125,7 +125,7 @@ def _sft_cp_worker():
         "loss_mask": torch.rand(BATCH, SEQ_LEN, device=device) > 0.3,
     }
 
-    with attn_backend(ATTN_BACKEND.TORCH_NATIVE):
+    with op_backend(attention="torch"):
         _assert_cp_matches_single_device(
             SFTStrategy(model, str(device)), batch, topology
         )
@@ -171,7 +171,7 @@ def test_cp_peers_sample_identical_batches():
 
 
 def _non_native_backend_worker():
-    """shard refuses non-native backends before any sharding happens.
+    """shard refuses attention choices that bypass SDPA before sharding.
 
     flash_attn_func never passes through F.scaled_dot_product_attention,
     so the ring patch would silently never engage and every rank would
@@ -183,8 +183,8 @@ def _non_native_backend_worker():
     )
     cp_state = CPState(topology)
     probe = torch.ones(2, 8, device=device)
-    with attn_backend(ATTN_BACKEND.FLASH):
-        with pytest.raises(RuntimeError, match="torch-native"):
+    with op_backend(attention="flash"):
+        with pytest.raises(RuntimeError, match="Torch attention"):
             with cp_state.shard([probe], [1]):
                 pass
 

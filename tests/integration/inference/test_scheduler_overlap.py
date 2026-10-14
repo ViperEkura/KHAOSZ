@@ -70,7 +70,7 @@ def test_submit_decode_returns_pending_without_touching_tasks(device):
             pytest.skip("KV allocation failed")
         request.input_tokens = len(request.prompt_ids)
         # Prefill through the real stepper path so KV state is complete.
-        with scheduler._backend_context():
+        with scheduler._selection_context():
             scheduler._stepper.step([request])
             assert request.prefill_complete
             plan = scheduler.schedule([request])

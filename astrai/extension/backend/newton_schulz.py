@@ -1,21 +1,22 @@
 """Newton-Schulz matrix primitives, dispatch and recurrence."""
 
+from __future__ import annotations
+
 import math
+from dataclasses import dataclass
 from functools import partial
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import torch
 from torch import Tensor
 
 from astrai.extension.kernel import newton_schulz as cuda
 from astrai.extension.policy import newton_schulz as plan
-from astrai.extension.runtime.dispatch import (
-    ImplRecord,
-    Spec,
-    axis,
-    cache_token,
-    register_family,
-    resolve,
+from astrai.extension.runtime.context import selection_cache_token
+from astrai.extension.runtime.operation import (
+    ExplicitSelectionError,
+    OpDispatcher,
+    OpSpec,
 )
 
 
@@ -80,7 +81,6 @@ def _axes(
                 for candidate in cuda.tiles(operation)
             )
         ),
-        # Retain the registry axis name for existing dispatch overrides.
         "measured": plan.probe(
             operation, x, output=matrices[-1], addend=beta != 0
         ).backend
@@ -88,44 +88,112 @@ def _axes(
     }
 
 
-def _records(operation: str) -> List[ImplRecord]:
+@dataclass(frozen=True)
+class SyrkSpec(OpSpec):
+    shape: Tuple[int, ...]
+    layout: str
+    cuda_eligible: bool
+    measured: bool
+
+    @property
+    def operation(self) -> str:
+        return "syrk"
+
+
+@dataclass(frozen=True)
+class SymmSpec(OpSpec):
+    shape: Tuple[int, ...]
+    layout: str
+    cuda_eligible: bool
+    measured: bool
+
+    @property
+    def operation(self) -> str:
+        return "symm"
+
+
+def _matrix_spec(operation: str, spec_type, matrices, kwargs):
+    x = matrices[-2]
+    ax = _axes(operation, *matrices, **kwargs)
+    addend = kwargs.get("addend")
+    operands = (
+        *matrices,
+        *((addend,) if kwargs.get("beta", 0) != 0 and addend is not None else ()),
+    )
+    return spec_type(
+        device=x.device,
+        dtype=x.dtype,
+        phase="train" if torch.is_grad_enabled() else "infer",
+        needs_backward=torch.is_grad_enabled()
+        and any(bool(t.requires_grad) for t in operands),
+        shape=tuple(x.shape),
+        layout=plan.layout(x),
+        cuda_eligible=ax["cuda"],
+        measured=ax["measured"],
+    )
+
+
+def _select_matrix(
+    operation: str,
+    spec: Union[SyrkSpec, SymmSpec],
+    choice: Any,
+    origin: str,
+) -> Callable[..., None]:
+    """SYRK and SYMM share shape planning, then select their own callable."""
+
     cuda_op = cuda.syrk_out if operation == "syrk" else cuda.symm_out
     torch_op = _torch_syrk if operation == "syrk" else _torch_symm
-    return [
-        ImplRecord(
-            operation,
-            "measured",
-            cuda_op,
-            axis("cuda").truthy() & axis("measured").truthy(),
-            priority=0,
-        ),
-        # Explicit selection exposes every legal tile/shape for the sweep.
-        ImplRecord(
-            operation,
-            "cuda",
-            cuda_op,
-            axis("cuda").truthy(),
-            priority=1,
-            faithful=False,
-        ),
-        ImplRecord(operation, "torch", torch_op, Spec.always(), priority=99),
-    ]
+    if choice == "torch" or choice is torch_op:
+        return torch_op
+    if (choice == "cuda" or choice is cuda_op) and spec.cuda_eligible:
+        return cuda_op
+    if choice == "measured" and spec.cuda_eligible and spec.measured:
+        return cuda_op
+    if choice is not None and origin in ("explicit", "context"):
+        raise ExplicitSelectionError(
+            f"Explicitly-set {operation} implementation {choice!r} "
+            "cannot handle this call"
+        )
+    return cuda_op if spec.cuda_eligible and spec.measured else torch_op
 
 
-for _operation in ("syrk", "symm"):
-    register_family(
-        _operation,
-        partial(_axes, _operation),
-        partial(_records, _operation),
-        lambda operation=_operation: _records(operation)[-1],
-    )
+class SyrkDispatcher(OpDispatcher[SyrkSpec]):
+    @property
+    def operation(self) -> str:
+        return "syrk"
+
+    def build_spec(self, *matrices: Tensor, **kwargs: Any) -> SyrkSpec:
+        return _matrix_spec("syrk", SyrkSpec, matrices, kwargs)
+
+    def select(
+        self, spec: SyrkSpec, choice: Any, origin: str, *matrices: Tensor, **kwargs: Any
+    ) -> Callable[..., None]:
+        return _select_matrix("syrk", spec, choice, origin)
+
+
+class SymmDispatcher(OpDispatcher[SymmSpec]):
+    @property
+    def operation(self) -> str:
+        return "symm"
+
+    def build_spec(self, *matrices: Tensor, **kwargs: Any) -> SymmSpec:
+        return _matrix_spec("symm", SymmSpec, matrices, kwargs)
+
+    def select(
+        self, spec: SymmSpec, choice: Any, origin: str, *matrices: Tensor, **kwargs: Any
+    ) -> Callable[..., None]:
+        return _select_matrix("symm", spec, choice, origin)
+
+
+_SYRK_DISPATCHER = SyrkDispatcher()
+_SYMM_DISPATCHER = SymmDispatcher()
 
 
 _selection_cache: Dict[Tuple[Any, ...], Callable[..., None]] = {}
 
 
 def _selection_key(operation: str, matrices, kwargs) -> Optional[Tuple[Any, ...]]:
-    token = cache_token(operation)
+    token = selection_cache_token(operation)
     if token is None:
         return None
     addend = kwargs.get("addend")
@@ -162,12 +230,14 @@ def select(
     if operation not in ("syrk", "symm"):
         raise ValueError("operation must be syrk or symm")
     if backend == "torch":
-        return _torch_syrk if operation == "syrk" else _torch_symm
+        dispatcher = _SYRK_DISPATCHER if operation == "syrk" else _SYMM_DISPATCHER
+        return dispatcher.dispatch(*matrices, explicit="torch", **kwargs)
     key = _selection_key(operation, matrices, kwargs) if backend is None else None
     cached = _selection_cache.get(key) if key is not None else None
     if cached is not None:
         return cached
-    selected = resolve(operation, *matrices, explicit=backend, **kwargs).record.obj
+    dispatcher = _SYRK_DISPATCHER if operation == "syrk" else _SYMM_DISPATCHER
+    selected = dispatcher.dispatch(*matrices, explicit=backend, **kwargs)
     decision = plan.probe(
         operation, matrices[-2], output=matrices[-1], addend=kwargs.get("beta", 0) != 0
     )

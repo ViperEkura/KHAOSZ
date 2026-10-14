@@ -7,7 +7,7 @@ from torch.distributed.fsdp import fully_shard
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from astrai.config.model_config import AutoRegressiveLMConfig
-from astrai.extension import ATTN_BACKEND, attn_backend
+from astrai.extension import op_backend
 from astrai.extension.kernel.cross_entropy import is_available
 from astrai.model.autoregressive_lm import AutoRegressiveLM
 from astrai.parallel.cp import CPState, CPStrategy
@@ -113,7 +113,7 @@ def _ddp_worker(rank, init_file):
         data = {
             k: v[:, :18].contiguous() for k, v in batch("cuda:" + str(rank)).items()
         }
-        with attn_backend(ATTN_BACKEND.TORCH_NATIVE):
+        with op_backend(attention="torch"):
             single = copy.deepcopy(initial)
             reference = SFTStrategy(
                 single, "cuda:" + str(rank), label_smoothing=0.1

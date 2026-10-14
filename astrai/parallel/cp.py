@@ -35,7 +35,7 @@ from torch import Tensor
 from torch.distributed.tensor.experimental import context_parallel
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
-from astrai.extension.backend.attention import TorchNativeBackend, get_backend
+from astrai.extension.runtime.context import snapshot_op_selection
 from astrai.parallel.topology import ParallelTopology
 
 try:  # private torch module — torch may move or rename it between versions
@@ -106,13 +106,13 @@ class TokenMeanStrategy(Protocol):
 
 
 def _sdpa_is_native() -> bool:
-    """Whether the active attention backend routes through torch SDPA.
+    """Whether the active attention implementation routes through torch SDPA.
 
     Ring attention hooks ``F.scaled_dot_product_attention`` only; the CUDA
     paged kernels and FlashAttention never see the patch.  Fail loudly per
     the repo's no-silent-fallback convention.
     """
-    return isinstance(get_backend(), TorchNativeBackend)
+    return snapshot_op_selection().choice("attention")[0] in ("torch", "torch_native")
 
 
 class CPState:
@@ -164,8 +164,8 @@ class CPState:
         """
         if not _sdpa_is_native():
             raise RuntimeError(
-                "context parallelism requires the torch-native attention "
-                "backend (SDPA); the active backend bypasses the ring hook"
+                "context parallelism requires the Torch attention "
+                "implementation (SDPA); the active choice bypasses the ring hook"
             )
 
         # The ring's partial-attention merge assumes logsumexp carries one

@@ -46,7 +46,7 @@ runtime:
   # (see "Per-Job Environment"):
   # environment:
   #   ASTR_LOG_LEVEL: DEBUG
-  #   ASTR_BACKEND: torch_native
+  #   ASTR_OPS: attention=torch
 ```
 
 - Relative paths resolve from the YAML file's directory, not the current shell.

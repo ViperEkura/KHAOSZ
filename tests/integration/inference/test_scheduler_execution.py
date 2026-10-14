@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-from astrai.extension import CudaBackend, TorchNativeBackend, get_backend
 from astrai.inference import Scheduler
 from astrai.inference.contracts import SchedulerOutput
 from astrai.inference.core.request import Request
@@ -28,14 +27,12 @@ from tests.support.scheduler import (
 from tests.support.tokenizers import FakeTokenizer
 
 
-def test_step_splits_decode_batch_by_request_backend():
+def test_step_batches_decode_requests_under_one_attention_selection():
     scheduler = _make_contract_scheduler()
     observed = []
 
     def submit(requests, return_logprobs=False, *, plan):
-        observed.append(
-            (type(get_backend()), [request.request_id for request in requests])
-        )
+        observed.append([request.request_id for request in requests])
         return PendingExecution(
             snapshot=plan,
             sampled_identities=tuple(r.identity for r in requests),
@@ -43,26 +40,19 @@ def test_step_splits_decode_batch_by_request_backend():
         )
 
     scheduler._executor.submit_decode = MagicMock(side_effect=submit)
-
-    torch_task = Request("torch", [1], backend=TorchNativeBackend())
-    cuda_task = Request("cuda", [1], backend=CudaBackend())
-    for request in (torch_task, cuda_task):
+    first, second = Request("first", [1]), Request("second", [1])
+    for request in (first, second):
         request.input_tokens = 1
         request.output_ids = [1]
         request.num_computed_tokens = 1
         scheduler._metrics.register(request.request_id)
 
-    produced, aborted = scheduler._stepper.step([torch_task, cuda_task])
-
+    produced, aborted = scheduler._stepper.step([first, second])
     assert aborted == []
-    assert produced == [torch_task, cuda_task]
-    assert torch_task.output_ids == [1, 7]
-    assert cuda_task.output_ids == [1, 7]
-    assert not scheduler._planned
-    assert observed == [
-        (TorchNativeBackend, ["torch"]),
-        (CudaBackend, ["cuda"]),
-    ]
+    assert produced == [first, second]
+    assert first.output_ids == [1, 7]
+    assert second.output_ids == [1, 7]
+    assert observed == [["first", "second"]]
 
 
 def test_step_batches_ragged_prefill_with_shared_cache_start():

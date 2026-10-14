@@ -113,10 +113,8 @@ class EngineCore:
     def _can_overlap(self, active):
         if not self.scheduler._enable_overlap or not active:
             return False
-        first_backend = active[0].backend
         if any(
             not r.prefill_complete
-            or r.backend is not first_backend
             or r.frequency_penalty
             or r.next_pos >= self.scheduler.max_seq_len
             or (r.max_tokens is not None and r.output_tokens + 1 >= r.max_tokens)
@@ -226,7 +224,7 @@ class EngineCore:
     def run_busy_loop(self):
         error = None
         try:
-            with self.scheduler._backend_context():
+            with self.scheduler._selection_context():
                 while not self.stop_event.is_set():
                     with self.lock:
                         work = self.tick()

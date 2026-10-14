@@ -57,6 +57,7 @@ set(KERNEL_TARGETS
     "attention|MODULE|attention/decode.cu attention/prefill.cu attention/paged_decode.cu
         attention/paged_prefill.cu attention/bindings.cu"
     "rotary_emb|MODULE|rotary_emb.cu"
+    "swiglu|MODULE|swiglu.cu"
     "cross_entropy|MODULE|cross_entropy.cu"
     "newton_schulz|MODULE|newton_schulz/entry.cu newton_schulz/kernels.cu
         newton_schulz/bindings.cu"
