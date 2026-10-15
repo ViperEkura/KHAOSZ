@@ -413,9 +413,10 @@ template <size_t I = 0> void append_tiles(py::list& rows, bool rank_k) {
             (Tile::CtaShape::kM == Tile::CtaShape::kN && !std::is_same_v<Tile, NarrowSymmTile>)) {
             py::dict row;
             row["name"] = tile_name<Tile>();
-            row["input_layouts"] = rank_k && Tile::CtaShape::kK < 64
-                                       ? py::make_tuple("row")
-                                       : py::make_tuple("row", "column");
+            if (rank_k && Tile::CtaShape::kK < 64)
+                row["input_layouts"] = py::make_tuple("row");
+            else
+                row["input_layouts"] = py::make_tuple("row", "column");
             row["block_m"] = Tile::CtaShape::kM;
             row["block_n"] = Tile::CtaShape::kN;
             row["block_k"] = Tile::CtaShape::kK;

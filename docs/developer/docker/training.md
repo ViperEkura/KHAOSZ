@@ -36,7 +36,7 @@ runtime:
     devices: all
     dp_mode: auto  # one GPU: none; multiple GPUs: ddp
   container:
-    cuda_tag: cu128
+    cuda_tag: cu130
     ipc: host
     stop_grace_period: 10m
     stop_timeout_seconds: 600

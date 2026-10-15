@@ -66,7 +66,7 @@ AstrAI 是一个覆盖模型构建、训练、评测与部署的端到端 Transf
 
 **1. 安装**
 
-AstrAI 需要 Python 3.12+，并精确固定 PyTorch 版本为 `2.11.0`。训练、`scripts/tools/generate.py`、生成式评估和生成演示需要 CUDA；CPU 支持仅适用于提供明确 CPU 设备路径的组件，例如 HTTP 服务和直接打分评估。
+AstrAI 需要 Python 3.12+，并精确固定 PyTorch 版本为 `2.13.0`。训练、`scripts/tools/generate.py`、生成式评估和生成演示需要 CUDA；CPU 支持仅适用于提供明确 CPU 设备路径的组件，例如 HTTP 服务和直接打分评估。
 
 ```bash
 git clone https://github.com/ViperEkura/AstrAI.git

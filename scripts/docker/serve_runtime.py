@@ -111,7 +111,7 @@ def load_runtime(config_path: str) -> Dict[str, str]:
         "SERVE_PARAM_DIR": _path(paths.get("param", "./params"), "param", path.parent),
         "SERVE_GPU_ENABLED": "true" if gpu_enabled else "false",
         "SERVE_DEVICE": device,
-        "CUDA_TAG": str(container.get("cuda_tag", "cu128")),
+        "CUDA_TAG": str(container.get("cuda_tag", "cu130")),
     }
     if visible_devices is not None:
         values["CUDA_VISIBLE_DEVICES"] = visible_devices

@@ -60,7 +60,7 @@ End-to-end walkthrough in 5 steps:
 
 **1. Install**
 
-AstrAI requires Python 3.12+ and pins PyTorch exactly to `2.11.0`. Training, `scripts/tools/generate.py`, generation evaluations, and the generation demos require CUDA; CPU support is limited to components with an explicit CPU device path, such as the HTTP server and direct-scoring evaluations.
+AstrAI requires Python 3.12+ and pins PyTorch exactly to `2.13.0`. Training, `scripts/tools/generate.py`, generation evaluations, and the generation demos require CUDA; CPU support is limited to components with an explicit CPU device path, such as the HTTP server and direct-scoring evaluations.
 
 ```bash
 git clone https://github.com/ViperEkura/AstrAI.git

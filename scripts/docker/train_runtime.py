@@ -135,7 +135,7 @@ def load_runtime(config_path: str) -> Dict[str, str]:
         "TRAIN_DP_MODE": dp_mode,
         "TRAIN_CP_SIZE": str(cp_size),
         "TRAIN_TP_SIZE": str(tp_size),
-        "CUDA_TAG": str(container.get("cuda_tag", "cu128")),
+        "CUDA_TAG": str(container.get("cuda_tag", "cu130")),
         "TRAIN_IPC_MODE": str(container.get("ipc", "host")),
         "TRAIN_STOP_GRACE_PERIOD": str(container.get("stop_grace_period", "10m")),
         "TRAIN_STOP_TIMEOUT": str(container.get("stop_timeout_seconds", 600)),

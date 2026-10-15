@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.18)
 project(astrai_kernels LANGUAGES CUDA CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CUDA_STANDARD 17)
+set(CMAKE_CUDA_STANDARD 20)
 find_package(CUDAToolkit REQUIRED)
 include(cmake/arch.cmake)
 
