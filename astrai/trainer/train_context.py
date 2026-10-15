@@ -40,6 +40,7 @@ from astrai.trainer.components import (
     build_optimizer_component,
     build_scheduler_component,
     create_ref_model,
+    load_optimizer_state_dict,
 )
 from astrai.trainer.optional_extras import (
     component_extra_keys,
@@ -137,6 +138,7 @@ class _PreloadedState:
     epoch: int = 0
     consumed_samples: int = 0
     checkpoint: Optional[Checkpoint] = None
+    component_states: Dict = field(default_factory=dict)
 
 
 class TrainContextBuilder:
@@ -201,7 +203,7 @@ class TrainContextBuilder:
         try:
             self._create_datasets(context)
             self._prepare_model(context, executor, preloaded_state)
-            self._restore_optimizer_state(context)
+            self._restore_optimizer_state(context, preloaded_state)
             self._create_dataloaders(context, context.dataset, context.val_dataset)
 
             # Strategies depend on the prepared model; online rollout depends on both.
@@ -247,7 +249,17 @@ class TrainContextBuilder:
                 state.model_config = adapt_config(
                     load_json(config_path), self._param_path
                 )
-            checkpoint = Checkpoint.load_any(self._param_path)
+            options = cfg.state_dict_load_options(self._resume)
+            extra_keys = [name for name in ("optimizer", "scheduler") if options[name]]
+            if self._resume:
+                extra_keys.extend(
+                    path.stem
+                    for path in Path(self._param_path).glob("*.pt")
+                    if path.stem not in ("optimizer", "scheduler")
+                )
+            checkpoint = Checkpoint.load_any(
+                self._param_path, extra_keys=extra_keys, load_weights=options["model"]
+            )
             if checkpoint is not None:
                 if checkpoint.config:
                     checkpoint.config = adapt_config(
@@ -261,7 +273,7 @@ class TrainContextBuilder:
                         ConfigFactory.load(checkpoint.config or state.model_config),
                     )
                 checkpoint.state_dict = strip_compile_prefix(checkpoint.state_dict)
-                state.state_dict = checkpoint.state_dict
+                state.state_dict = checkpoint.state_dict if options["model"] else None
                 state.model_config = checkpoint.config or state.model_config
                 if self._resume:
                     state.epoch = checkpoint.epoch
@@ -279,6 +291,24 @@ class TrainContextBuilder:
                         else checkpoint.consumed_samples // per_step * per_step
                     )
                     state.checkpoint = checkpoint
+                for name in ("optimizer", "scheduler"):
+                    if name not in checkpoint.extra:
+                        continue
+                    saved_spec = checkpoint.meta.get(name)
+                    saved_type = (
+                        saved_spec.get("type")
+                        if isinstance(saved_spec, dict)
+                        else checkpoint.meta.get("optimizer_name")
+                        if name == "optimizer"
+                        else None
+                    )
+                    current_type = getattr(cfg, name).type
+                    if saved_type and saved_type != current_type:
+                        raise ValueError(
+                            f"Cannot load {name} state from {saved_type!r} into {current_type!r}; "
+                            f"set load_state_dict.{name}=False when changing components"
+                        )
+                    state.component_states[name] = checkpoint.extra[name]
         if not state.model_config:
             model = self._instantiate_model(state.model_config)
             if hasattr(model, "config"):
@@ -385,16 +415,30 @@ class TrainContextBuilder:
                 shuffle=False,
             )
 
-    def _restore_optimizer_state(self, context: TrainContext) -> None:
-        if context.checkpoint and context.checkpoint.extra:
-            for name in ("optimizer", "scheduler"):
-                if (
-                    name in context.checkpoint.extra
-                    and getattr(context, name, None) is not None
-                ):
-                    getattr(context, name).load_state_dict(
-                        context.checkpoint.extra[name]
-                    )
+    def _restore_optimizer_state(
+        self, context: TrainContext, state: Optional[_PreloadedState] = None
+    ) -> None:
+        extras = (
+            context.checkpoint.extra
+            if context.checkpoint
+            else (state.component_states if state is not None else {})
+        )
+        if "optimizer" in extras:
+            if context.checkpoint and "scheduler" in extras:
+                context.optimizer.load_state_dict(extras["optimizer"])
+            else:
+                load_optimizer_state_dict(context.optimizer, extras["optimizer"])
+            logger.info("Loaded checkpoint optimizer state")
+        if "scheduler" in extras and context.scheduler is not None:
+            context.scheduler.load_state_dict(extras["scheduler"])
+            for group, lr in zip(
+                context.optimizer.param_groups,
+                context.scheduler.get_last_lr(),
+                strict=True,
+            ):
+                group["lr"] = lr
+            logger.info("Loaded checkpoint scheduler state")
+        if context.checkpoint:
             restore_checkpoint_extras(context.checkpoint.extra)
 
     def _create_strategy(self, context: TrainContext, executor: BaseExecutor) -> Dict:

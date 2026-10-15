@@ -186,6 +186,7 @@ class TrainConfig(BaseConfig):
     critic_optimizer_fn: Optional[Callable] = None
     optimizer_name: Optional[str] = None
     optimizer_hyperparameters: Dict[str, Any] = field(default_factory=dict)
+    load_state_dict: Dict[str, bool] = field(default_factory=dict)
     n_epoch: int = 1
     batch_per_device: int = 4
     grad_accum_steps: int = 1
@@ -304,6 +305,22 @@ class TrainConfig(BaseConfig):
         if v not in BACKENDS:
             raise ValueError(f"backend must be one of {sorted(BACKENDS)}, got {v!r}")
         return v
+
+    @field_validator("load_state_dict")
+    def _validate_load_state_dict(cls, value: Dict[str, bool]) -> Dict[str, bool]:
+        unknown = set(value) - {"model", "optimizer", "scheduler"}
+        if unknown:
+            raise ValueError(f"Unknown load_state_dict components: {sorted(unknown)}")
+        return value
+
+    def state_dict_load_options(self, resume: bool = False) -> Dict[str, bool]:
+        """Resolve omitted component flags for a new stage or a full resume."""
+        return {
+            "model": True,
+            "optimizer": True,
+            "scheduler": resume,
+            **self.load_state_dict,
+        }
 
     @field_validator("start_method")
     def _validate_start_method(cls, v: str) -> str:

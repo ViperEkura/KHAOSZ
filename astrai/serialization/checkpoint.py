@@ -9,7 +9,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import safetensors.torch as st
 import torch
@@ -299,7 +299,10 @@ class Checkpoint:
         save_dir: str,
         broadcast: bool = False,
         verify_checksums: bool = False,
+        extra_keys: Optional[List[str]] = None,
+        load_weights: bool = True,
     ) -> "Checkpoint":
+        """Load selected extras; None loads all and an empty list loads none."""
         save_path = Path(save_dir)
 
         if (save_path / _MANIFEST_FILE).exists():
@@ -311,11 +314,15 @@ class Checkpoint:
 
         meta = load_json(save_path / _META_FILE, broadcast)
         config = load_json(save_path / _CONFIG_FILE, broadcast)
-        state_dict = load_state_dict(save_path / _WEIGHTS_FILE, broadcast=broadcast)
+        state_dict = (
+            load_state_dict(save_path / _WEIGHTS_FILE, broadcast=broadcast)
+            if load_weights
+            else {}
+        )
 
         extra = {}
         for f in sorted(save_path.iterdir()):
-            if f.suffix == ".pt":
+            if f.suffix == ".pt" and (extra_keys is None or f.stem in extra_keys):
                 extra[f.stem] = load_torch(f, broadcast=broadcast)
 
         return cls(
@@ -333,6 +340,8 @@ class Checkpoint:
         save_dir: str,
         broadcast: bool = False,
         verify_checksums: bool = False,
+        extra_keys: Optional[List[str]] = None,
+        load_weights: bool = True,
     ) -> Optional["Checkpoint"]:
         save_path = Path(save_dir)
         meta_path = save_path / _META_FILE
@@ -343,12 +352,14 @@ class Checkpoint:
                 save_dir,
                 broadcast=broadcast,
                 verify_checksums=verify_checksums,
+                extra_keys=extra_keys,
+                load_weights=load_weights,
             )
 
         weights_path = save_path / _WEIGHTS_FILE
         index_path = save_path / "model.safetensors.index.json"
         if weights_path.exists() or index_path.exists():
-            state_dict = load_model_weights(save_dir)
+            state_dict = load_model_weights(save_dir) if load_weights else {}
             config = {}
             config_path = save_path / _CONFIG_FILE
             if config_path.exists():

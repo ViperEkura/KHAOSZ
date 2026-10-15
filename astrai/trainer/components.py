@@ -2,6 +2,7 @@
 
 import importlib
 import inspect
+from copy import deepcopy
 from typing import Any, Callable, Dict, Optional
 
 import torch
@@ -13,6 +14,7 @@ from astrai.config.train_config import ComponentSpec, TrainConfig
 from astrai.dataset import DatasetFactory, RDSampler, dpo_collate_fn, grpo_collate_fn
 from astrai.model.automodel import ModelFactory
 from astrai.optimization.optimizer import OptimizerFactory
+from astrai.optimization.protocols import OptimizerProtocol
 from astrai.optimization.scheduler import SchedulerFactory
 from astrai.parallel.executor import (
     BaseExecutor,
@@ -71,6 +73,25 @@ def build_optimizer_component(spec: ComponentSpec, model: nn.Module):
         else model
     )
     return target(first_arg, **spec.params)
+
+
+def load_optimizer_state_dict(optimizer: OptimizerProtocol, state_dict: Dict) -> None:
+    """Load optimizer state_dict while retaining configured parameter-group options."""
+    options = [
+        deepcopy({key: value for key, value in group.items() if key != "params"})
+        for group in optimizer.param_groups
+    ]
+    try:
+        optimizer.load_state_dict(state_dict)
+        for group, configured in zip(optimizer.param_groups, options, strict=True):
+            parameters = group["params"]
+            group.clear()
+            group.update(configured, params=parameters)
+    except (ValueError, KeyError, RuntimeError) as error:
+        raise ValueError(
+            "Cannot reuse checkpoint optimizer state with this optimizer; "
+            "set load_state_dict.optimizer=False to initialize fresh state"
+        ) from error
 
 
 def build_scheduler_component(

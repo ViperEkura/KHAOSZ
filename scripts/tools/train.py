@@ -1,4 +1,5 @@
 import importlib
+import json
 import os
 from collections.abc import Callable
 from functools import partial
@@ -73,6 +74,13 @@ _SPECS = [
         is_flag=True,
         default=False,
         help="Resume from checkpoint.",
+    ),
+    OptSpec(
+        "load_state_dict",
+        "Training",
+        type=str,
+        default=None,
+        help='Component loading flags as JSON, e.g. {"optimizer": false, "scheduler": false}.',
     ),
     OptSpec("n_epoch", "Training", help="Number of epochs."),
     OptSpec("batch_per_device", "Training", default=1, help="Batch size per GPU."),
@@ -677,6 +685,7 @@ def _print_dry_run(kwargs: Dict) -> None:
         ("Window size", str(kwargs.get("window_size", "config default"))),
         ("Checkpoint dir", str(kwargs.get("ckpt_dir", "checkpoint"))),
         ("Checkpoint interval", str(kwargs.get("ckpt_interval", 5000))),
+        ("Load state dict", str(kwargs.get("load_state_dict") or "defaults")),
         ("Resume", str(kwargs.get("resume", False))),
     ]
     max_len = max(len(k) for k, _ in rows)
@@ -793,6 +802,11 @@ def train(
         "gamma": kwargs.pop("ppo_gamma"),
         "gae_lambda": kwargs.pop("ppo_gae_lambda"),
         "vf_coef": kwargs.pop("ppo_vf_coef"),
+    }
+    # CLI defaults cover every strategy; pass only the selected strategy's options.
+    accepted = StrategyFactory.option_names(train_type)
+    strategy_kwargs = {
+        key: value for key, value in strategy_kwargs.items() if key in accepted
     }
     loss_backend = kwargs.pop("loss_backend")
     loss_chunk_size = kwargs.pop("loss_chunk_size")
@@ -961,6 +975,16 @@ def train(
     grad_ckpt_modules = [MLP] if gradient_checkpointing else []
     compile_mode = kwargs.pop("compile_mode", None)
 
+    load_state_dict = kwargs.pop("load_state_dict", None)
+    if isinstance(load_state_dict, str):
+        load_state_dict = json.loads(load_state_dict)
+    if load_state_dict is None:
+        load_state_dict = {}
+    if not isinstance(load_state_dict, dict):
+        raise ValueError(
+            "load_state_dict must be a mapping of component names to booleans"
+        )
+
     train_config = TrainConfig(
         strategy=train_type,
         dataset=dataset_spec,
@@ -970,6 +994,7 @@ def train(
         scheduler=scheduler_spec,
         optimizer_name=optimizer_name,
         optimizer_hyperparameters=optimizer_hyperparameters,
+        load_state_dict=load_state_dict,
         ckpt_dir=ckpt_dir,
         n_epoch=n_epoch,
         batch_per_device=batch_per_device,

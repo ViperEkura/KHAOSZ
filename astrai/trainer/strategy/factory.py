@@ -1,7 +1,7 @@
 """Registry and capability declarations for training strategies."""
 
 import inspect
-from typing import Callable, Optional, Type
+from typing import Callable, Optional, Set, Type
 
 from astrai.config.train_config import _STRATEGY_CAPABILITIES, StrategyCapabilities
 from astrai.factory import BaseFactory
@@ -30,7 +30,8 @@ class StrategyFactory(BaseFactory[BaseStrategy]):
         return cls._capabilities[name]
 
     @classmethod
-    def create_checked(cls, name: str, *args, **kwargs) -> BaseStrategy:
+    def option_names(cls, name: str) -> Set[str]:
+        """Return constructor and explicitly declared options for a strategy."""
         component_cls = cls.get_component_class(name)
         allowed = {
             "executor",
@@ -61,7 +62,11 @@ class StrategyFactory(BaseFactory[BaseStrategy]):
             # Rollout setup consumes group_size even for strategies whose
             # loss constructor does not name it (online DPO/PPO).
             allowed.add("group_size")
-        unknown = sorted(set(kwargs) - allowed)
+        return allowed
+
+    @classmethod
+    def create_checked(cls, name: str, *args, **kwargs) -> BaseStrategy:
+        unknown = sorted(set(kwargs) - cls.option_names(name))
         if unknown:
             raise TypeError(
                 f"{name} strategy got unknown arguments: {', '.join(unknown)}"

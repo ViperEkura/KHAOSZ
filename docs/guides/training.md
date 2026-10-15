@@ -352,7 +352,39 @@ loading to hash every published file.
 During training, `CheckpointCallback` uses the executor checkpoint context so
 only rank 0 receives a state dict and calls `save()`.
 
-Optimizer/scheduler state persisted by default via `Checkpoint.extra`.  
+Optimizer/scheduler state persisted by default via `Checkpoint.extra`.
+
+Use `TrainConfig.load_state_dict` to select which component states are loaded.
+The CLI YAML uses the same mapping under `training`:
+
+```yaml
+training:
+  load_state_dict:
+    model: true
+    optimizer: true
+    scheduler: false
+```
+
+These are the effective defaults for a new stage. Omitted keys use their
+defaults; unknown component names are rejected. `model: false` skips reading
+model weights and initializes a new model from its configuration.
+`optimizer: false` skips the optimizer extra. `scheduler: false` starts the
+configured schedule from its beginning. Weight-only checkpoints initialize
+fresh optimizer/scheduler state.
+
+When loading optimizer history for a new stage, current parameter-group
+settings such as LR and weight decay are retained. Loading the scheduler
+also restores its saved learning rate. Changing optimizer type or parameter
+layout requires `optimizer: false`.
+
+`--resume` restores the data cursor and other training extras. With no explicit
+component flags, it loads all three components, including saved optimizer
+settings. Explicit `load_state_dict` entries override these defaults even on
+resume. To start a new stage on new data, omit `--resume`.
+
+The equivalent CLI override takes JSON:
+`--load_state_dict '{"optimizer": false}'`.
+
 Model config (`context.model_config`) saved into `config.json` during training via `CheckpointCallback`.
 
 ## TrainContextBuilder (Builder Pattern)

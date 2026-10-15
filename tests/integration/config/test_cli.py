@@ -451,3 +451,90 @@ def test_sft_cli_routes_linear_ce_options_from_yaml(tmp_path, monkeypatch):
 def test_reward_factory_must_be_importable_and_callable(reference):
     with pytest.raises(ValueError, match="reward_model"):
         train_module.load_reward_factory(reference)
+
+
+@pytest.mark.parametrize(
+    "yaml_value,cli_flags,expected",
+    [
+        ("", [], {}),
+        ("  load_state_dict: {optimizer: false}\n", [], {"optimizer": False}),
+        (
+            "  load_state_dict: {optimizer: false}\n",
+            ["--load_state_dict", '{"model": true, "optimizer": true}'],
+            {"model": True, "optimizer": True},
+        ),
+        (
+            "  load_state_dict: {model: false, scheduler: true}\n",
+            [],
+            {"model": False, "scheduler": True},
+        ),
+    ],
+)
+def test_state_dict_loading_config_reaches_trainer(
+    tmp_path, monkeypatch, yaml_value, cli_flags, expected
+):
+    make_rollout_config().to_file(tmp_path / "config.json")
+    path = tmp_path / "train.yaml"
+    path.write_text(
+        f"training:\n  train_type: seq\n  param_path: {tmp_path}\n"
+        f"  data_root_path: {tmp_path}\n  dp_mode: none\n" + yaml_value
+    )
+    captured = []
+
+    class Trainer:
+        def __init__(self, config):
+            captured.append(config)
+
+        def train(self, **kwargs):
+            pass
+
+    monkeypatch.setattr(train_module, "Trainer", Trainer)
+    result = CliRunner().invoke(
+        train_module.train_command, ["--config", str(path), *cli_flags]
+    )
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert captured[0].load_state_dict == expected
+
+
+@pytest.mark.parametrize(
+    "strategy", ["seq", "sft", "dpo", "grpo", "online_grpo", "online_dpo", "online_ppo"]
+)
+def test_cli_options_instantiate_selected_strategy(tmp_path, monkeypatch, strategy):
+    make_rollout_config().to_file(tmp_path / "config.json")
+    path = tmp_path / "train.yaml"
+    path.write_text(
+        f"training:\n  train_type: {strategy}\n  param_path: {tmp_path}\n"
+        f"  data_root_path: {tmp_path}\n  dp_mode: none\n"
+        + (
+            "  reward_model: tests.integration.trainer.test_async_round:_Reward\n"
+            if strategy.startswith("online_")
+            else ""
+        )
+    )
+    captured = []
+
+    class Trainer:
+        def __init__(self, config):
+            captured.append(config)
+
+        def train(self, **kwargs):
+            pass
+
+    monkeypatch.setattr(train_module, "Trainer", Trainer)
+    result = CliRunner().invoke(train_module.train_command, ["--config", str(path)])
+    assert result.exit_code == 0, (result.output, result.exception)
+    config = captured[0]
+    model = torch.nn.Linear(2, 2)
+    options = dict(config.strategy_kwargs)
+    capabilities = train_module.StrategyFactory.capabilities(strategy)
+    if capabilities.reference_model:
+        options["ref_model"] = model
+    if capabilities.old_model:
+        options["old_model"] = model
+    if capabilities.critic:
+        options["critic"] = model
+        options["critic_optimizer"] = torch.optim.SGD(model.parameters(), lr=0.1)
+    instance = train_module.StrategyFactory.create_checked(
+        strategy, model=model, device="cpu", **options
+    )
+    assert instance.model is model

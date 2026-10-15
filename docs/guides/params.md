@@ -17,7 +17,8 @@
 | `--train_type` | Training type (`seq`, `sft`, `dpo`, `grpo`, `online_grpo`, `online_dpo`, `online_ppo`) | required |
 | `--data_root_path` | Dataset root directory | required |
 | `--param_path` | Model parameters or checkpoint path | required |
-| `--resume` | Resume training from `--param_path` | False |
+| `--resume` | Restore the data cursor and training extras; component flags can override state loading | False |
+| `--load_state_dict` | JSON mapping of model/optimizer/scheduler loading flags | Model + optimizer; all three on resume |
 | `--n_epoch` | Total training epochs | 1 |
 | `--batch_per_device` | Batch size per device | 1 |
 | `--grad_accum_steps` | Gradient accumulation steps between optimizer steps | 1 |
