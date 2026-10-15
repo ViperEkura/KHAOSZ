@@ -120,8 +120,9 @@ class AutoTokenizer:
         - ``encode("hello")`` → ``[123, 456]``
         - ``encode(["hello", "world"])`` → ``[[123, 456], [789]]``
 
-        Batches are tokenised in parallel via the Rust backend's
-        ``encode_batch`` (uses all available CPU cores).
+        Batches use the Rust backend fast ``encode_batch_fast`` path.
+        This wrapper returns IDs or token strings, so character offsets are
+        not needed.
         """
         if self._tokenizer is None:
             raise RuntimeError(
@@ -136,7 +137,7 @@ class AutoTokenizer:
             )
             return encoded.ids if out_ids else encoded.tokens
 
-        encoded_list = self._tokenizer.encode_batch(
+        encoded_list = self._tokenizer.encode_batch_fast(
             tokens,
             is_pretokenized=is_pretokenized,
             add_special_tokens=add_special_tokens,
