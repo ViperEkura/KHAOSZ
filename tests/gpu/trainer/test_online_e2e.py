@@ -10,7 +10,6 @@ import torch
 from torch.utils.data import Dataset, Subset
 
 from astrai.config import ComponentSpec, TrainConfig
-from astrai.optimization.scheduler import SchedulerFactory
 from astrai.serialization import Checkpoint
 from astrai.trainer.rollout import BaseRewardModel
 from astrai.trainer.rollout.async_round import AsyncRoundCoordinator
@@ -19,9 +18,7 @@ from astrai.trainer.rollout.types import SamplingParams
 from astrai.trainer.trainer import Trainer
 from tests.support.tokenizers import CHAT_TEMPLATE
 from tests.support.trainer import (
-    make_online_lr_scheduler,
     make_online_model,
-    make_online_optimizer,
 )
 
 

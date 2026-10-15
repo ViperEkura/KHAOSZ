@@ -3,7 +3,6 @@ from copy import deepcopy
 
 import pytest
 import torch
-from torch.utils.data import TensorDataset
 
 from astrai.config import ComponentSpec, TrainConfig
 from astrai.model import AutoRegressiveLM

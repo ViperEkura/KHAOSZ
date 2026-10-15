@@ -5,12 +5,10 @@ import time
 
 import pytest
 import torch
-import torch.optim as optim
 from torch.utils.data import Dataset
 
 from astrai.config import ComponentSpec, TrainConfig
 from astrai.model.autoregressive_lm import AutoRegressiveLM
-from astrai.optimization.scheduler import SchedulerFactory
 from astrai.signal_handler import register_signal_handlers
 from astrai.trainer import Trainer
 from astrai.trainer.train_context import TrainContext

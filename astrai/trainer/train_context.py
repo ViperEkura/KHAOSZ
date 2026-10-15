@@ -1,6 +1,5 @@
 import logging
 import threading
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path

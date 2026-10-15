@@ -5,7 +5,6 @@ import os
 import random
 import shutil
 from contextlib import nullcontext
-from functools import partial
 from types import SimpleNamespace
 
 import pytest
@@ -30,11 +29,6 @@ from astrai.trainer.strategy import (
 from astrai.trainer.train_context import TrainContext, TrainContextBuilder
 from astrai.trainer.trainer import Trainer
 from tests.support.tokenizers import CHAT_TEMPLATE
-from tests.support.trainer import (
-    make_online_lr_scheduler,
-    make_online_model,
-    make_online_optimizer,
-)
 
 
 class StubLM(nn.Module):

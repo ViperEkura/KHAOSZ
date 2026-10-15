@@ -16,7 +16,6 @@ from astrai.config.train_config import TrainConfig
 from astrai.parallel.cp import CPStrategy, LossReduction
 from astrai.parallel.topology import ParallelTopology
 from astrai.trainer.strategy import SEQStrategy, SFTStrategy
-from tests.support.rollout import RandomTokenDataset
 
 SEQ_LEN = 64
 BATCH = 2

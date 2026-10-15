@@ -59,11 +59,6 @@ __all__ = [
 # tuple; dtype validation stays in the C++ binding.
 
 
-def _is_fp8(dtype: torch.dtype) -> bool:
-    """A pre-quantized weight takes the GEMM directly (no re-quantize)."""
-    return dtype in (torch.float8_e4m3fn, torch.float8_e5m2)
-
-
 def fp8_format_pair(fmt: Union[str, torch.dtype]) -> Tuple[torch.dtype, torch.dtype]:
     """Format spec -> (fwd, bwd) fp8 dtype pair.
 
@@ -161,15 +156,6 @@ def _active() -> Optional[_ActiveConfig]:
     if _default_enabled:
         return _ActiveConfig(True, _default_recipe, _default_format)
     return None
-
-
-def _current_config() -> _ActiveConfig:
-    """Like ``_active()`` but always returns a config (disabled regions and
-    out-of-region direct calls resolve to the global defaults)."""
-    cfg = _active_config.get()
-    if cfg is not None:
-        return cfg
-    return _ActiveConfig(_default_enabled, _default_recipe, _default_format)
 
 
 class fp8_autocast:

@@ -18,7 +18,6 @@ import tqdm
 from datasets import load_dataset
 
 from astrai.bench import (
-    deduplicate,
     generate_batch,
     load_jsonl,
     report,

@@ -9,7 +9,6 @@ import pytest
 import torch
 
 from astrai.config import ComponentSpec, TrainConfig
-from astrai.model.autoregressive_lm import AutoRegressiveLM
 from astrai.model.value import ValueModel
 from astrai.optimization.scheduler import SchedulerFactory
 from astrai.serialization import Checkpoint

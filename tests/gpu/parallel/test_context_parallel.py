@@ -21,7 +21,6 @@ from astrai.parallel.topology import ParallelTopology
 from astrai.trainer.strategy import SEQStrategy, SFTStrategy
 from tests.support.capabilities import skip_lt2_cuda
 from tests.support.models import make_seeded_gqa_model
-from tests.support.rollout import RandomTokenDataset
 
 SEQ_LEN = 64
 BATCH = 2

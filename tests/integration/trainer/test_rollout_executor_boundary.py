@@ -8,7 +8,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch import nn
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import Dataset, TensorDataset
+from torch.utils.data import Dataset
 
 import astrai.parallel.executor as executor_module
 from astrai.config import ComponentSpec, TrainConfig

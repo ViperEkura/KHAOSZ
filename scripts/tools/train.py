@@ -8,7 +8,6 @@ import click
 import torch
 import yaml
 from click.core import ParameterSource
-from torch import optim
 
 from astrai.config import (
     AutoRegressiveLMConfig,
@@ -28,10 +27,9 @@ from astrai.config.train_config import (
     ROLLOUT_MODES,
     START_METHODS,
 )
-from astrai.model import AutoRegressiveLM, ValueModel
+from astrai.model import ValueModel
 from astrai.model.components.mlp import MLP
 from astrai.optimization.optimizer import OptimizerFactory
-from astrai.optimization.scheduler import SchedulerFactory
 from astrai.trainer import Trainer
 from astrai.trainer.strategy import StrategyFactory
 
@@ -700,74 +698,8 @@ def load_reward_factory(reference: str) -> Callable:
     return factory
 
 
-def create_model(config):
-    return AutoRegressiveLM(config).to(dtype=torch.bfloat16)
-
-
 def create_value_model(config):
     return ValueModel(config).to(dtype=torch.bfloat16)
-
-
-def create_optimizer(
-    model, optimizer_name: str = "muon_adamw", **kwargs
-) -> optim.Optimizer:
-    return OptimizerFactory.create(optimizer_name, model, **kwargs)
-
-
-def create_scheduler(
-    optimizer: optim.Optimizer,
-    dataset_len: int,
-    *,
-    schedule_type: str,
-    n_epoch: int,
-    batch_per_device: int,
-    dp_size: int,
-    grad_accum_steps: int,
-    warmup_ratio: float,
-    min_rate: float,
-    cycle_length: int,
-    t_mult: int,
-    stable_steps: int,
-    decay_steps: int,
-) -> optim.lr_scheduler.LRScheduler:
-    """Build the schedule after the training context owns the dataset."""
-    total_steps = compute_total_steps(
-        dataset_len, n_epoch, batch_per_device, dp_size, grad_accum_steps
-    )
-    warmup_steps = min(int(warmup_ratio * total_steps), total_steps)
-    scheduler_kwargs = {"warmup_steps": warmup_steps}
-    if schedule_type == "cosine":
-        scheduler_kwargs["lr_decay_steps"] = total_steps - warmup_steps
-    elif schedule_type == "sgdr":
-        scheduler_kwargs["cycle_length"] = cycle_length or (total_steps - warmup_steps)
-        scheduler_kwargs["t_mult"] = t_mult
-    elif schedule_type == "wsd":
-        remaining = total_steps - warmup_steps
-        stable_steps_ = stable_steps or max(1, int(remaining * 0.8))
-        scheduler_kwargs["stable_steps"] = stable_steps_
-        scheduler_kwargs["decay_steps"] = max(
-            1, decay_steps or (remaining - stable_steps_)
-        )
-    if min_rate is not None:
-        scheduler_kwargs["min_rate"] = min_rate
-    return SchedulerFactory.create(schedule_type, optimizer, **scheduler_kwargs)
-
-
-def compute_total_steps(
-    dataset_len: int,
-    n_epoch: int,
-    batch_per_device: int,
-    dp_size: int,
-    grad_accum_steps: int,
-) -> int:
-
-    def ceil_div(a: int, b: int) -> int:
-        return (a + b - 1) // b
-
-    samples_per_replica = ceil_div(dataset_len, dp_size)
-    batches_per_replica = ceil_div(samples_per_replica, batch_per_device)
-    total_steps = (batches_per_replica // grad_accum_steps) * n_epoch
-    return total_steps
 
 
 def train(

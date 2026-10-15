@@ -267,7 +267,6 @@ def benchmark_decode(
     """One decode step each: Gated DeltaNet steps its fixed state, attention attends the context."""
     gqa, gdn = build_layers(geom, device, dtype)
     token = torch.randn(1, 1, geom.hidden, device=device, dtype=dtype)
-    freqs = RotaryEmbedding(geom.head_dim, context + 1).to(device)(token)
 
     with torch.no_grad():
         _, state = gdn.prefill(token)
