@@ -138,11 +138,11 @@ classDiagram
         }
 
         class TrainConfig {
-            +Callable[[], nn.Module] model_fn
             +str strategy
-            +Dataset dataset
-            +Callable optimizer_fn
-            +Callable scheduler_fn
+            +ComponentSpec model
+            +ComponentSpec dataset
+            +ComponentSpec optimizer
+            +ComponentSpec scheduler
             +Optional[str] optimizer_name
             +Dict[str, Any] optimizer_hyperparameters
             +int n_epoch
@@ -161,7 +161,6 @@ classDiagram
             +int num_workers
             +Optional[int] prefetch_factor
             +bool pin_memory
-            +Optional[Callable] collate_fn
             +int dp_size
             +int cp_size
             +str backend
@@ -1340,7 +1339,8 @@ classDiagram
     Trainer ..> TrainContextBuilder : uses
     TrainContextBuilder ..> TrainContext : creates
     TrainContextBuilder ..> StrategyFactory : uses
-    TrainContextBuilder ..> RDSampler : creates
+    TrainContextBuilder ..> DatasetFactory : opens in rank
+    TrainContextBuilder ..> RDSampler : creates loader
     Checkpoint ..> Checkpoint : serializes
     CheckpointCallback ..> Checkpoint : creates
     BlockPool ..> KVCache : binds
@@ -1433,7 +1433,7 @@ classDiagram
 
 ## Core Relationships
 
-1. **Config → Training**: `TrainConfig` holds `model_fn`, `dataset`, `optimizer_fn`, `scheduler_fn`, `dp_mode`, `executor_kwargs`
+1. **Config → Training**: `TrainConfig` holds serializable model, data, optimizer and scheduler specs, plus `dp_mode` and `executor_kwargs`; legacy Python factories remain accepted
 2. **Training Flow**: `Trainer` → `TrainContextBuilder` → `TrainContext`, uses `BaseStrategy` for loss, `BaseExecutor` for gradient accumulation + model distribution; with `cp_size > 1` the strategy is wrapped in `CPStrategy` (sequence sharding + ring attention)
 3. **Strategy Selection**: `StrategyFactory` creates strategy by `train_type`
 4. **Executor Selection**: `ExecutorFactory.create(cfg.dp_mode, grad_accum_steps=cfg.grad_accum_steps, **cfg.executor_kwargs)` → `NoneExecutor` / `DDPExecutor` / `FSDPExecutor`

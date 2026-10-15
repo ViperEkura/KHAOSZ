@@ -2,16 +2,16 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any, Dict, Optional, Self, Tuple
 
 import torch
 from torch import nn
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset
 
 from astrai.config.model_config import ConfigFactory
 from astrai.config.train_config import TrainConfig, _TrainRuntimeDependencies
-from astrai.dataset import RDSampler
 from astrai.inference.core.engine_core import EngineCore
 from astrai.model.components.lora import inject_lora
 from astrai.optimization.protocols import OptimizerProtocol, SchedulerProtocol
@@ -34,6 +34,14 @@ from astrai.serialization import (
 )
 from astrai.tokenize import AutoTokenizer
 from astrai.trainer.callbacks.metric_util import GradSNRTracker
+from astrai.trainer.components import (
+    build_dataloader,
+    build_dataset_component,
+    build_model_component,
+    build_optimizer_component,
+    build_scheduler_component,
+    create_ref_model,
+)
 from astrai.trainer.optional_extras import (
     component_extra_keys,
     load_component_extra,
@@ -132,44 +140,6 @@ class _PreloadedState:
     checkpoint: Optional[Checkpoint] = None
 
 
-def create_ref_model(
-    model_fn: Callable[[], nn.Module],
-    executor: Optional[BaseExecutor] = None,
-    model: Optional[nn.Module] = None,
-    state_dict: Optional[Dict[str, torch.Tensor]] = None,
-    device: Optional[str] = None,
-) -> Optional[nn.Module]:
-    """Create a frozen reference model from executor or state dict.
-
-    Training-domain helper for the DPO/GRPO reference and old policies: it
-    builds the model, loads the broadcast state dict, and freezes it.  The
-    distributed mechanics live in :func:`broadcast_state_dict`.
-
-    In distributed mode (FSDP), ``unwrap_model`` returns ``None`` on
-    non-rank-0.  The state_dict is broadcast from rank-0 to all ranks
-    so every rank gets a complete copy.
-    """
-    if state_dict is None and executor is not None and model is not None:
-        state_dict = executor.unwrap_model(model)
-
-    # FSDP's unwrap_model returns None on non-rank-0. Broadcast from
-    # rank-0 so every rank receives a complete state_dict.
-    if executor is not None and executor.use_distributed:
-        state_dict = broadcast_state_dict(state_dict)
-
-    if state_dict is None:
-        return None
-
-    state_dict = strip_compile_prefix(state_dict)
-    ref_model = model_fn()
-    ref_model.load_state_dict(state_dict)
-    ref_model.requires_grad_(False)
-    ref_model.eval()
-    if device is not None:
-        ref_model = ref_model.to(device=device)
-    return ref_model
-
-
 class TrainContextBuilder:
     def __init__(
         self,
@@ -180,6 +150,19 @@ class TrainContextBuilder:
         self._param_path: Optional[str] = None
         self._resume: bool = False
         self._topology: Optional[ParallelTopology] = None
+
+    def _instantiate_model(self, model_config: Dict) -> nn.Module:
+        return build_model_component(
+            self.config.model, self.config.model_dtype, model_config
+        )
+
+    def _instantiate_optimizer(self, model: nn.Module):
+        return build_optimizer_component(self.config.optimizer, model)
+
+    def _instantiate_scheduler(self, optimizer, dataset_len: int):
+        return build_scheduler_component(
+            self.config.scheduler, optimizer, dataset_len, self.config
+        )
 
     def with_param_path(self, param_path: Optional[str], resume: bool = False) -> Self:
         self._param_path = param_path
@@ -298,7 +281,7 @@ class TrainContextBuilder:
                     )
                     state.checkpoint = checkpoint
         if not state.model_config:
-            model = self.runtime.model_fn()
+            model = self._instantiate_model(state.model_config)
             if hasattr(model, "config"):
                 state.model_config = model.config.to_dict()
         return state
@@ -361,33 +344,20 @@ class TrainContextBuilder:
             return model
 
         def scheduler_for_context(optimizer):
-            return self.runtime.scheduler_fn(optimizer, context.dataset_len)
+            return self._instantiate_scheduler(optimizer, context.dataset_len)
 
         context.model, context.optimizer, context.scheduler = executor.prepare(
-            self.runtime.model_fn,
-            self.runtime.optimizer_fn,
+            lambda: self._instantiate_model(context.model_config),
+            self._instantiate_optimizer,
             scheduler_for_context,
             before_wrap=before_wrap,
             after_wrap=after_wrap,
         )
 
     def _create_datasets(self, context: TrainContext) -> None:
-        cfg = self.config
-        context.dataset = self.runtime.dataset_fn()
-        context.val_dataset = (
-            self.runtime.val_dataset_fn()
-            if self.runtime.val_dataset_fn is not None
-            else None
+        context.dataset, context.val_dataset = build_dataset_component(
+            self.config.dataset, self.config.val_split, self.config.random_seed
         )
-        if context.val_dataset is None and cfg.val_split is not None:
-            total_len = context.dataset_len
-            n_val = max(1, int(total_len * cfg.val_split))
-            generator = torch.Generator().manual_seed(cfg.random_seed)
-            context.dataset, context.val_dataset = random_split(
-                context.dataset,
-                [total_len - n_val, n_val],
-                generator=generator,
-            )
 
     def _create_dataloaders(
         self, context: TrainContext, train_dataset, val_dataset
@@ -397,44 +367,24 @@ class TrainContextBuilder:
             samples_per_replica = self._topology.samples_per_replica(len(train_dataset))
             if samples_per_replica > 0:
                 context.epoch = sampler_offset // samples_per_replica
-        context.dataloader = self._create_dataloader(
-            train_dataset, context.epoch, sampler_offset
+        context.dataloader = build_dataloader(
+            train_dataset,
+            self.config.dataset,
+            self.config,
+            self._topology,
+            context.epoch,
+            sampler_offset,
         )
         if val_dataset is not None:
-            context.val_dataloader = self._create_dataloader(
-                val_dataset, 0, 0, shuffle=False
+            context.val_dataloader = build_dataloader(
+                val_dataset,
+                self.config.dataset,
+                self.config,
+                self._topology,
+                0,
+                0,
+                shuffle=False,
             )
-
-    def _create_dataloader(
-        self, dataset, epoch: int, start_iter: int, shuffle: bool = True
-    ):
-        cfg = self.config
-        sampler = RDSampler(
-            dataset,
-            start_epoch=epoch,
-            start_iter=start_iter,
-            seed=cfg.random_seed,
-            shuffle=shuffle,
-            # dp_group: None on trivial layouts, where the sampler's world-group
-            # fallback is correct; a dp singleton keeps cp peers on identical batches.
-            process_group=self._topology.dp_group,
-        )
-        loader_kwargs = dict(
-            dataset=dataset,
-            batch_size=cfg.batch_per_device,
-            sampler=sampler,
-            num_workers=cfg.num_workers,
-            pin_memory=cfg.pin_memory,
-            collate_fn=self.runtime.collate_fn,
-        )
-        # PyTorch rejects prefetch_factor/persistent_workers when workers=0.
-        if cfg.num_workers > 0:
-            loader_kwargs["persistent_workers"] = cfg.persistent_workers
-            if cfg.prefetch_factor is not None:
-                loader_kwargs["prefetch_factor"] = cfg.prefetch_factor
-        return DataLoader(
-            **loader_kwargs,
-        )
 
     def _restore_optimizer_state(self, context: TrainContext) -> None:
         if context.checkpoint and context.checkpoint.extra:
@@ -462,7 +412,7 @@ class TrainContextBuilder:
         capabilities = StrategyFactory.capabilities(cfg.strategy)
         if capabilities.reference_model:
             kwargs["ref_model"] = create_ref_model(
-                self.runtime.model_fn,
+                lambda: self._instantiate_model(context.model_config),
                 executor=executor,
                 model=context.model,
                 device=get_current_device(),
@@ -470,7 +420,7 @@ class TrainContextBuilder:
         if capabilities.old_model:
             kwargs["old_model"] = (
                 create_ref_model(
-                    self.runtime.model_fn,
+                    lambda: self._instantiate_model(context.model_config),
                     executor=executor,
                     model=context.model,
                     device=get_current_device(),
@@ -613,7 +563,7 @@ class TrainContextBuilder:
         critic.train()
 
         optimizer_factory = (
-            self.runtime.critic_optimizer_fn or self.runtime.optimizer_fn
+            self.runtime.critic_optimizer_fn or self._instantiate_optimizer
         )
         critic_optimizer = optimizer_factory(critic)
         if checkpoint is not None:
@@ -623,12 +573,21 @@ class TrainContextBuilder:
         return critic, critic_optimizer
 
     def _configure_rollout(self, context: TrainContext, strategy_kwargs: Dict) -> None:
+        model_factory = None
+        if isinstance(self.config, TrainConfig):
+            model_factory = partial(
+                build_model_component,
+                self.config.model,
+                self.config.model_dtype,
+                context.model_config,
+            )
         configure_rollout(
             context=context,
             config=self.config,
             param_path=self._param_path,
             strategy_kwargs=strategy_kwargs,
             create_ref_model=create_ref_model,
+            model_factory=model_factory,
             validate=self._validate_rollout_configuration,
             engine_core_cls=EngineCore,
             tokenizer_cls=AutoTokenizer,

@@ -395,6 +395,46 @@ nohup python scripts/tools/train.py \
 
 Full parameter reference at [params.md](params.md).
 
+### Switching training components
+
+A YAML config can select an importable model, optimizer and scheduler without
+changing Trainer. The model config and optional starting weights still come
+from `training.param_path`; construction happens separately in every rank.
+Registered AstrAI model, optimizer and scheduler names can be used instead
+of import paths.
+
+```yaml
+model:
+  type: my_package.models:MyModel
+  dtype: bfloat16
+  params: {width: 2048}
+dataset:
+  type: packed
+  params:
+    path: /path/to/dataset
+    train_type: seq
+    window_size: 2048
+    stride: 2048
+optimizer:
+  type: my_package.optim:make_optimizer
+  params: {lr: 0.0002, weight_decay: 0.1}
+scheduler:
+  type: my_package.schedules:MySchedule
+  params: {warmup_steps: "$warmup_steps", total_steps: "$total_steps"}
+training:
+  train_type: seq
+  param_path: /path/to/model
+```
+
+All four entries use `ComponentSpec(type, params)`. The dataset entry opens
+inside each training rank and stores the resulting dataset and DataLoader in
+`TrainContext`. The optimizer target receives the prepared model (or its
+parameters when its first argument is named `params` or `parameters`). The scheduler target
+receives the optimizer. In scheduler parameters, `warmup_ratio` is a
+reserved setting used to compute `$warmup_steps`; the other available
+placeholders are `$decay_steps` and `$dataset_len`. The usual flat CLI
+options remain supported and normalize to these component specs.
+
 > Document Update Time: 2026-09-20
 
 ### Configuring asynchronous rollout from the CLI

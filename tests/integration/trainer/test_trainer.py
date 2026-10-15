@@ -9,7 +9,6 @@ def test_training_runs_with_various_batch_sizes(
     """Training should complete for a range of batch sizes without error."""
     for batch_per_device in [1, 2, 4]:
         train_config = train_config_factory(
-            model_fn=lambda: base_test_env["model"],
             dataset=random_dataset,
             test_dir=base_test_env["test_dir"],
             device=base_test_env["device"],
@@ -25,7 +24,6 @@ def test_gradient_accumulation_runs(
 ):
     """Training with gradient accumulation should complete."""
     train_config = train_config_factory(
-        model_fn=lambda: base_test_env["model"],
         dataset=random_dataset,
         test_dir=base_test_env["test_dir"],
         device=base_test_env["device"],

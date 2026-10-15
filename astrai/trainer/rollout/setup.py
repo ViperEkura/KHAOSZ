@@ -5,6 +5,7 @@ this module owns rollout wiring without owning model restoration or topology.
 """
 
 from dataclasses import dataclass, replace
+from functools import partial
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Type
 
 import torch
@@ -12,6 +13,7 @@ import torch
 from astrai.config.train_config import TrainConfig
 from astrai.parallel.executor import BaseExecutor
 from astrai.trainer.backend import ColocatedBackend, P2PCopyPublisher, ReplicaBackend
+from astrai.trainer.components import build_model_component
 from astrai.trainer.rollout import (
     RolloutEvaluator,
     RolloutGenerator,
@@ -103,8 +105,16 @@ def configure_rollout(
     validate: Callable[[BaseExecutor], None],
     engine_core_cls: Type,
     tokenizer_cls: Type,
+    model_factory: Optional[Callable] = None,
 ) -> None:
     cfg = config
+    if model_factory is None and getattr(cfg, "model", None) is not None:
+        model_factory = partial(
+            build_model_component,
+            cfg.model,
+            cfg.model_dtype,
+            getattr(context, "model_config", {}),
+        )
     if not StrategyFactory.capabilities(cfg.strategy).online:
         return
     if not context.strategy.supports_online():
@@ -164,7 +174,7 @@ def configure_rollout(
         device: str, max_batch_size: int, enable_cuda_graph: bool = True
     ) -> ReplicaBackend:
         model = create_ref_model(
-            model_fn=cfg.model_fn,
+            model_fn=model_factory,
             executor=context.executor,
             model=context.model,
             device=device,
@@ -208,7 +218,7 @@ def configure_rollout(
         )
         coordinator = AsyncRoundCoordinator(
             source=inference_model,
-            model_fn=cfg.model_fn,
+            model_fn=model_factory,
             param_path=param_path,
             devices=list(resolved.devices),
             params=resolved.params,

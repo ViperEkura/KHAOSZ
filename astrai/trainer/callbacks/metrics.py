@@ -6,7 +6,7 @@ import json
 import time
 from functools import partial
 from pathlib import Path
-from typing import Dict, List
+from typing import TYPE_CHECKING, Dict, List
 
 import torch
 import torch.distributed as dist
@@ -22,7 +22,9 @@ from astrai.trainer.callbacks.metric_util import (
     ctx_get_moe_metric,
     ctx_get_val_loss,
 )
-from astrai.trainer.train_context import TrainContext
+
+if TYPE_CHECKING:
+    from astrai.trainer.train_context import TrainContext
 
 
 @CallbackFactory.register("metric")

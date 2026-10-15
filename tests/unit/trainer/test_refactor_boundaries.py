@@ -4,31 +4,46 @@ import pytest
 import torch
 from torch.utils.data import Dataset
 
-from astrai.config import TrainConfig
+from astrai.config import ComponentSpec, TrainConfig
 from astrai.factory import BaseFactory
+from astrai.trainer import components as dataset_component
 from astrai.trainer.session import TrainSession
 from astrai.trainer.strategy import BaseStrategy, StrategyFactory
 from astrai.trainer.train_context import TrainContext, TrainContextBuilder
 
 
 class NoCopyDataset(Dataset):
+    def __init__(self, length=1):
+        self.length = length
+
     def __deepcopy__(self, memo):
         raise AssertionError("Dataset must not be copied into checkpoint metadata")
 
     def __len__(self):
-        return 1
+        return self.length
 
     def __getitem__(self, index):
         return index
 
 
+def custom_dataset_factory():
+    return NoCopyDataset(length=3), None
+
+
 def _config(**overrides):
     values = dict(
-        model_fn=lambda: torch.nn.Linear(1, 1),
+        model=ComponentSpec(
+            type="torch.nn:Linear", params={"in_features": 1, "out_features": 1}
+        ),
         strategy="seq",
-        dataset_fn=lambda: NoCopyDataset(),
-        optimizer_fn=lambda model: torch.optim.SGD(model.parameters(), lr=0.1),
-        scheduler_fn=lambda optimizer, _dataset_len: None,
+        dataset=ComponentSpec(
+            type="tests.unit.trainer.test_refactor_boundaries:NoCopyDataset", params={}
+        ),
+        optimizer=ComponentSpec(type="torch.optim:SGD", params={"lr": 0.1}),
+        scheduler=ComponentSpec(
+            type="torch.optim.lr_scheduler:StepLR",
+            params={"step_size": 1, "gamma": 1.0},
+        ),
         device_type="cpu",
     )
     values.update(overrides)
@@ -39,24 +54,59 @@ def test_checkpoint_snapshot_does_not_copy_runtime_objects():
     snapshot = _config().to_dict()
     assert snapshot["strategy"] == "seq"
     assert snapshot["batch_per_device"] == 4
-    assert snapshot["collate_fn"] is None
-    assert snapshot["val_dataset_fn"] is None
-    assert "dataset_fn" not in snapshot
+    assert snapshot["dataset"]["type"].endswith(":NoCopyDataset")
+    assert snapshot["dataset"]["params"] == {}
     assert "model_fn" not in snapshot
     assert "optimizer_fn" not in snapshot
 
 
+def test_component_specs_resolve_without_trainer_branches():
+    config = _config(
+        model=ComponentSpec(
+            type="torch.nn:Linear", params={"in_features": 2, "out_features": 2}
+        ),
+        optimizer=ComponentSpec(type="torch.optim:SGD", params={"lr": 0.1}),
+        scheduler=ComponentSpec(
+            type="torch.optim.lr_scheduler:StepLR",
+            params={"step_size": "$total_steps", "gamma": 0.5},
+        ),
+    )
+    builder = TrainContextBuilder(config)
+    model = builder._instantiate_model({})
+    optimizer = builder._instantiate_optimizer(model)
+    scheduler = builder._instantiate_scheduler(optimizer, dataset_len=9)
+
+    assert isinstance(model, torch.nn.Linear)
+    assert optimizer.param_groups[0]["params"][0] is model.weight
+    assert scheduler.step_size == 3
+    assert config.to_dict()["scheduler"]["params"]["step_size"] == "$total_steps"
+    assert isinstance(config.dataset, ComponentSpec)
+    assert TrainContext(config=config).dataset is None
+
+
 def test_builder_creates_and_splits_context_dataset():
     created = []
+    original_load = dataset_component.load_dataset_component
 
-    def dataset_fn():
-        dataset = torch.utils.data.TensorDataset(torch.arange(10))
+    def track_load(kind, path, params):
+        dataset = original_load(kind, path, params)
         created.append(dataset)
         return dataset
 
-    config = _config(dataset_fn=dataset_fn, val_split=0.2)
-    context = TrainContext(config=config)
-    TrainContextBuilder(config)._create_datasets(context)
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(dataset_component, "load_dataset_component", track_load)
+    try:
+        config = _config(
+            dataset=ComponentSpec(
+                type="tests.unit.trainer.test_refactor_boundaries:NoCopyDataset",
+                params={"length": 10},
+            ),
+            val_split=0.2,
+        )
+        context = TrainContext(config=config)
+        TrainContextBuilder(config)._create_datasets(context)
+    finally:
+        monkeypatch.undo()
 
     assert created == [context.dataset.dataset]
     assert context.dataset_len == 8
@@ -64,14 +114,30 @@ def test_builder_creates_and_splits_context_dataset():
     assert context.val_dataset.dataset is created[0]
 
 
+def test_builder_resolves_custom_dataset():
+    config = _config(
+        dataset=ComponentSpec(
+            type="tests.unit.trainer.test_refactor_boundaries:custom_dataset_factory",
+        )
+    )
+    context = TrainContext(config=config)
+    TrainContextBuilder(config)._create_datasets(context)
+    assert context.dataset_len == 3
+    assert context.val_dataset is None
+    assert isinstance(context.dataset, NoCopyDataset)
+
+
 def test_scheduler_uses_dataset_owned_by_context(monkeypatch):
     import astrai.trainer.train_context as context_module
 
     seen = []
-    config = _config(scheduler_fn=lambda optimizer, length: seen.append(length))
+    config = _config()
     context = TrainContext(dataset=NoCopyDataset(), config=config)
     builder = TrainContextBuilder(config)
     monkeypatch.setattr(context_module, "get_current_device", lambda: "cpu")
+    monkeypatch.setattr(
+        builder, "_instantiate_scheduler", lambda optimizer, length: seen.append(length)
+    )
 
     class Executor:
         def prepare(self, model_fn, optimizer_fn, scheduler_fn, **kwargs):

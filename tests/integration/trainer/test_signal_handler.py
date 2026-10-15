@@ -8,14 +8,14 @@ import torch
 import torch.optim as optim
 from torch.utils.data import Dataset
 
-from astrai.config import TrainConfig
+from astrai.config import ComponentSpec, TrainConfig
 from astrai.model.autoregressive_lm import AutoRegressiveLM
 from astrai.optimization.scheduler import SchedulerFactory
 from astrai.signal_handler import register_signal_handlers
 from astrai.trainer import Trainer
 from astrai.trainer.train_context import TrainContext
 from tests.support.checkpoint import load_checkpoint_meta
-from tests.support.models import make_tiny_config
+from tests.support.models import TINY_CONFIG, make_tiny_config
 
 
 class PicklableDataset(Dataset):
@@ -52,23 +52,18 @@ class _ReadyCallback:
 
 
 def _inner_run(batch_per_device, ckpt_interval, ckpt_dir, ready_file):
-    def model_fn():
-        return _build_model()
-
-    def optimizer_fn(m):
-        return optim.AdamW(m.parameters(), lr=0.001)
-
-    def scheduler_fn(optim, _dataset_len):
-        return SchedulerFactory.create(
-            "cosine", optim, warmup_steps=10, lr_decay_steps=10, min_rate=0.05
-        )
-
     train_config = TrainConfig(
         strategy="seq",
-        model_fn=model_fn,
-        dataset_fn=PicklableDataset,
-        optimizer_fn=optimizer_fn,
-        scheduler_fn=scheduler_fn,
+        model=ComponentSpec(type="autoregressive_lm", params={"config": TINY_CONFIG}),
+        dataset=ComponentSpec(
+            type="tests.integration.trainer.test_signal_handler:PicklableDataset",
+            params={},
+        ),
+        optimizer=ComponentSpec(type="torch.optim:AdamW", params={"lr": 0.001}),
+        scheduler=ComponentSpec(
+            type="cosine",
+            params={"warmup_steps": 10, "lr_decay_steps": 10, "min_rate": 0.05},
+        ),
         ckpt_dir=ckpt_dir,
         n_epoch=99999,
         batch_per_device=batch_per_device,

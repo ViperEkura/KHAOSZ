@@ -8,7 +8,7 @@ import pytest
 import torch
 from torch.utils.data import Dataset
 
-from astrai.config import TrainConfig
+from astrai.config import ComponentSpec, TrainConfig
 from astrai.optimization.scheduler import SchedulerFactory
 from astrai.serialization import Checkpoint
 from astrai.trainer import train_context
@@ -126,10 +126,21 @@ def test_online_rollout_end_to_end(
 
     config_kwargs = dict(
         strategy=strategy,
-        model_fn=partial(make_online_model, model_config),
-        dataset_fn=lambda: InstructionDataset(),
-        optimizer_fn=make_online_optimizer,
-        scheduler_fn=make_online_lr_scheduler,
+        model=ComponentSpec(
+            type="autoregressive_lm", params={"config": model_config.to_dict()}
+        ),
+        model_dtype="float32",
+        dataset=ComponentSpec(
+            type="tests.integration.trainer.test_online_e2e:InstructionDataset",
+            params={
+                "collate": "tests.integration.trainer.test_online_e2e:instruction_collate_fn"
+            },
+        ),
+        optimizer=ComponentSpec(type="torch.optim:AdamW", params={"lr": 1e-4}),
+        scheduler=ComponentSpec(
+            type="cosine",
+            params={"warmup_steps": 1, "lr_decay_steps": 4, "min_rate": 0.05},
+        ),
         ckpt_dir=os.path.join(test_dir, "ckpt"),
         n_epoch=1,
         batch_per_device=2,
@@ -146,7 +157,6 @@ def test_online_rollout_end_to_end(
         rollout_top_p=1.0,
         rollout_max_tokens=4,
         reward_model_fn=LengthRewardModel,
-        collate_fn=instruction_collate_fn,
     )
     if with_critic:
         config_kwargs["critic_model_fn"] = partial(
@@ -174,11 +184,19 @@ def _minimal_online_config(**overrides):
     """A TrainConfig for online GRPO that only needs field overrides."""
     defaults = dict(
         strategy="online_grpo",
-        model_fn=lambda: torch.nn.Linear(2, 2),
-        dataset_fn=lambda: InstructionDataset(),
-        optimizer_fn=lambda m: torch.optim.SGD(m.parameters(), lr=0.0),
-        scheduler_fn=lambda o, _dataset_len: SchedulerFactory.create(
-            "cosine", o, warmup_steps=1, lr_decay_steps=4, min_rate=0.05
+        model=ComponentSpec(
+            type="torch.nn:Linear", params={"in_features": 2, "out_features": 2}
+        ),
+        dataset=ComponentSpec(
+            type="tests.integration.trainer.test_online_e2e:InstructionDataset",
+            params={
+                "collate": "tests.integration.trainer.test_online_e2e:instruction_collate_fn"
+            },
+        ),
+        optimizer=ComponentSpec(type="torch.optim:SGD", params={"lr": 0.0}),
+        scheduler=ComponentSpec(
+            type="cosine",
+            params={"warmup_steps": 1, "lr_decay_steps": 4, "min_rate": 0.05},
         ),
         reward_model_fn=LengthRewardModel,
     )

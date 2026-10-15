@@ -1,8 +1,9 @@
 # Run lifecycle and construction
 
 The run loop is in trainer.py, startup and cleanup in session.py, and object
-assembly in train_context.py. TrainConfig remains the public configuration.
-schedule.py supplies registered learning-rate policies.
+assembly in train_context.py, and component construction in components.py.
+TrainConfig remains the public configuration. schedule.py supplies registered
+learning-rate policies.
 
 ## Source modules
 
@@ -10,7 +11,8 @@ schedule.py supplies registered learning-rate policies.
 | --- | --- |
 | trainer.py | Epoch/batch loop, gradient accumulation, optimizer and scheduler commits, loop callbacks |
 | session.py | Signal handlers, startup callbacks, error and end callbacks, rollout closure, final barrier |
-| train_context.py | Context state, topology, model and data preparation, strategy and rollout assembly, checkpoint restore |
+| train_context.py | Context state and rank-local assembly order, strategy and rollout wiring, checkpoint restore |
+| components.py | Model, dataset, DataLoader, optimizer, scheduler and reference-model construction |
 | schedule.py | Cosine, SGDR and WSD learning-rate implementations and scheduler registry |
 
 ## Loop and lifetime
@@ -69,13 +71,17 @@ declare that capability. The builder uses StrategyCapabilities for auxiliary
 models and calls rollout/setup.py for online execution. A completed context
 is handed to TrainSession for lifecycle management.
 
-TrainConfig keeps its public fields. TrainContextBuilder captures its callable
-factories, datasets and collate function in _TrainRuntimeDependencies for
-construction. TrainConfig.to_dict() builds a _CheckpointSettingsSnapshot by
-reading fields individually and retaining JSON-compatible values. It does
-not deep-copy Dataset or other runtime objects. None-valued fields that were
-present in the old metadata remain present, and checkpoint keys remain
-compatible with existing checkpoints.
+TrainConfig carries the same serializable ComponentSpec shape for model,
+dataset, optimizer and scheduler. Each rank enters TrainContextBuilder, which
+resolves the specs and opens the datasets through components.py, then constructs
+DataLoaders. TrainContext owns the resulting datasets and loaders. The built-in
+packed type uses DatasetFactory; a Python dataset uses its module:attribute path
+as the spec type.
+
+Model, optimizer and scheduler are created in dependency order after rank
+launch. A scheduler parameter may reference $total_steps, $warmup_steps,
+$decay_steps or $dataset_len. TrainConfig.to_dict() records JSON-compatible
+settings and does not copy runtime objects.
 
 Checkpoint restore still belongs to TrainContextBuilder. The builder loads
 model state before strategy and rollout setup, restores optimizer/scheduler

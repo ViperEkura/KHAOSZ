@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import sys
-from typing import IO, Optional
+from typing import IO, TYPE_CHECKING, Optional
 
 from tqdm import tqdm
 
 from astrai.parallel import only_on_rank
 from astrai.trainer.callbacks.base import CallbackFactory, TrainCallback
-from astrai.trainer.train_context import TrainContext
+
+if TYPE_CHECKING:
+    from astrai.trainer.train_context import TrainContext
 
 
 @CallbackFactory.register("progress_bar")

@@ -11,6 +11,7 @@ import pytest
 import torch
 import torch.distributed as dist
 
+from astrai.config import ComponentSpec
 from astrai.config.train_config import TrainConfig
 from astrai.dataset import RDSampler
 from astrai.extension import op_backend
@@ -218,10 +219,17 @@ def test_dp_reduce_semantics():
 def _minimal_train_config(**overrides):
     defaults = dict(
         strategy="seq",
-        model_fn=lambda: torch.nn.Linear(2, 2),
-        dataset_fn=lambda: RandomTokenDataset(length=2),
-        optimizer_fn=lambda m: torch.optim.SGD(m.parameters(), lr=0.0),
-        scheduler_fn=lambda o, _dataset_len: o,
+        model=ComponentSpec(
+            type="torch.nn:Linear", params={"in_features": 2, "out_features": 2}
+        ),
+        dataset=ComponentSpec(
+            type="tests.support.rollout:RandomTokenDataset", params={"length": 2}
+        ),
+        optimizer=ComponentSpec(type="torch.optim:SGD", params={"lr": 0.0}),
+        scheduler=ComponentSpec(
+            type="torch.optim.lr_scheduler:StepLR",
+            params={"step_size": 1, "gamma": 1.0},
+        ),
     )
     defaults.update(overrides)
     return TrainConfig(**defaults)

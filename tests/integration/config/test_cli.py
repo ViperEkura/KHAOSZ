@@ -10,21 +10,23 @@ import torch
 from click.testing import CliRunner
 from torch.utils.data import TensorDataset
 
-from astrai.config import TrainConfig, merge_yaml_into_kwargs
+from astrai.config import ComponentSpec, TrainConfig, merge_yaml_into_kwargs
 from astrai.config.cli import (
     GroupedCommand,
     OptSpec,
     apply_specs,
     option_from_spec,
 )
+from astrai.dataset import DatasetFactory
 from astrai.model.components.mlp import MLP
 from astrai.serialization import save_bin
+from astrai.trainer.components import build_dataset_component
 from scripts.tools import train as train_module
 from tests.support.models import make_rollout_config
 
 
 def _read_dataset_from_spawned_config(config, queue):
-    dataset = config.dataset_fn()
+    dataset, _ = build_dataset_component(config.dataset, None, config.random_seed)
     queue.put((len(dataset), dataset[0]["input_ids"].tolist()))
 
 
@@ -261,7 +263,7 @@ def test_async_cli_yaml_and_explicit_flags_reach_training_config(tmp_path, monke
 
     monkeypatch.setattr(train_module, "Trainer", Trainer)
     monkeypatch.setattr(
-        train_module.DatasetFactory,
+        DatasetFactory,
         "load",
         lambda **kwargs: TensorDataset(torch.ones(5)),
     )
@@ -324,13 +326,55 @@ def test_seq_cli_defers_dataset_construction(tmp_path, monkeypatch):
         raise AssertionError("DatasetFactory.load ran in the parent")
 
     monkeypatch.setattr(train_module, "Trainer", Trainer)
-    monkeypatch.setattr(train_module.DatasetFactory, "load", reject_parent_load)
+    monkeypatch.setattr(DatasetFactory, "load", reject_parent_load)
     result = CliRunner().invoke(train_module.train_command, ["--config", str(yaml)])
     assert result.exit_code == 0, (result.output, result.exception)
     assert len(captured) == 1
-    assert callable(captured[0].dataset_fn)
-    assert not hasattr(captured[0], "dataset")
-    assert callable(captured[0].scheduler_fn)
+    assert captured[0].dataset.type == "packed"
+    assert captured[0].dataset.params["path"] == str(data_dir)
+    assert isinstance(captured[0].dataset, ComponentSpec)
+    assert captured[0].scheduler.type == "cosine"
+
+
+def test_cli_accepts_declarative_components(tmp_path, monkeypatch):
+    make_rollout_config(max_position_embeddings=8).to_file(tmp_path / "config.json")
+    data_dir = tmp_path / "packed"
+    save_bin(str(data_dir), {"sequence": [torch.arange(33)]})
+    config_path = tmp_path / "components.yaml"
+    config_path.write_text(
+        "model:\n  type: torch.nn:Linear\n  dtype: float32\n"
+        "  params: {in_features: 2, out_features: 2}\n"
+        "optimizer:\n  type: torch.optim:SGD\n  params: {lr: 0.01}\n"
+        "scheduler:\n  type: torch.optim.lr_scheduler:StepLR\n"
+        '  params: {step_size: "$total_steps", gamma: 0.9}\n'
+        f"dataset:\n  type: packed\n  params:\n    path: {data_dir}\n"
+        "    train_type: seq\n    window_size: 8\n    stride: 8\n"
+        f"training:\n  train_type: seq\n  param_path: {tmp_path}\n"
+    )
+    captured = []
+
+    class Trainer:
+        def __init__(self, config):
+            captured.append(config)
+
+        def train(self, **kwargs):
+            pass
+
+    monkeypatch.setattr(train_module, "Trainer", Trainer)
+    result = CliRunner().invoke(
+        train_module.train_command, ["--config", str(config_path)]
+    )
+    assert result.exit_code == 0, (result.output, result.exception)
+    config = captured[0]
+    assert (config.model.type, config.optimizer.type, config.scheduler.type) == (
+        "torch.nn:Linear",
+        "torch.optim:SGD",
+        "torch.optim.lr_scheduler:StepLR",
+    )
+    assert config.model_dtype == "float32"
+    assert config.dataset.params["path"] == str(data_dir)
+    dataset, _ = build_dataset_component(config.dataset, None, config.random_seed)
+    assert len(dataset) > 0
 
 
 def test_seq_config_factory_survives_spawn(tmp_path, monkeypatch):
@@ -389,7 +433,7 @@ def test_sft_cli_routes_linear_ce_options_from_yaml(tmp_path, monkeypatch):
 
     monkeypatch.setattr(train_module, "Trainer", Trainer)
     monkeypatch.setattr(
-        train_module.DatasetFactory,
+        DatasetFactory,
         "load",
         lambda **kwargs: TensorDataset(torch.ones(5)),
     )

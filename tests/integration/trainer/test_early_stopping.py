@@ -1,4 +1,5 @@
 import os
+from dataclasses import replace
 
 from astrai.trainer.trainer import Trainer
 from tests.support.checkpoint import load_checkpoint_meta
@@ -9,7 +10,6 @@ def test_early_stopping_simulation(
 ):
     """Simulate early stopping behavior"""
     train_config = train_config_factory(
-        model_fn=lambda: base_test_env["model"],
         dataset=early_stopping_dataset,
         test_dir=base_test_env["test_dir"],
         device=device,
@@ -27,7 +27,13 @@ def test_early_stopping_simulation(
 
     # Resume from latest checkpoint
     load_dir = os.path.join(base_test_env["test_dir"], "epoch_0_step_1")
-    trainer = Trainer(train_config)
+    # A fresh dataset is opened on resume. Disable the injected
+    # one-shot failure for the continuation.
+    dataset = replace(
+        train_config.dataset,
+        params={**train_config.dataset.params, "stop_after": None},
+    )
+    trainer = Trainer(replace(train_config, dataset=dataset))
     trainer.train(param_path=load_dir, resume=True)
 
     # Verify checkpoint was saved at expected step

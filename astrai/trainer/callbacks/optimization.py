@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Optional, Type
+from typing import TYPE_CHECKING, List, Optional, Type
 
 from torch import nn
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
 
 from astrai.trainer.callbacks.base import CallbackFactory, TrainCallback
-from astrai.trainer.train_context import TrainContext
+
+if TYPE_CHECKING:
+    from astrai.trainer.train_context import TrainContext
 
 logger = logging.getLogger(__name__)
 

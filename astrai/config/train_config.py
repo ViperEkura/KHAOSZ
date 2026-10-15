@@ -11,15 +11,28 @@ from dataclasses import (
 from math import isfinite
 from typing import Any, Callable, Dict, List, Optional, Type
 
-import torch.nn as nn
 from pydantic import ConfigDict, field_validator, model_validator
 from pydantic.dataclasses import dataclass
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LRScheduler
-from torch.utils.data import Dataset
 
 from astrai.config.base import BaseConfig
 from astrai.model.components.lora import LoRAConfig
+
+
+@plain_dataclass(frozen=True, kw_only=True)
+class ComponentSpec:
+    """Serializable component target and constructor parameters."""
+
+    type: str
+    params: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.type:
+            raise ValueError("Component type must not be empty")
+        try:
+            json.dumps(self.params, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Component params must contain only JSON values") from exc
+
 
 # Data-parallel gradient-sync strategies.
 DP_MODES = frozenset({"none", "ddp", "fsdp"})
@@ -31,15 +44,9 @@ ROLLOUT_MODES = frozenset({"sync", "async_round"})
 
 @plain_dataclass(frozen=True)
 class _TrainRuntimeDependencies:
-    model_fn: Callable
-    dataset_fn: Callable
-    val_dataset_fn: Optional[Callable]
-    optimizer_fn: Callable
-    scheduler_fn: Callable
     reward_model_fn: Optional[Callable]
     critic_model_fn: Optional[Callable]
     critic_optimizer_fn: Optional[Callable]
-    collate_fn: Optional[Callable]
 
     @classmethod
     def capture(cls, config: "TrainConfig") -> "_TrainRuntimeDependencies":
@@ -76,18 +83,17 @@ class _CheckpointSettingsSnapshot:
 class TrainConfig(BaseConfig):
     """Training configuration.
 
-    Combines hyperparameters with runtime objects (model_fn, dataset, etc.).
+    Combines normalized settings with serializable component specifications.
     Only JSON-serializable fields are written to checkpoint meta via to_dict().
 
     Args:
-        model_fn (Callable[[], nn.Module]): Model factory for training.
+        model (ComponentSpec): Serializable model target and parameters.
         strategy (str): Training strategy (seq, sft, dpo, grpo, online_*).
-        dataset_fn (Callable[[], Dataset]): Factory called inside each training rank.
-        val_dataset_fn (Optional[Callable[[], Dataset]]): Validation dataset factory. Defaults to None.
-        optimizer_fn (Callable[[nn.Module], Optimizer]): Optimizer factory for training.
+        dataset (ComponentSpec): Serializable data constructor and parameters.
+        optimizer (ComponentSpec): Serializable optimizer target and parameters.
         optimizer_name (Optional[str]): Serializable built-in optimizer identifier. Defaults to None.
         optimizer_hyperparameters (Dict[str, Any]): Serializable optimizer settings. Defaults to {}.
-        scheduler_fn (Callable[[Optimizer, int], LRScheduler]): Scheduler factory receiving the optimizer and training dataset length.
+        scheduler (ComponentSpec): Serializable scheduler target and parameters.
         n_epoch (int): Number of epochs for training. Defaults to 1.
         batch_per_device (int): Batch size per device. Defaults to 4.
         grad_accum_steps (int): Number of iterations between optimizer steps. Defaults to 1.
@@ -106,7 +112,6 @@ class TrainConfig(BaseConfig):
         prefetch_factor (Optional[int]): Prefetch factor for dataloader. Defaults to None.
         persistent_workers (bool): Keep DataLoader workers alive between epochs. Defaults to False.
         pin_memory (bool): Pin memory for dataloader. Defaults to False.
-        collate_fn (Optional[Callable[[List[Any]], Any]]): Collate function for dataloader (e.g. dpo_collate_fn). Defaults to None.
         dp_size (int): Data-parallel replicas; total training processes (``nprocs``) are derived as ``dp_size * cp_size * tp_size``. Defaults to 1.
         cp_size (int): Context-parallel group size: shards the sequence across contiguous ranks (seq pretraining, torch-native attention only). Defaults to 1.
         tp_size (int): Tensor-parallel group size: shards Linear projections over features (attention heads / ffn channels) using the default plan over the standard module layout. Defaults to 1.
@@ -147,22 +152,21 @@ class TrainConfig(BaseConfig):
         allow_reference_reanchor (bool): Escape hatch for resuming a reference-model strategy from a checkpoint saved without ``reference_model``: False (default) fails the resume explicitly, True proceeds with the reference re-anchored to the resumed actor and logs a warning. Defaults to False.
         reward_model_fn (Optional[Callable]): Factory for reward model, required for online RL strategies. Defaults to None.
         critic_model_fn (Optional[Callable]): Factory for the value (critic) model, required for online_ppo. Defaults to None.
-        critic_optimizer_fn (Optional[Callable]): Factory for the critic optimizer; None reuses optimizer_fn. Defaults to None.
+        critic_optimizer_fn (Optional[Callable]): Factory for the critic optimizer; None reuses the configured optimizer. Defaults to None.
         executor_kwargs (Dict[str, Any]): Extra kwargs passed to ExecutorFactory.create(). Defaults to {}.
         strategy_kwargs (Dict[str, Any]): Extra strategy arguments. Defaults to {}.
     """
 
     strategy: str
-    model_fn: Callable[[], nn.Module]
-    dataset_fn: Callable[[], Dataset]
-    optimizer_fn: Callable[[nn.Module], Optimizer]
-    scheduler_fn: Callable[[Optimizer, int], LRScheduler]
+    dataset: ComponentSpec
+    model: ComponentSpec
+    optimizer: ComponentSpec
+    scheduler: ComponentSpec
+    model_dtype: Optional[str] = None
 
-    val_dataset_fn: Optional[Callable[[], Dataset]] = None
     reward_model_fn: Optional[Callable] = None
     critic_model_fn: Optional[Callable] = None
     critic_optimizer_fn: Optional[Callable] = None
-    collate_fn: Optional[Callable[[List[Any]], Any]] = None
     optimizer_name: Optional[str] = None
     optimizer_hyperparameters: Dict[str, Any] = field(default_factory=dict)
     n_epoch: int = 1
@@ -237,6 +241,7 @@ class TrainConfig(BaseConfig):
 
     @field_validator("strategy")
     def _validate_strategy(cls, v: str) -> str:
+        # Runtime import: the trainer package also imports TrainConfig.
         from astrai.trainer.strategy import StrategyFactory
 
         if not StrategyFactory.is_registered(v):
@@ -464,6 +469,10 @@ class TrainConfig(BaseConfig):
 
     @model_validator(mode="after")
     def _validate_online_strategy(self) -> "TrainConfig":
+        if self.model_dtype not in (None, "float32", "float16", "bfloat16"):
+            raise ValueError("model_dtype must be float32, float16, or bfloat16")
+
+        # Runtime import: importing trainer during config initialization cycles.
         from astrai.trainer.strategy import StrategyFactory
 
         capabilities = StrategyFactory.capabilities(self.strategy)
@@ -524,7 +533,10 @@ class TrainConfig(BaseConfig):
                 raise ValueError("async_round requires rollout_max_policy_lag=1")
             if self.rollout_max_policy_lag is None:
                 self.rollout_max_policy_lag = 1
-            if self.val_dataset_fn is not None or self.val_split is not None:
+            if (
+                self.dataset.params.get("val_path") is not None
+                or self.val_split is not None
+            ):
                 raise ValueError("async_round validation is not supported yet")
         if capabilities.online:
             if self.reward_model_fn is None:

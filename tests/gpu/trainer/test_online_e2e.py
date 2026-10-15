@@ -9,7 +9,7 @@ import pytest
 import torch
 from torch.utils.data import Dataset, Subset
 
-from astrai.config import TrainConfig
+from astrai.config import ComponentSpec, TrainConfig
 from astrai.optimization.scheduler import SchedulerFactory
 from astrai.serialization import Checkpoint
 from astrai.trainer.rollout import BaseRewardModel
@@ -108,11 +108,19 @@ def _minimal_online_config(**overrides):
     """A TrainConfig for online GRPO that only needs field overrides."""
     defaults = dict(
         strategy="online_grpo",
-        model_fn=lambda: torch.nn.Linear(2, 2),
-        dataset_fn=lambda: InstructionDataset(),
-        optimizer_fn=lambda m: torch.optim.SGD(m.parameters(), lr=0.0),
-        scheduler_fn=lambda o, _dataset_len: SchedulerFactory.create(
-            "cosine", o, warmup_steps=1, lr_decay_steps=4, min_rate=0.05
+        model=ComponentSpec(
+            type="torch.nn:Linear", params={"in_features": 2, "out_features": 2}
+        ),
+        dataset=ComponentSpec(
+            type="tests.gpu.trainer.test_online_e2e:InstructionDataset",
+            params={
+                "collate": "tests.gpu.trainer.test_online_e2e:instruction_collate_fn"
+            },
+        ),
+        optimizer=ComponentSpec(type="torch.optim:SGD", params={"lr": 0.0}),
+        scheduler=ComponentSpec(
+            type="cosine",
+            params={"warmup_steps": 1, "lr_decay_steps": 4, "min_rate": 0.05},
         ),
         reward_model_fn=LengthRewardModel,
     )
@@ -137,10 +145,22 @@ def test_ddp_online_grpo_end_to_end(base_test_env):
     dataset = InstructionDataset(repeats=10)
     train_config = TrainConfig(
         strategy="online_grpo",
-        model_fn=partial(make_online_model, model_config),
-        dataset_fn=partial(InstructionDataset, repeats=10),
-        optimizer_fn=make_online_optimizer,
-        scheduler_fn=make_online_lr_scheduler,
+        model=ComponentSpec(
+            type="autoregressive_lm", params={"config": model_config.to_dict()}
+        ),
+        model_dtype="float32",
+        dataset=ComponentSpec(
+            type="tests.gpu.trainer.test_online_e2e:InstructionDataset",
+            params={
+                "repeats": 10,
+                "collate": "tests.gpu.trainer.test_online_e2e:instruction_collate_fn",
+            },
+        ),
+        optimizer=ComponentSpec(type="torch.optim:AdamW", params={"lr": 1e-4}),
+        scheduler=ComponentSpec(
+            type="cosine",
+            params={"warmup_steps": 1, "lr_decay_steps": 4, "min_rate": 0.05},
+        ),
         ckpt_dir=os.path.join(test_dir, "ckpt"),
         n_epoch=1,
         batch_per_device=1,
@@ -157,7 +177,6 @@ def test_ddp_online_grpo_end_to_end(base_test_env):
         rollout_top_p=1.0,
         rollout_max_tokens=4,
         reward_model_fn=LengthRewardModel,
-        collate_fn=instruction_collate_fn,
     )
 
     Trainer(train_config).train(param_path=test_dir)
@@ -175,10 +194,23 @@ def test_async_round_ddp_two_learners_two_workers(base_test_env):
     tokenizer.save_pretrained(test_dir)
     config = TrainConfig(
         strategy="online_grpo",
-        model_fn=partial(make_online_model, base_test_env["transformer_config"]),
-        dataset_fn=partial(InstructionDataset, repeats=1),
-        optimizer_fn=make_online_optimizer,
-        scheduler_fn=make_online_lr_scheduler,
+        model=ComponentSpec(
+            type="autoregressive_lm",
+            params={"config": base_test_env["transformer_config"].to_dict()},
+        ),
+        model_dtype="float32",
+        dataset=ComponentSpec(
+            type="tests.gpu.trainer.test_online_e2e:InstructionDataset",
+            params={
+                "repeats": 1,
+                "collate": "tests.gpu.trainer.test_online_e2e:instruction_collate_fn",
+            },
+        ),
+        optimizer=ComponentSpec(type="torch.optim:AdamW", params={"lr": 1e-4}),
+        scheduler=ComponentSpec(
+            type="cosine",
+            params={"warmup_steps": 1, "lr_decay_steps": 4, "min_rate": 0.05},
+        ),
         ckpt_dir=os.path.join(test_dir, "ckpt"),
         n_epoch=1,
         batch_per_device=2,
@@ -192,7 +224,6 @@ def test_async_round_ddp_two_learners_two_workers(base_test_env):
         rollout_interval=1,
         rollout_max_tokens=4,
         reward_model_fn=LengthRewardModel,
-        collate_fn=instruction_collate_fn,
     )
     Trainer(config).train(param_path=test_dir)
     checkpoint = Checkpoint.load(os.path.join(test_dir, "ckpt", "epoch_0_step_1"))
@@ -228,10 +259,23 @@ def test_async_round_online_grpo_five_gpus(base_test_env, monkeypatch):
     monkeypatch.setattr(AsyncRoundCoordinator, "collect_round", tracked_collect)
     config = TrainConfig(
         strategy="online_grpo",
-        model_fn=partial(make_online_model, model_config),
-        dataset_fn=partial(_instruction_subset, repeats=3, count=10),
-        optimizer_fn=make_online_optimizer,
-        scheduler_fn=make_online_lr_scheduler,
+        model=ComponentSpec(
+            type="autoregressive_lm", params={"config": model_config.to_dict()}
+        ),
+        model_dtype="float32",
+        dataset=ComponentSpec(
+            type="tests.gpu.trainer.test_online_e2e:_instruction_subset",
+            params={
+                "repeats": 3,
+                "count": 10,
+                "collate": "tests.gpu.trainer.test_online_e2e:instruction_collate_fn",
+            },
+        ),
+        optimizer=ComponentSpec(type="torch.optim:AdamW", params={"lr": 1e-4}),
+        scheduler=ComponentSpec(
+            type="cosine",
+            params={"warmup_steps": 1, "lr_decay_steps": 4, "min_rate": 0.05},
+        ),
         ckpt_dir=os.path.join(test_dir, "ckpt"),
         n_epoch=1,
         batch_per_device=4,
@@ -245,7 +289,6 @@ def test_async_round_online_grpo_five_gpus(base_test_env, monkeypatch):
         rollout_max_policy_lag=1,
         rollout_max_tokens=4,
         reward_model_fn=LengthRewardModel,
-        collate_fn=instruction_collate_fn,
     )
     Trainer(config).train(param_path=test_dir)
 
@@ -286,10 +329,23 @@ def test_async_round_version_commit_failure_checkpoint_resumes_once(
     tokenizer.save_pretrained(test_dir)
     config = TrainConfig(
         strategy="online_grpo",
-        model_fn=partial(make_online_model, model_config),
-        dataset_fn=partial(_instruction_subset, repeats=2, count=8),
-        optimizer_fn=make_online_optimizer,
-        scheduler_fn=make_online_lr_scheduler,
+        model=ComponentSpec(
+            type="autoregressive_lm", params={"config": model_config.to_dict()}
+        ),
+        model_dtype="float32",
+        dataset=ComponentSpec(
+            type="tests.gpu.trainer.test_online_e2e:_instruction_subset",
+            params={
+                "repeats": 2,
+                "count": 8,
+                "collate": "tests.gpu.trainer.test_online_e2e:instruction_collate_fn",
+            },
+        ),
+        optimizer=ComponentSpec(type="torch.optim:AdamW", params={"lr": 1e-4}),
+        scheduler=ComponentSpec(
+            type="cosine",
+            params={"warmup_steps": 1, "lr_decay_steps": 4, "min_rate": 0.05},
+        ),
         ckpt_dir=os.path.join(test_dir, "ckpt"),
         n_epoch=1,
         batch_per_device=4,
@@ -303,7 +359,6 @@ def test_async_round_version_commit_failure_checkpoint_resumes_once(
         rollout_max_policy_lag=1,
         rollout_max_tokens=4,
         reward_model_fn=LengthRewardModel,
-        collate_fn=instruction_collate_fn,
     )
     original_publication = NCCLWeightChannel.mark_committed
 

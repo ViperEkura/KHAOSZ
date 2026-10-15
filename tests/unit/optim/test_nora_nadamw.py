@@ -5,7 +5,7 @@ import pytest
 import torch
 from torch.utils.data import TensorDataset
 
-from astrai.config import TrainConfig
+from astrai.config import ComponentSpec, TrainConfig
 from astrai.model import AutoRegressiveLM
 from astrai.model.components.linear import Linear
 from astrai.model.components.lora import LoRALinear, inject_lora
@@ -215,12 +215,17 @@ def test_optimizer_and_scheduler_resume_matches_uninterrupted_step():
 
 def test_train_config_serializes_optimizer_metadata():
     config = TrainConfig(
-        model_fn=lambda: torch.nn.Linear(2, 2),
+        model=ComponentSpec(
+            type="torch.nn:Linear", params={"in_features": 2, "out_features": 2}
+        ),
         strategy="seq",
-        dataset_fn=lambda: TensorDataset(torch.zeros(1, 2)),
-        optimizer_fn=lambda model: torch.optim.AdamW(model.parameters()),
-        scheduler_fn=lambda optimizer, _dataset_len: torch.optim.lr_scheduler.LambdaLR(
-            optimizer, lambda _: 1.0
+        dataset=ComponentSpec(
+            type="tests.support.rollout:RandomTokenDataset", params={"length": 1}
+        ),
+        optimizer=ComponentSpec(type="torch.optim:AdamW"),
+        scheduler=ComponentSpec(
+            type="torch.optim.lr_scheduler:StepLR",
+            params={"step_size": 1, "gamma": 1.0},
         ),
         optimizer_name="nora_nadamw",
         optimizer_hyperparameters={"lr": 3e-4, "nora_lr": 5e-3},

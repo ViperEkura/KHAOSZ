@@ -13,7 +13,7 @@ import torch
 from torch import nn
 from torch.utils.data import Dataset
 
-from astrai.config import TrainConfig
+from astrai.config import ComponentSpec, TrainConfig
 from astrai.serialization import Checkpoint
 from astrai.trainer.optional_extras import (
     checkpoint_extras,
@@ -426,10 +426,17 @@ class _RefOnlyStrategy:
 def _resume_builder(tmp_path, allow_reanchor=False):
     config = TrainConfig(
         strategy="sft",
-        model_fn=lambda: nn.Linear(2, 2),
-        dataset_fn=lambda: torch.utils.data.TensorDataset(torch.zeros(1, 2)),
-        optimizer_fn=lambda m: torch.optim.SGD(m.parameters(), lr=0.0),
-        scheduler_fn=lambda o, _dataset_len: None,
+        model=ComponentSpec(
+            type="torch.nn:Linear", params={"in_features": 2, "out_features": 2}
+        ),
+        dataset=ComponentSpec(
+            type="tests.support.rollout:RandomTokenDataset", params={"length": 1}
+        ),
+        optimizer=ComponentSpec(type="torch.optim:SGD", params={"lr": 0.0}),
+        scheduler=ComponentSpec(
+            type="torch.optim.lr_scheduler:StepLR",
+            params={"step_size": 1, "gamma": 1.0},
+        ),
         allow_reference_reanchor=allow_reanchor,
     )
     builder = TrainContextBuilder(config)
@@ -521,10 +528,21 @@ def _online_config(base_test_env, **overrides):
     model_config = base_test_env["transformer_config"]
     defaults = dict(
         strategy="online_grpo",
-        model_fn=partial(make_online_model, model_config),
-        dataset_fn=lambda: InstructionDataset(),
-        optimizer_fn=make_online_optimizer,
-        scheduler_fn=make_online_lr_scheduler,
+        model=ComponentSpec(
+            type="autoregressive_lm", params={"config": model_config.to_dict()}
+        ),
+        model_dtype="float32",
+        dataset=ComponentSpec(
+            type="tests.integration.trainer.test_rl_scheduling:InstructionDataset",
+            params={
+                "collate": "tests.integration.trainer.test_rl_scheduling:instruction_collate_fn"
+            },
+        ),
+        optimizer=ComponentSpec(type="torch.optim:AdamW", params={"lr": 1e-4}),
+        scheduler=ComponentSpec(
+            type="cosine",
+            params={"warmup_steps": 1, "lr_decay_steps": 4, "min_rate": 0.05},
+        ),
         ckpt_dir=os.path.join(base_test_env["test_dir"], "ckpt"),
         n_epoch=1,
         batch_per_device=2,
@@ -541,7 +559,6 @@ def _online_config(base_test_env, **overrides):
         rollout_top_p=1.0,
         rollout_max_tokens=4,
         reward_model_fn=LengthRewardModel,
-        collate_fn=instruction_collate_fn,
     )
     defaults.update(overrides)
     return TrainConfig(**defaults)

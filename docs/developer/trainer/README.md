@@ -8,6 +8,7 @@ subsystem-level layout as the [inference internals](../inference/README.md).
 ```text
 astrai/trainer/
   trainer.py, session.py, train_context.py   loop, lifetime, construction
+  components.py                            model, dataset, loader, optimizer, scheduler
   strategy/                                  objectives and loss contracts
   rollout/, backend.py                       generation and reward path
   callbacks/, optional_extras.py             hooks and checkpoint extras
@@ -36,6 +37,8 @@ classDiagram
     direction LR
     Trainer --> TrainSession : one run
     TrainSession --> TrainContextBuilder : build
+    TrainContextBuilder --> DatasetFactory : open in rank
+    TrainContextBuilder --> TrainContext : datasets and loaders
     TrainContextBuilder --> TrainContext : assemble
     TrainContext --> BaseStrategy
     TrainContext --> RolloutRunner
@@ -45,6 +48,9 @@ classDiagram
     TrainSession --> TrainCallback : startup and teardown
 ```
 
+TrainConfig carries one serializable ComponentSpec shape for model, dataset,
+optimizer and scheduler. TrainContextBuilder resolves each spec after rank
+launch; TrainContext keeps the constructed datasets and loaders.
 Trainer owns optimizer commits and counters. TrainContextBuilder owns creation
 and checkpoint restore; TrainSession owns startup and cleanup after construction.
 A strategy owns its objective, not the run lifecycle. A rollout backend owns
@@ -52,10 +58,9 @@ where inference executes and how policy weights arrive.
 
 The package exports Trainer, factories and protocols from astrai.trainer.
 Built-in callbacks, strategies and rollout contracts have their own package
-exports. TrainConfig resolves the strategy registry inside its validators:
-importing it at module load time would pull inference into a partially
-initialized model package. Other runtime trainer imports remain at module
-scope; type-only imports use TYPE_CHECKING.
+exports. TrainConfig imports StrategyFactory inside its validators because
+the trainer package also imports TrainConfig. Type-only callback imports use
+TYPE_CHECKING.
 
 For configuration and usage, see the [training guide](../../guides/training.md)
 and [distributed training guide](../../guides/distributed.md).

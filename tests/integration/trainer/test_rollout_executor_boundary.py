@@ -11,7 +11,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import Dataset, TensorDataset
 
 import astrai.parallel.executor as executor_module
-from astrai.config import TrainConfig
+from astrai.config import ComponentSpec, TrainConfig
 from astrai.model.autoregressive_lm import AutoRegressiveLM
 from astrai.parallel import get_rank
 from astrai.parallel.executor import DDPExecutor, FSDPExecutor, NoneExecutor
@@ -67,10 +67,16 @@ def _scheduler_fn(optimizer, _dataset_len):
 def _online_train_config(dp_mode):
     return TrainConfig(
         strategy="online_grpo",
-        model_fn=_ConfigModel,
-        dataset_fn=lambda: _ConfigDataset(),
-        optimizer_fn=_optimizer_fn,
-        scheduler_fn=_scheduler_fn,
+        model=ComponentSpec(type=__name__ + ":_ConfigModel"),
+        dataset=ComponentSpec(
+            type="tests.integration.trainer.test_rollout_executor_boundary:_ConfigDataset",
+            params={},
+        ),
+        optimizer=ComponentSpec(type="torch.optim:SGD", params={"lr": 1e-3}),
+        scheduler=ComponentSpec(
+            type="torch.optim.lr_scheduler:StepLR",
+            params={"step_size": 1, "gamma": 1.0},
+        ),
         dp_size=2,
         dp_mode=dp_mode,
         reward_model_fn=object,
@@ -297,10 +303,16 @@ def _multi_rank_rollout_then_train_worker():
 
 def _config(**overrides):
     values = dict(
-        model_fn=Mock(),
-        dataset_fn=lambda: TensorDataset(torch.ones(5)),
-        optimizer_fn=Mock(),
-        scheduler_fn=Mock(),
+        model=ComponentSpec(
+            type="torch.nn:Linear", params={"in_features": 2, "out_features": 2}
+        ),
+        dataset=ComponentSpec(
+            type="tests.support.rollout:RandomTokenDataset", params={"length": 5}
+        ),
+        optimizer=ComponentSpec(type="torch.optim:SGD", params={"lr": 0.0}),
+        scheduler=ComponentSpec(
+            type="torch.optim.lr_scheduler:StepLR", params={"step_size": 1}
+        ),
         strategy="online_grpo",
         reward_model_fn=Mock(),
         rollout_mode="async_round",

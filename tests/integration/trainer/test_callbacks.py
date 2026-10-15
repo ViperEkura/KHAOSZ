@@ -125,7 +125,6 @@ def test_gradient_checkpointing_trainer_integration(
 ):
     """Gradient checkpointing runs end-to-end via Trainer."""
     train_config = train_config_factory(
-        model_fn=lambda: base_test_env["model"],
         dataset=random_dataset,
         test_dir=base_test_env["test_dir"],
         device=device,
@@ -146,7 +145,6 @@ def test_callback_integration(
 ):
     """Test that all callbacks are properly integrated"""
     train_config = train_config_factory(
-        model_fn=lambda: base_test_env["model"],
         dataset=random_dataset,
         test_dir=base_test_env["test_dir"],
         device=device,
@@ -183,7 +181,6 @@ def test_checkpoint_captures_completed_optimizer_step(
         for name, tensor in model.state_dict().items()
     }
     train_config = train_config_factory(
-        model_fn=lambda: model,
         dataset=RandomTokenDataset(length=2),
         test_dir=base_test_env["test_dir"],
         device=device,
@@ -218,7 +215,6 @@ def test_checkpoint_snapshots_tokenizer_files(
     (param_dir / "tokenizer_config.json").write_text("{}")
 
     train_config = train_config_factory(
-        model_fn=lambda: base_test_env["model"],
         dataset=RandomTokenDataset(length=2),
         test_dir=base_test_env["test_dir"],
         device=device,
@@ -255,7 +251,6 @@ def test_interrupt_before_first_step_still_checkpoints(
             context.request_stop()
 
     train_config = train_config_factory(
-        model_fn=lambda: base_test_env["model"],
         dataset=RandomTokenDataset(length=2),
         test_dir=base_test_env["test_dir"],
         device=device,

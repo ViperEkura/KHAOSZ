@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 from collections.abc import Callable
-from typing import Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional
 
 from astrai.serialization import Checkpoint
 from astrai.trainer.callbacks.base import CallbackFactory, TrainCallback
@@ -13,7 +13,10 @@ from astrai.trainer.optional_extras import (
     checkpoint_extras,
     snapshot_component_extras,
 )
-from astrai.trainer.train_context import TrainContext
+
+if TYPE_CHECKING:
+    from astrai.trainer.train_context import TrainContext
+
 
 _TOKENIZER_FILES = (
     "tokenizer.json",

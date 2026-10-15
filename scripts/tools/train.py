@@ -6,11 +6,17 @@ from typing import Dict, List
 
 import click
 import torch
+import yaml
 from click.core import ParameterSource
 from torch import optim
 
-from astrai.config import AutoRegressiveLMConfig, TrainConfig
+from astrai.config import (
+    AutoRegressiveLMConfig,
+    ComponentSpec,
+    TrainConfig,
+)
 from astrai.config.cli import (
+    DEFAULT_YAML_SECTIONS,
     GroupedCommand,
     OptSpec,
     apply_specs,
@@ -21,11 +27,6 @@ from astrai.config.train_config import (
     DP_MODES,
     ROLLOUT_MODES,
     START_METHODS,
-)
-from astrai.dataset import (
-    DatasetFactory,
-    dpo_collate_fn,
-    grpo_collate_fn,
 )
 from astrai.model import AutoRegressiveLM, ValueModel
 from astrai.model.components.mlp import MLP
@@ -555,7 +556,35 @@ _SPECS = [
 def train_command(ctx, config_path, dry_run, metrics, **kwargs):
     """Start model training (pretrain / SFT / DPO / GRPO)."""
     kwargs["metrics"] = metrics
+    component_blocks = {}
     if config_path:
+        with open(config_path) as stream:
+            raw_config = yaml.safe_load(stream) or {}
+        if not isinstance(raw_config, dict):
+            raise click.UsageError("Training config must be a mapping")
+        for name in ("model", "optimizer", "scheduler", "dataset"):
+            block = raw_config.get(name)
+            if block is None:
+                continue
+            if (
+                name == "model"
+                and isinstance(block, dict)
+                and not ({"type", "params", "dtype"} & block.keys())
+            ):
+                continue  # Legacy flat model section.
+            if not isinstance(block, dict) or "type" not in block:
+                raise click.UsageError(f"{name} component requires a type")
+            allowed = (
+                {"type", "params", "dtype"} if name == "model" else {"type", "params"}
+            )
+            unknown = set(block) - allowed
+            if unknown:
+                raise click.UsageError(
+                    f"Unknown {name} component keys: {', '.join(sorted(unknown))}"
+                )
+            if not isinstance(block.get("params", {}), dict):
+                raise click.UsageError(f"{name} component params must be a mapping")
+            component_blocks[name] = block
         explicit_keys = {
             key
             for key in kwargs
@@ -565,11 +594,20 @@ def train_command(ctx, config_path, dry_run, metrics, **kwargs):
             config_path,
             kwargs,
             explicit_keys,
+            sections=tuple(
+                section
+                for section in DEFAULT_YAML_SECTIONS
+                if section not in component_blocks
+            ),
             allowed_keys=list(kwargs),
             strict_unknown=True,
         )
+    for name, block in component_blocks.items():
+        kwargs[f"{name}_spec"] = block
 
-    required = ["train_type", "data_root_path", "param_path"]
+    required = ["train_type", "param_path"]
+    if "dataset" not in component_blocks:
+        required.append("data_root_path")
     missing = [k for k in required if kwargs.get(k) is None]
     if missing:
         raise click.UsageError(
@@ -602,7 +640,27 @@ def _print_dry_run(kwargs: Dict) -> None:
     rows = [
         ("Train type", kwargs.get("train_type")),
         ("Model path", kwargs.get("param_path")),
-        ("Data path", kwargs.get("data_root_path")),
+        (
+            "Model type",
+            (kwargs.get("model_spec") or {}).get("type", "autoregressive_lm"),
+        ),
+        (
+            "Optimizer type",
+            (kwargs.get("optimizer_spec") or {}).get("type", kwargs.get("optimizer")),
+        ),
+        (
+            "Scheduler type",
+            (kwargs.get("scheduler_spec") or {}).get(
+                "type", kwargs.get("schedule_type")
+            ),
+        ),
+        (
+            "Data path",
+            (kwargs.get("dataset_spec") or {})
+            .get("params", {})
+            .get("path", kwargs.get("data_root_path")),
+        ),
+        ("Data type", (kwargs.get("dataset_spec") or {}).get("type", "packed")),
         ("DP mode", kwargs.get("dp_mode", "none")),
         ("DP replicas", str(dp_size)),
         ("CP size", str(cp_size)),
@@ -847,14 +905,32 @@ def train(
             broadcast_buffers=False,
         )
 
-    model_fn = partial(create_model, config)
-    dataset_fn = partial(
-        DatasetFactory.load,
-        train_type=train_type,
-        load_path=data_root_path,
-        window_size=window_size,
-        stride=stride,
-        tokenizer_path=param_path,
+    model_raw = kwargs.pop("model_spec", None)
+    optimizer_raw = kwargs.pop("optimizer_spec", None)
+    scheduler_raw = kwargs.pop("scheduler_spec", None)
+    model_dtype = "bfloat16"
+    if model_raw is not None:
+        model_raw = dict(model_raw)
+        model_dtype = model_raw.pop("dtype", model_dtype)
+    model_spec = (
+        ComponentSpec(**model_raw)
+        if model_raw
+        else ComponentSpec(type="autoregressive_lm")
+    )
+    dataset_raw = kwargs.pop("dataset_spec", None)
+    dataset_spec = (
+        ComponentSpec(**dataset_raw)
+        if dataset_raw is not None
+        else ComponentSpec(
+            type="packed",
+            params={
+                "path": data_root_path,
+                "train_type": train_type,
+                "window_size": window_size,
+                "stride": stride,
+                "tokenizer_path": param_path,
+            },
+        )
     )
 
     optimizer_name = kwargs.pop("optimizer", "muon_adamw")
@@ -875,11 +951,6 @@ def train(
         "mano_momentum": kwargs.pop("mano_momentum", 0.95),
         "mano_nesterov": kwargs.pop("mano_nesterov", True),
     }
-    optimizer_fn = partial(
-        create_optimizer,
-        optimizer_name=optimizer_name,
-        **optimizer_kwargs,
-    )
     if optimizer_name == "nora_nadamw":
         optimizer_hyperparameters = {
             key: optimizer_kwargs[key]
@@ -919,38 +990,52 @@ def train(
             )
         }
 
-    scheduler_fn = partial(
-        create_scheduler,
-        schedule_type=schedule_type,
-        n_epoch=n_epoch,
-        batch_per_device=batch_per_device,
-        dp_size=dp_size,
-        grad_accum_steps=grad_accum_steps,
-        warmup_ratio=warmup_ratio,
-        min_rate=min_rate,
-        cycle_length=cycle_length,
-        t_mult=t_mult,
-        stable_steps=stable_steps,
-        decay_steps=decay_steps,
-    )
+    if optimizer_raw is not None:
+        optimizer_spec = ComponentSpec(**optimizer_raw)
+        optimizer_name = optimizer_spec.type
+        optimizer_hyperparameters = dict(optimizer_spec.params)
+    else:
+        optimizer_params = dict(optimizer_hyperparameters)
+        for key in (
+            "nadamw_betas",
+            "nadamw_eps",
+            "nora_eps",
+            "adamw_betas",
+            "adamw_eps",
+        ):
+            optimizer_params.pop(key, None)
+        if optimizer_name == "mano_adamw":
+            optimizer_params["momentum"] = optimizer_params.pop("mano_momentum")
+            optimizer_params["nesterov"] = optimizer_params.pop("mano_nesterov")
+        optimizer_spec = ComponentSpec(type=optimizer_name, params=optimizer_params)
+
+    if scheduler_raw is not None:
+        scheduler_spec = ComponentSpec(**scheduler_raw)
+    else:
+        schedule_params = {"warmup_ratio": warmup_ratio}
+        if min_rate is not None:
+            schedule_params["min_rate"] = min_rate
+        if schedule_type == "sgdr":
+            schedule_params["t_mult"] = t_mult
+            if cycle_length:
+                schedule_params["cycle_length"] = cycle_length
+        elif schedule_type == "wsd":
+            if stable_steps:
+                schedule_params["stable_steps"] = stable_steps
+            if decay_steps:
+                schedule_params["decay_steps"] = decay_steps
+        scheduler_spec = ComponentSpec(type=schedule_type, params=schedule_params)
 
     grad_ckpt_modules = [MLP] if gradient_checkpointing else []
     compile_mode = kwargs.pop("compile_mode", None)
 
-    collate_fn = None
-    if train_type == "dpo":
-        collate_fn = dpo_collate_fn
-    elif train_type == "grpo":
-        collate_fn = grpo_collate_fn
-    elif train_type in ("online_grpo", "online_dpo", "online_ppo"):
-        collate_fn = None
-
     train_config = TrainConfig(
         strategy=train_type,
-        model_fn=model_fn,
-        dataset_fn=dataset_fn,
-        optimizer_fn=optimizer_fn,
-        scheduler_fn=scheduler_fn,
+        dataset=dataset_spec,
+        model=model_spec,
+        model_dtype=model_dtype,
+        optimizer=optimizer_spec,
+        scheduler=scheduler_spec,
         optimizer_name=optimizer_name,
         optimizer_hyperparameters=optimizer_hyperparameters,
         ckpt_dir=ckpt_dir,
@@ -982,7 +1067,6 @@ def train(
         executor_kwargs=executor_kwargs,
         strategy_kwargs=strategy_kwargs,
         neftune_alpha=neftune_alpha,
-        collate_fn=collate_fn,
         rollout_mode=kwargs.pop("rollout_mode", "sync"),
         rollout_devices=list(kwargs.pop("rollout_devices", [])),
         rollout_worker_timeout_s=kwargs.pop("rollout_worker_timeout_s", 600.0),
