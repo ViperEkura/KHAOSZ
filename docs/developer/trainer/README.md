@@ -58,9 +58,9 @@ where inference executes and how policy weights arrive.
 
 The package exports Trainer, factories and protocols from astrai.trainer.
 Built-in callbacks, strategies and rollout contracts have their own package
-exports. TrainConfig imports StrategyFactory inside its validators because
-the trainer package also imports TrainConfig. Type-only callback imports use
-TYPE_CHECKING.
+exports. StrategyFactory publishes capability declarations to TrainConfig
+when strategies register, so configuration validation has no trainer imports.
+Type-only callback imports use TYPE_CHECKING.
 
 For configuration and usage, see the [training guide](../../guides/training.md)
 and [distributed training guide](../../guides/distributed.md).

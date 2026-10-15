@@ -34,6 +34,23 @@ class ComponentSpec:
             raise ValueError("Component params must contain only JSON values") from exc
 
 
+@plain_dataclass(frozen=True)
+class StrategyCapabilities:
+    """Configuration requirements declared by a training strategy."""
+
+    online: bool = False
+    reference_model: bool = False
+    old_model: bool = False
+    initialize_old_model: bool = False
+    critic: bool = False
+    async_round: bool = False
+    min_group_size: int = 1
+
+
+# StrategyFactory populates this when its implementations are imported.
+_STRATEGY_CAPABILITIES: Dict[str, StrategyCapabilities] = {}
+
+
 # Data-parallel gradient-sync strategies.
 DP_MODES = frozenset({"none", "ddp", "fsdp"})
 BACKENDS = frozenset({"nccl", "gloo"})
@@ -241,12 +258,9 @@ class TrainConfig(BaseConfig):
 
     @field_validator("strategy")
     def _validate_strategy(cls, v: str) -> str:
-        # Runtime import: the trainer package also imports TrainConfig.
-        from astrai.trainer.strategy import StrategyFactory
-
-        if not StrategyFactory.is_registered(v):
+        if v not in _STRATEGY_CAPABILITIES:
             raise ValueError(
-                f"strategy must be one of {StrategyFactory.list_registered()}, got {v!r}"
+                f"strategy must be one of {sorted(_STRATEGY_CAPABILITIES)}, got {v!r}"
             )
         return v
 
@@ -472,10 +486,7 @@ class TrainConfig(BaseConfig):
         if self.model_dtype not in (None, "float32", "float16", "bfloat16"):
             raise ValueError("model_dtype must be float32, float16, or bfloat16")
 
-        # Runtime import: importing trainer during config initialization cycles.
-        from astrai.trainer.strategy import StrategyFactory
-
-        capabilities = StrategyFactory.capabilities(self.strategy)
+        capabilities = _STRATEGY_CAPABILITIES[self.strategy]
         if self.strategy_kwargs.get("group_size", 4) < capabilities.min_group_size:
             raise ValueError(
                 f"{self.strategy} group_size must be >= {capabilities.min_group_size}"

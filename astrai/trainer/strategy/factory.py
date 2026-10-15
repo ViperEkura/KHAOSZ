@@ -1,26 +1,15 @@
 """Registry and capability declarations for training strategies."""
 
 import inspect
-from dataclasses import dataclass
-from typing import Callable, Dict, Optional, Type
+from typing import Callable, Optional, Type
 
+from astrai.config.train_config import _STRATEGY_CAPABILITIES, StrategyCapabilities
 from astrai.factory import BaseFactory
 from astrai.trainer.strategy.base import BaseStrategy
 
 
-@dataclass(frozen=True)
-class StrategyCapabilities:
-    online: bool = False
-    reference_model: bool = False
-    old_model: bool = False
-    initialize_old_model: bool = False
-    critic: bool = False
-    async_round: bool = False
-    min_group_size: int = 1
-
-
 class StrategyFactory(BaseFactory[BaseStrategy]):
-    _capabilities: Dict[str, StrategyCapabilities] = {}
+    _capabilities = _STRATEGY_CAPABILITIES
 
     @classmethod
     def register(

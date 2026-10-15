@@ -29,7 +29,8 @@ for the memory-sensitive path.
 ## Registry and capabilities
 
 StrategyFactory stores a StrategyCapabilities declaration for each registered
-name. TrainConfig validates the registry name and uses its capabilities for
+name in the configuration module. TrainConfig validates the registry name and
+uses its capabilities for
 online, critic and async-round requirements. TrainContextBuilder uses the same
 declaration to create reference, old-policy and critic models; rollout setup
 uses the online flag. The existing CLI strategy choices are derived from the
