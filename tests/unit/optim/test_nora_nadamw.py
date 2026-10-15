@@ -217,9 +217,9 @@ def test_train_config_serializes_optimizer_metadata():
     config = TrainConfig(
         model_fn=lambda: torch.nn.Linear(2, 2),
         strategy="seq",
-        dataset=TensorDataset(torch.zeros(1, 2)),
+        dataset_fn=lambda: TensorDataset(torch.zeros(1, 2)),
         optimizer_fn=lambda model: torch.optim.AdamW(model.parameters()),
-        scheduler_fn=lambda optimizer: torch.optim.lr_scheduler.LambdaLR(
+        scheduler_fn=lambda optimizer, _dataset_len: torch.optim.lr_scheduler.LambdaLR(
             optimizer, lambda _: 1.0
         ),
         optimizer_name="nora_nadamw",

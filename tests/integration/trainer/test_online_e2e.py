@@ -127,7 +127,7 @@ def test_online_rollout_end_to_end(
     config_kwargs = dict(
         strategy=strategy,
         model_fn=partial(make_online_model, model_config),
-        dataset=InstructionDataset(),
+        dataset_fn=lambda: InstructionDataset(),
         optimizer_fn=make_online_optimizer,
         scheduler_fn=make_online_lr_scheduler,
         ckpt_dir=os.path.join(test_dir, "ckpt"),
@@ -175,9 +175,9 @@ def _minimal_online_config(**overrides):
     defaults = dict(
         strategy="online_grpo",
         model_fn=lambda: torch.nn.Linear(2, 2),
-        dataset=InstructionDataset(),
+        dataset_fn=lambda: InstructionDataset(),
         optimizer_fn=lambda m: torch.optim.SGD(m.parameters(), lr=0.0),
-        scheduler_fn=lambda o: SchedulerFactory.create(
+        scheduler_fn=lambda o, _dataset_len: SchedulerFactory.create(
             "cosine", o, warmup_steps=1, lr_decay_steps=4, min_rate=0.05
         ),
         reward_model_fn=LengthRewardModel,

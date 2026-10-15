@@ -8,7 +8,7 @@ from astrai.config import TrainConfig
 from astrai.factory import BaseFactory
 from astrai.trainer.session import TrainSession
 from astrai.trainer.strategy import BaseStrategy, StrategyFactory
-from astrai.trainer.train_context import TrainContextBuilder
+from astrai.trainer.train_context import TrainContext, TrainContextBuilder
 
 
 class NoCopyDataset(Dataset):
@@ -26,9 +26,9 @@ def _config(**overrides):
     values = dict(
         model_fn=lambda: torch.nn.Linear(1, 1),
         strategy="seq",
-        dataset=NoCopyDataset(),
+        dataset_fn=lambda: NoCopyDataset(),
         optimizer_fn=lambda model: torch.optim.SGD(model.parameters(), lr=0.1),
-        scheduler_fn=lambda optimizer: None,
+        scheduler_fn=lambda optimizer, _dataset_len: None,
         device_type="cpu",
     )
     values.update(overrides)
@@ -40,10 +40,45 @@ def test_checkpoint_snapshot_does_not_copy_runtime_objects():
     assert snapshot["strategy"] == "seq"
     assert snapshot["batch_per_device"] == 4
     assert snapshot["collate_fn"] is None
-    assert snapshot["val_dataset"] is None
-    assert "dataset" not in snapshot
+    assert snapshot["val_dataset_fn"] is None
+    assert "dataset_fn" not in snapshot
     assert "model_fn" not in snapshot
     assert "optimizer_fn" not in snapshot
+
+
+def test_builder_creates_and_splits_context_dataset():
+    created = []
+
+    def dataset_fn():
+        dataset = torch.utils.data.TensorDataset(torch.arange(10))
+        created.append(dataset)
+        return dataset
+
+    config = _config(dataset_fn=dataset_fn, val_split=0.2)
+    context = TrainContext(config=config)
+    TrainContextBuilder(config)._create_datasets(context)
+
+    assert created == [context.dataset.dataset]
+    assert context.dataset_len == 8
+    assert len(context.val_dataset) == 2
+    assert context.val_dataset.dataset is created[0]
+
+
+def test_scheduler_uses_dataset_owned_by_context(monkeypatch):
+    import astrai.trainer.train_context as context_module
+
+    seen = []
+    config = _config(scheduler_fn=lambda optimizer, length: seen.append(length))
+    context = TrainContext(dataset=NoCopyDataset(), config=config)
+    builder = TrainContextBuilder(config)
+    monkeypatch.setattr(context_module, "get_current_device", lambda: "cpu")
+
+    class Executor:
+        def prepare(self, model_fn, optimizer_fn, scheduler_fn, **kwargs):
+            return None, None, scheduler_fn(object())
+
+    builder._prepare_model(context, Executor(), SimpleNamespace(state_dict=None))
+    assert seen == [context.dataset_len]
 
 
 def test_registered_custom_strategy_and_unknown_options():
@@ -122,7 +157,7 @@ def test_builder_closes_rollout_after_configuration_failure(monkeypatch):
 
     closed = []
     rollout = SimpleNamespace(close=lambda: closed.append(True))
-    context = SimpleNamespace(async_rollout=None)
+    context = SimpleNamespace(async_rollout=None, dataset=[], val_dataset=None)
     builder = TrainContextBuilder(_config())
     monkeypatch.setattr(context_module, "get_world_size", lambda: 1)
     monkeypatch.setattr(
@@ -136,7 +171,7 @@ def test_builder_closes_rollout_after_configuration_failure(monkeypatch):
     monkeypatch.setattr(builder, "_create_context", lambda *_: context)
     monkeypatch.setattr(builder, "_prepare_model", lambda *_: None)
     monkeypatch.setattr(builder, "_restore_optimizer_state", lambda *_: None)
-    monkeypatch.setattr(builder, "_get_datasets", lambda: ([], None))
+    monkeypatch.setattr(builder, "_create_datasets", lambda *_: None)
     monkeypatch.setattr(builder, "_create_dataloaders", lambda *_: None)
     monkeypatch.setattr(builder, "_create_strategy", lambda *_: {})
 

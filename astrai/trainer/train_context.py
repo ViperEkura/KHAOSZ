@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Self, Tuple
 
 import torch
 from torch import nn
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, Dataset, random_split
 
 from astrai.config.model_config import ConfigFactory
 from astrai.config.train_config import TrainConfig, _TrainRuntimeDependencies
@@ -51,6 +51,8 @@ logger = logging.getLogger(__name__)
 class TrainContext:
     model: nn.Module = field(default=None)
     strategy: BaseStrategy = field(default=None)
+    dataset: Optional[Dataset] = field(default=None)
+    val_dataset: Optional[Dataset] = field(default=None)
     dataloader: DataLoader = field(default=None)
     optimizer: OptimizerProtocol = field(default=None)
     scheduler: SchedulerProtocol = field(default=None)
@@ -98,6 +100,12 @@ class TrainContext:
         from world size must use this instead.
         """
         return self.topology.dp_size
+
+    @property
+    def dataset_len(self) -> int:
+        if self.dataset is None:
+            raise RuntimeError("Training dataset has not been initialized")
+        return len(self.dataset)
 
     @property
     def stop_requested(self) -> bool:
@@ -209,12 +217,10 @@ class TrainContextBuilder:
         self._validate_rollout_configuration(executor)
         context = self._create_context(preloaded_state, executor)
         try:
+            self._create_datasets(context)
             self._prepare_model(context, executor, preloaded_state)
             self._restore_optimizer_state(context)
-
-            # Resolve datasets.
-            train_dataset, val_dataset = self._get_datasets()
-            self._create_dataloaders(context, train_dataset, val_dataset)
+            self._create_dataloaders(context, context.dataset, context.val_dataset)
 
             # Strategies depend on the prepared model; online rollout depends on both.
             strategy_kwargs = self._create_strategy(context, executor)
@@ -354,25 +360,34 @@ class TrainContextBuilder:
                 model = torch.compile(model, mode=cfg.compile_mode)
             return model
 
+        def scheduler_for_context(optimizer):
+            return self.runtime.scheduler_fn(optimizer, context.dataset_len)
+
         context.model, context.optimizer, context.scheduler = executor.prepare(
             self.runtime.model_fn,
             self.runtime.optimizer_fn,
-            self.runtime.scheduler_fn,
+            scheduler_for_context,
             before_wrap=before_wrap,
             after_wrap=after_wrap,
         )
 
-    def _get_datasets(self):
+    def _create_datasets(self, context: TrainContext) -> None:
         cfg = self.config
-        if self.runtime.val_dataset is not None or cfg.val_split is None:
-            return self.runtime.dataset, self.runtime.val_dataset
-        n_val = max(1, int(len(self.runtime.dataset) * cfg.val_split))
-        generator = torch.Generator().manual_seed(cfg.random_seed)
-        return random_split(
-            self.runtime.dataset,
-            [len(self.runtime.dataset) - n_val, n_val],
-            generator=generator,
+        context.dataset = self.runtime.dataset_fn()
+        context.val_dataset = (
+            self.runtime.val_dataset_fn()
+            if self.runtime.val_dataset_fn is not None
+            else None
         )
+        if context.val_dataset is None and cfg.val_split is not None:
+            total_len = context.dataset_len
+            n_val = max(1, int(total_len * cfg.val_split))
+            generator = torch.Generator().manual_seed(cfg.random_seed)
+            context.dataset, context.val_dataset = random_split(
+                context.dataset,
+                [total_len - n_val, n_val],
+                generator=generator,
+            )
 
     def _create_dataloaders(
         self, context: TrainContext, train_dataset, val_dataset

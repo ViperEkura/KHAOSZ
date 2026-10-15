@@ -100,14 +100,18 @@ _ONLINE_STRATEGIES = [
 _DDP_TEST_WORLD_SIZE = int(os.environ.get("ASTRAI_DDP_TEST_WORLD_SIZE", "2"))
 
 
+def _instruction_subset(repeats, count):
+    return Subset(InstructionDataset(repeats=repeats), range(count))
+
+
 def _minimal_online_config(**overrides):
     """A TrainConfig for online GRPO that only needs field overrides."""
     defaults = dict(
         strategy="online_grpo",
         model_fn=lambda: torch.nn.Linear(2, 2),
-        dataset=InstructionDataset(),
+        dataset_fn=lambda: InstructionDataset(),
         optimizer_fn=lambda m: torch.optim.SGD(m.parameters(), lr=0.0),
-        scheduler_fn=lambda o: SchedulerFactory.create(
+        scheduler_fn=lambda o, _dataset_len: SchedulerFactory.create(
             "cosine", o, warmup_steps=1, lr_decay_steps=4, min_rate=0.05
         ),
         reward_model_fn=LengthRewardModel,
@@ -134,7 +138,7 @@ def test_ddp_online_grpo_end_to_end(base_test_env):
     train_config = TrainConfig(
         strategy="online_grpo",
         model_fn=partial(make_online_model, model_config),
-        dataset=dataset,
+        dataset_fn=partial(InstructionDataset, repeats=10),
         optimizer_fn=make_online_optimizer,
         scheduler_fn=make_online_lr_scheduler,
         ckpt_dir=os.path.join(test_dir, "ckpt"),
@@ -172,7 +176,7 @@ def test_async_round_ddp_two_learners_two_workers(base_test_env):
     config = TrainConfig(
         strategy="online_grpo",
         model_fn=partial(make_online_model, base_test_env["transformer_config"]),
-        dataset=InstructionDataset(repeats=1),
+        dataset_fn=partial(InstructionDataset, repeats=1),
         optimizer_fn=make_online_optimizer,
         scheduler_fn=make_online_lr_scheduler,
         ckpt_dir=os.path.join(test_dir, "ckpt"),
@@ -225,7 +229,7 @@ def test_async_round_online_grpo_five_gpus(base_test_env, monkeypatch):
     config = TrainConfig(
         strategy="online_grpo",
         model_fn=partial(make_online_model, model_config),
-        dataset=Subset(InstructionDataset(repeats=3), range(10)),
+        dataset_fn=partial(_instruction_subset, repeats=3, count=10),
         optimizer_fn=make_online_optimizer,
         scheduler_fn=make_online_lr_scheduler,
         ckpt_dir=os.path.join(test_dir, "ckpt"),
@@ -283,7 +287,7 @@ def test_async_round_version_commit_failure_checkpoint_resumes_once(
     config = TrainConfig(
         strategy="online_grpo",
         model_fn=partial(make_online_model, model_config),
-        dataset=Subset(InstructionDataset(repeats=2), range(8)),
+        dataset_fn=partial(_instruction_subset, repeats=2, count=8),
         optimizer_fn=make_online_optimizer,
         scheduler_fn=make_online_lr_scheduler,
         ckpt_dir=os.path.join(test_dir, "ckpt"),

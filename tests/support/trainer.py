@@ -19,7 +19,7 @@ def make_online_optimizer(m):
     return torch.optim.AdamW(m.parameters(), lr=1e-4)
 
 
-def make_online_lr_scheduler(optim):
+def make_online_lr_scheduler(optim, _dataset_len):
     return SchedulerFactory.create(
         "cosine", optim, warmup_steps=1, lr_decay_steps=4, min_rate=0.05
     )
@@ -44,7 +44,7 @@ def create_train_config(
     def optimizer_fn(m):
         return torch.optim.AdamW(m.parameters(), lr=0.001)
 
-    def scheduler_fn(optim):
+    def scheduler_fn(optim, _dataset_len):
         return SchedulerFactory.create(
             "cosine", optim, warmup_steps=10, lr_decay_steps=10, min_rate=0.05
         )
@@ -52,7 +52,7 @@ def create_train_config(
     return TrainConfig(
         strategy=strategy,
         model_fn=model_fn,
-        dataset=dataset,
+        dataset_fn=lambda: dataset,
         optimizer_fn=optimizer_fn,
         scheduler_fn=scheduler_fn,
         ckpt_dir=test_dir,

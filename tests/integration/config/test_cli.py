@@ -1,4 +1,6 @@
 import dataclasses
+import multiprocessing as mp
+import pickle
 import typing as t
 from typing import List, Optional
 
@@ -16,8 +18,14 @@ from astrai.config.cli import (
     option_from_spec,
 )
 from astrai.model.components.mlp import MLP
+from astrai.serialization import save_bin
 from scripts.tools import train as train_module
 from tests.support.models import make_rollout_config
+
+
+def _read_dataset_from_spawned_config(config, queue):
+    dataset = config.dataset_fn()
+    queue.put((len(dataset), dataset[0]["input_ids"].tolist()))
 
 
 def test_merge_yaml_overrides_defaults_but_not_explicit_cli(tmp_path):
@@ -291,6 +299,74 @@ def test_cli_rejects_unknown_yaml_parameters(tmp_path):
     )
     assert result.exit_code == 2
     assert "Unknown config keys: learner_device" in result.output
+
+
+def test_seq_cli_defers_dataset_construction(tmp_path, monkeypatch):
+    make_rollout_config(max_position_embeddings=8).to_file(tmp_path / "config.json")
+    data_dir = tmp_path / "packed"
+    save_bin(str(data_dir), {"sequence": [torch.arange(33)]})
+    yaml = tmp_path / "train.yaml"
+    yaml.write_text(
+        f"training:\n  train_type: seq\n  param_path: {tmp_path}\n"
+        f"  data_root_path: {data_dir}\n  window_size: 8\n  stride: 8\n"
+        "  dp_mode: none\n  batch_per_device: 1\n  grad_accum_steps: 1\n"
+    )
+    captured = []
+
+    class Trainer:
+        def __init__(self, config):
+            captured.append(config)
+
+        def train(self, **kwargs):
+            pass
+
+    def reject_parent_load(**kwargs):
+        raise AssertionError("DatasetFactory.load ran in the parent")
+
+    monkeypatch.setattr(train_module, "Trainer", Trainer)
+    monkeypatch.setattr(train_module.DatasetFactory, "load", reject_parent_load)
+    result = CliRunner().invoke(train_module.train_command, ["--config", str(yaml)])
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert len(captured) == 1
+    assert callable(captured[0].dataset_fn)
+    assert not hasattr(captured[0], "dataset")
+    assert callable(captured[0].scheduler_fn)
+
+
+def test_seq_config_factory_survives_spawn(tmp_path, monkeypatch):
+    make_rollout_config(max_position_embeddings=8).to_file(tmp_path / "config.json")
+    data_dir = tmp_path / "packed"
+    save_bin(str(data_dir), {"sequence": [torch.arange(33)]})
+    yaml = tmp_path / "train.yaml"
+    yaml.write_text(
+        f"training:\n  train_type: seq\n  param_path: {tmp_path}\n"
+        f"  data_root_path: {data_dir}\n  window_size: 8\n  stride: 8\n"
+        "  dp_mode: none\n  batch_per_device: 1\n  grad_accum_steps: 1\n"
+    )
+    captured = []
+
+    class Trainer:
+        def __init__(self, config):
+            captured.append(config)
+
+        def train(self, **kwargs):
+            pass
+
+    monkeypatch.setattr(train_module, "Trainer", Trainer)
+    result = CliRunner().invoke(train_module.train_command, ["--config", str(yaml)])
+    assert result.exit_code == 0, (result.output, result.exception)
+    config = captured[0]
+    assert len(pickle.dumps(config)) < 100_000
+
+    context = mp.get_context("spawn")
+    queue = context.Queue()
+    process = context.Process(
+        target=_read_dataset_from_spawned_config, args=(config, queue)
+    )
+    process.start()
+    assert queue.get(timeout=30) == (4, list(range(8)))
+    process.join(timeout=30)
+    assert process.exitcode == 0
 
 
 def test_sft_cli_routes_linear_ce_options_from_yaml(tmp_path, monkeypatch):

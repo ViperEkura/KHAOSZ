@@ -48,9 +48,9 @@ def _ppo_config(device, **overrides):
     defaults = dict(
         strategy="online_ppo",
         model_fn=lambda: AutoRegressiveLM(make_rollout_config()),
-        dataset=_StubDataset(),
+        dataset_fn=lambda: _StubDataset(),
         optimizer_fn=lambda m: torch.optim.SGD(m.parameters(), lr=0.0),
-        scheduler_fn=lambda o: SchedulerFactory.create(
+        scheduler_fn=lambda o, _dataset_len: SchedulerFactory.create(
             "cosine", o, warmup_steps=1, lr_decay_steps=4, min_rate=0.05
         ),
         reward_model_fn=_StubRewardModel,

@@ -32,14 +32,14 @@ ROLLOUT_MODES = frozenset({"sync", "async_round"})
 @plain_dataclass(frozen=True)
 class _TrainRuntimeDependencies:
     model_fn: Callable
-    dataset: Dataset
+    dataset_fn: Callable
+    val_dataset_fn: Optional[Callable]
     optimizer_fn: Callable
     scheduler_fn: Callable
-    collate_fn: Optional[Callable]
-    val_dataset: Optional[Dataset]
     reward_model_fn: Optional[Callable]
     critic_model_fn: Optional[Callable]
     critic_optimizer_fn: Optional[Callable]
+    collate_fn: Optional[Callable]
 
     @classmethod
     def capture(cls, config: "TrainConfig") -> "_TrainRuntimeDependencies":
@@ -82,11 +82,12 @@ class TrainConfig(BaseConfig):
     Args:
         model_fn (Callable[[], nn.Module]): Model factory for training.
         strategy (str): Training strategy (seq, sft, dpo, grpo, online_*).
-        dataset (Dataset): Dataset for training.
+        dataset_fn (Callable[[], Dataset]): Factory called inside each training rank.
+        val_dataset_fn (Optional[Callable[[], Dataset]]): Validation dataset factory. Defaults to None.
         optimizer_fn (Callable[[nn.Module], Optimizer]): Optimizer factory for training.
         optimizer_name (Optional[str]): Serializable built-in optimizer identifier. Defaults to None.
         optimizer_hyperparameters (Dict[str, Any]): Serializable optimizer settings. Defaults to {}.
-        scheduler_fn (Callable[[Optimizer], LRScheduler]): Scheduler factory for training.
+        scheduler_fn (Callable[[Optimizer, int], LRScheduler]): Scheduler factory receiving the optimizer and training dataset length.
         n_epoch (int): Number of epochs for training. Defaults to 1.
         batch_per_device (int): Batch size per device. Defaults to 4.
         grad_accum_steps (int): Number of iterations between optimizer steps. Defaults to 1.
@@ -115,7 +116,6 @@ class TrainConfig(BaseConfig):
         master_port (str): Master port for distributed training. Defaults to "29500".
         start_method (str): Multiprocessing start method: spawn/fork/forkserver. Defaults to "spawn".
         device_type (str): Device type for distributed training. Defaults to "cuda".
-        val_dataset (Optional[Dataset]): Dataset for validation. Defaults to None.
         val_split (Optional[float]): Ratio to split from training dataset for validation, e.g. 0.05. Defaults to None.
         val_step (int): Number of optimizer steps between validation runs. Defaults to 1000.
         neftune_alpha (float): NEFTune noise alpha, 0=disabled, typical: 5.0. Defaults to 0.0.
@@ -152,11 +152,17 @@ class TrainConfig(BaseConfig):
         strategy_kwargs (Dict[str, Any]): Extra strategy arguments. Defaults to {}.
     """
 
-    model_fn: Callable[[], nn.Module]
     strategy: str
-    dataset: Dataset
+    model_fn: Callable[[], nn.Module]
+    dataset_fn: Callable[[], Dataset]
     optimizer_fn: Callable[[nn.Module], Optimizer]
-    scheduler_fn: Callable[[Optimizer], LRScheduler]
+    scheduler_fn: Callable[[Optimizer, int], LRScheduler]
+
+    val_dataset_fn: Optional[Callable[[], Dataset]] = None
+    reward_model_fn: Optional[Callable] = None
+    critic_model_fn: Optional[Callable] = None
+    critic_optimizer_fn: Optional[Callable] = None
+    collate_fn: Optional[Callable[[List[Any]], Any]] = None
     optimizer_name: Optional[str] = None
     optimizer_hyperparameters: Dict[str, Any] = field(default_factory=dict)
     n_epoch: int = 1
@@ -181,7 +187,6 @@ class TrainConfig(BaseConfig):
     prefetch_factor: Optional[int] = None
     persistent_workers: bool = False
     pin_memory: bool = False
-    collate_fn: Optional[Callable[[List[Any]], Any]] = None
 
     dp_size: int = 1
     cp_size: int = 1
@@ -193,7 +198,6 @@ class TrainConfig(BaseConfig):
     start_method: str = "spawn"
 
     device_type: str = "cuda"
-    val_dataset: Optional[Dataset] = None
     val_split: Optional[float] = None
     val_step: int = 1000
     neftune_alpha: float = 0.0
@@ -224,10 +228,6 @@ class TrainConfig(BaseConfig):
     gradient_chunked_logprobs: bool = False
     save_reference_model: bool = True
     allow_reference_reanchor: bool = False
-    reward_model_fn: Optional[Callable] = None
-    critic_model_fn: Optional[Callable] = None
-    critic_optimizer_fn: Optional[Callable] = None
-
     executor_kwargs: Dict[str, Any] = field(default_factory=dict)
     strategy_kwargs: Dict[str, Any] = field(default_factory=dict)
 
@@ -524,7 +524,7 @@ class TrainConfig(BaseConfig):
                 raise ValueError("async_round requires rollout_max_policy_lag=1")
             if self.rollout_max_policy_lag is None:
                 self.rollout_max_policy_lag = 1
-            if self.val_dataset is not None or self.val_split is not None:
+            if self.val_dataset_fn is not None or self.val_split is not None:
                 raise ValueError("async_round validation is not supported yet")
         if capabilities.online:
             if self.reward_model_fn is None:

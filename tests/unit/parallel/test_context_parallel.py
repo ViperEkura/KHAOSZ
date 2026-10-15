@@ -77,9 +77,9 @@ def _minimal_train_config(**overrides):
     defaults = dict(
         strategy="seq",
         model_fn=lambda: torch.nn.Linear(2, 2),
-        dataset=RandomTokenDataset(length=2),
+        dataset_fn=lambda: RandomTokenDataset(length=2),
         optimizer_fn=lambda m: torch.optim.SGD(m.parameters(), lr=0.0),
-        scheduler_fn=lambda o: o,
+        scheduler_fn=lambda o, _dataset_len: o,
     )
     defaults.update(overrides)
     return TrainConfig(**defaults)

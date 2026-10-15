@@ -52,15 +52,13 @@ class _ReadyCallback:
 
 
 def _inner_run(batch_per_device, ckpt_interval, ckpt_dir, ready_file):
-    dataset = PicklableDataset()
-
     def model_fn():
         return _build_model()
 
     def optimizer_fn(m):
         return optim.AdamW(m.parameters(), lr=0.001)
 
-    def scheduler_fn(optim):
+    def scheduler_fn(optim, _dataset_len):
         return SchedulerFactory.create(
             "cosine", optim, warmup_steps=10, lr_decay_steps=10, min_rate=0.05
         )
@@ -68,7 +66,7 @@ def _inner_run(batch_per_device, ckpt_interval, ckpt_dir, ready_file):
     train_config = TrainConfig(
         strategy="seq",
         model_fn=model_fn,
-        dataset=dataset,
+        dataset_fn=PicklableDataset,
         optimizer_fn=optimizer_fn,
         scheduler_fn=scheduler_fn,
         ckpt_dir=ckpt_dir,

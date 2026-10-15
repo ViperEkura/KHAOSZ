@@ -22,7 +22,11 @@ from astrai.config.train_config import (
     ROLLOUT_MODES,
     START_METHODS,
 )
-from astrai.dataset import DatasetFactory, dpo_collate_fn, grpo_collate_fn
+from astrai.dataset import (
+    DatasetFactory,
+    dpo_collate_fn,
+    grpo_collate_fn,
+)
 from astrai.model import AutoRegressiveLM, ValueModel
 from astrai.model.components.mlp import MLP
 from astrai.optimization.optimizer import OptimizerFactory
@@ -653,10 +657,42 @@ def create_optimizer(
 
 
 def create_scheduler(
-    optimizer: optim.Optimizer, **kwargs
+    optimizer: optim.Optimizer,
+    dataset_len: int,
+    *,
+    schedule_type: str,
+    n_epoch: int,
+    batch_per_device: int,
+    dp_size: int,
+    grad_accum_steps: int,
+    warmup_ratio: float,
+    min_rate: float,
+    cycle_length: int,
+    t_mult: int,
+    stable_steps: int,
+    decay_steps: int,
 ) -> optim.lr_scheduler.LRScheduler:
-    schedule_type = kwargs.pop("schedule_type")
-    return SchedulerFactory.create(schedule_type, optimizer, **kwargs)
+    """Build the schedule after the training context owns the dataset."""
+    total_steps = compute_total_steps(
+        dataset_len, n_epoch, batch_per_device, dp_size, grad_accum_steps
+    )
+    warmup_steps = min(int(warmup_ratio * total_steps), total_steps)
+    scheduler_kwargs = {"warmup_steps": warmup_steps}
+    if schedule_type == "cosine":
+        scheduler_kwargs["lr_decay_steps"] = total_steps - warmup_steps
+    elif schedule_type == "sgdr":
+        scheduler_kwargs["cycle_length"] = cycle_length or (total_steps - warmup_steps)
+        scheduler_kwargs["t_mult"] = t_mult
+    elif schedule_type == "wsd":
+        remaining = total_steps - warmup_steps
+        stable_steps_ = stable_steps or max(1, int(remaining * 0.8))
+        scheduler_kwargs["stable_steps"] = stable_steps_
+        scheduler_kwargs["decay_steps"] = max(
+            1, decay_steps or (remaining - stable_steps_)
+        )
+    if min_rate is not None:
+        scheduler_kwargs["min_rate"] = min_rate
+    return SchedulerFactory.create(schedule_type, optimizer, **scheduler_kwargs)
 
 
 def compute_total_steps(
@@ -812,7 +848,8 @@ def train(
         )
 
     model_fn = partial(create_model, config)
-    dataset = DatasetFactory.load(
+    dataset_fn = partial(
+        DatasetFactory.load,
         train_type=train_type,
         load_path=data_root_path,
         window_size=window_size,
@@ -882,36 +919,19 @@ def train(
             )
         }
 
-    # The scheduler counts optimizer steps over data-parallel replicas; cp
-    # peers split each batch's sequence rather than consuming extra samples.
-    total_steps = compute_total_steps(
-        len(dataset), n_epoch, batch_per_device, dp_size, grad_accum_steps
-    )
-    warmup_steps = int(warmup_ratio * total_steps)
-    warmup_steps = min(warmup_steps, total_steps)
-
-    scheduler_kwargs = {"warmup_steps": warmup_steps}
-
-    if schedule_type == "cosine":
-        scheduler_kwargs["lr_decay_steps"] = total_steps - warmup_steps
-    elif schedule_type == "sgdr":
-        scheduler_kwargs["cycle_length"] = cycle_length or (total_steps - warmup_steps)
-        scheduler_kwargs["t_mult"] = t_mult
-    elif schedule_type == "wsd":
-        remaining = total_steps - warmup_steps
-        stable_steps_ = stable_steps or max(1, int(remaining * 0.8))
-        scheduler_kwargs["stable_steps"] = stable_steps_
-        scheduler_kwargs["decay_steps"] = max(
-            1, decay_steps or (remaining - stable_steps_)
-        )
-
-    if min_rate is not None:
-        scheduler_kwargs["min_rate"] = min_rate
-
     scheduler_fn = partial(
         create_scheduler,
         schedule_type=schedule_type,
-        **scheduler_kwargs,
+        n_epoch=n_epoch,
+        batch_per_device=batch_per_device,
+        dp_size=dp_size,
+        grad_accum_steps=grad_accum_steps,
+        warmup_ratio=warmup_ratio,
+        min_rate=min_rate,
+        cycle_length=cycle_length,
+        t_mult=t_mult,
+        stable_steps=stable_steps,
+        decay_steps=decay_steps,
     )
 
     grad_ckpt_modules = [MLP] if gradient_checkpointing else []
@@ -926,9 +946,9 @@ def train(
         collate_fn = None
 
     train_config = TrainConfig(
-        model_fn=model_fn,
         strategy=train_type,
-        dataset=dataset,
+        model_fn=model_fn,
+        dataset_fn=dataset_fn,
         optimizer_fn=optimizer_fn,
         scheduler_fn=scheduler_fn,
         optimizer_name=optimizer_name,

@@ -427,9 +427,9 @@ def _resume_builder(tmp_path, allow_reanchor=False):
     config = TrainConfig(
         strategy="sft",
         model_fn=lambda: nn.Linear(2, 2),
-        dataset=torch.utils.data.TensorDataset(torch.zeros(1, 2)),
+        dataset_fn=lambda: torch.utils.data.TensorDataset(torch.zeros(1, 2)),
         optimizer_fn=lambda m: torch.optim.SGD(m.parameters(), lr=0.0),
-        scheduler_fn=lambda o: None,
+        scheduler_fn=lambda o, _dataset_len: None,
         allow_reference_reanchor=allow_reanchor,
     )
     builder = TrainContextBuilder(config)
@@ -522,7 +522,7 @@ def _online_config(base_test_env, **overrides):
     defaults = dict(
         strategy="online_grpo",
         model_fn=partial(make_online_model, model_config),
-        dataset=InstructionDataset(),
+        dataset_fn=lambda: InstructionDataset(),
         optimizer_fn=make_online_optimizer,
         scheduler_fn=make_online_lr_scheduler,
         ckpt_dir=os.path.join(base_test_env["test_dir"], "ckpt"),

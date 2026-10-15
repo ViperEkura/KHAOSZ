@@ -54,7 +54,7 @@ def _optimizer_fn(model):
     return torch.optim.SGD(model.parameters(), lr=1e-3)
 
 
-def _scheduler_fn(optimizer):
+def _scheduler_fn(optimizer, _dataset_len):
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lambda _step: 1.0)
 
 
@@ -62,7 +62,7 @@ def _online_train_config(dp_mode):
     return TrainConfig(
         strategy="online_grpo",
         model_fn=_ConfigModel,
-        dataset=_ConfigDataset(),
+        dataset_fn=lambda: _ConfigDataset(),
         optimizer_fn=_optimizer_fn,
         scheduler_fn=_scheduler_fn,
         dp_size=2,
