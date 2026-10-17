@@ -11,10 +11,11 @@ import torch
 from astrai.parallel.executor import NoneExecutor
 from astrai.serialization import Checkpoint
 from astrai.trainer.callbacks import TrainCallback
+from astrai.trainer.callbacks.checkpoint import CheckpointCallback
 from astrai.trainer.callbacks.progress import ProgressBarCallback
 from astrai.trainer.components import build_scheduler_component
 from astrai.trainer.strategy.base import BaseStrategy
-from astrai.trainer.train_context import TrainContext
+from astrai.trainer.train_context import TrainContext, restore_training_progress
 from astrai.trainer.trainer import Trainer
 from tests.support.rollout import RandomTokenDataset
 from tests.support.trainer import create_train_config
@@ -126,7 +127,9 @@ def _toy_context(accum=1):
             optimizer.step()
 
     return TrainContext(
-        config=SimpleNamespace(batch_per_device=2, grad_accum_steps=accum),
+        config=SimpleNamespace(
+            batch_per_device=2, grad_accum_steps=accum, rollout_mode="sync"
+        ),
         executor=executor,
         model=model,
         optimizer=optimizer,
@@ -199,7 +202,7 @@ def test_accumulation_across_epochs_matches_scheduler_budget():
 
 
 @pytest.mark.parametrize("published", [False, True])
-def test_strategy_reports_commit_before_publication_failure(published):
+def test_publication_failure_keeps_checkpoint_unsafe(published):
     context = _toy_context()
     runner = SimpleNamespace(policy_version=0)
     context.strategy._rollout_runner = runner
@@ -213,7 +216,169 @@ def test_strategy_reports_commit_before_publication_failure(published):
     context.strategy.optimizer_step = fail
     with pytest.raises(RuntimeError, match="publication failed"):
         _trainer()._train_batch(context, {"input_ids": torch.ones(2, 1)})
-    assert context.optimizer_step == int(published)
-    assert context.consumed_samples == (2 if published else 0)
-    assert context.checkpoint_safe is published
-    assert context.scheduler.state_dict()["last_epoch"] == int(published)
+    assert context.optimizer_step == 0
+    assert context.consumed_samples == 0
+    assert not context.checkpoint_safe
+    assert context.scheduler.state_dict()["last_epoch"] == 0
+
+
+def test_multi_update_batch_checkpoints_only_after_all_updates(tmp_path):
+    context = _toy_context()
+    original = context.strategy.training_updates
+    observed = []
+
+    def updates(batch, microbatch):
+        for _ in range(2):
+            yield from original(batch, microbatch)
+            observed.append(
+                (
+                    context.optimizer_step,
+                    context.consumed_samples,
+                    context.checkpoint_safe,
+                )
+            )
+
+    context.strategy.training_updates = updates
+    checkpoint = CheckpointCallback(str(tmp_path), interval=1)
+    checkpoint.on_train_begin(context)
+    saved = []
+    checkpoint._save_checkpoint = lambda current: saved.append(
+        (current.optimizer_step, current.consumed_samples)
+    )
+    trainer = _trainer()
+    trainer.callbacks = [checkpoint]
+    trainer._train_batch(context, {"input_ids": torch.ones(2, 1)})
+    assert observed == [(1, 0, False), (2, 0, False)]
+    assert saved == [(2, 2)]
+    assert context.checkpoint_safe
+
+
+@pytest.mark.parametrize("failure", ["callback", "iterator"])
+def test_interrupted_multi_update_batch_keeps_last_complete_checkpoint(
+    tmp_path, failure
+):
+    context = _toy_context()
+    original = context.strategy.training_updates
+
+    def updates(batch, microbatch):
+        yield from original(batch, microbatch)
+        if failure == "iterator":
+            raise RuntimeError("interrupted learner updates")
+        yield from original(batch, microbatch)
+
+    class Interrupt(TrainCallback):
+        def after_optimizer_step(self, current):
+            if failure == "callback":
+                raise RuntimeError("interrupted learner updates")
+
+    context.strategy.training_updates = updates
+    checkpoint = CheckpointCallback(str(tmp_path), interval=1)
+    checkpoint.on_train_begin(context)
+    saved = []
+    checkpoint._save_checkpoint = lambda current: saved.append(current.optimizer_step)
+    trainer = _trainer()
+    trainer.callbacks = [checkpoint, Interrupt()]
+    with pytest.raises(RuntimeError, match="interrupted learner updates"):
+        trainer._train_batch(context, {"input_ids": torch.ones(2, 1)})
+    checkpoint.on_error(context)
+    checkpoint.on_train_end(context)
+    assert saved == []
+    assert context.optimizer_step == 1
+    assert context.consumed_samples == 0
+    assert context.pending_samples == 2
+    assert not context.checkpoint_safe
+
+
+@pytest.mark.parametrize(
+    "batch",
+    [
+        {"metadata": "abcd", "input_ids": torch.ones(2, 1)},
+        {"input_ids": torch.ones(2, 1), "metadata": "abcd"},
+        {"instruction": ["a", "b"], "metadata": "ignored"},
+    ],
+)
+def test_batch_size_ignores_metadata_order(batch):
+    assert BaseStrategy.batch_size(batch) == 2
+
+
+@pytest.mark.parametrize(
+    "batch",
+    [
+        {"metadata": ["a", "b"]},
+        {"input_ids": torch.ones(2, 1), "target_ids": torch.ones(3, 1)},
+        {"input_ids": torch.tensor(1)},
+        {"input_ids": []},
+    ],
+)
+def test_batch_size_rejects_missing_or_inconsistent_sample_dimensions(batch):
+    with pytest.raises(ValueError):
+        BaseStrategy.batch_size(batch)
+
+
+@pytest.mark.parametrize("failure", ["callback", "iterator"])
+def test_multi_update_checkpoint_resume_matches_complete_run(tmp_path, failure):
+    def setup(path, interrupt=False):
+        context = _toy_context()
+        context.config.to_dict = lambda: {
+            "batch_per_device": 2,
+            "dp_size": 1,
+            "grad_accum_steps": 1,
+        }
+        original = context.strategy.training_updates
+
+        def updates(batch, microbatch):
+            yield from original(batch, microbatch)
+            if interrupt and failure == "iterator" and context.optimizer_step == 3:
+                raise RuntimeError("interrupted learner updates")
+            yield from original(batch, microbatch)
+
+        class Interrupt(TrainCallback):
+            def after_optimizer_step(self, current):
+                if interrupt and failure == "callback" and current.optimizer_step == 3:
+                    raise RuntimeError("interrupted learner updates")
+
+        context.strategy.training_updates = updates
+        checkpoint = CheckpointCallback(str(path), interval=1)
+        trainer = _trainer()
+        trainer.callbacks = [checkpoint, Interrupt()]
+        return context, trainer, checkpoint
+
+    batches = [
+        {"input_ids": torch.tensor([[1.0], [2.0]])},
+        {"input_ids": torch.tensor([[3.0], [4.0]])},
+    ]
+    torch.manual_seed(17)
+    expected, baseline, callback = setup(tmp_path / "baseline")
+    callback.on_train_begin(expected)
+    for batch in batches:
+        baseline._train_batch(expected, batch)
+
+    torch.manual_seed(17)
+    stopped, trainer, callback = setup(tmp_path / "interrupted", interrupt=True)
+    callback.on_train_begin(stopped)
+    trainer._train_batch(stopped, batches[0])
+    with pytest.raises(RuntimeError, match="interrupted learner updates"):
+        trainer._train_batch(stopped, batches[1])
+    callback.on_error(stopped)
+    callback.on_train_end(stopped)
+    path = tmp_path / "interrupted"
+    assert not (path / "epoch_0_step_1" / "manifest.json").exists()
+    assert not (path / "epoch_0_step_3" / "manifest.json").exists()
+    saved = Checkpoint.load(path / "epoch_0_step_2")
+
+    resumed, trainer, callback = setup(tmp_path / "resumed")
+    resumed.model.load_state_dict(saved.state_dict)
+    resumed.optimizer.load_state_dict(saved.extra["optimizer"])
+    resumed.scheduler.load_state_dict(saved.extra["scheduler"])
+    resumed.optimizer_step, resumed.consumed_samples = restore_training_progress(
+        saved, resumed.config, 1
+    )
+    callback.on_train_begin(resumed)
+    for batch in batches[resumed.consumed_samples // 2 :]:
+        trainer._train_batch(resumed, batch)
+    assert resumed.optimizer_step == expected.optimizer_step == 4
+    assert resumed.consumed_samples == expected.consumed_samples == 4
+    for name, value in resumed.model.state_dict().items():
+        torch.testing.assert_close(
+            value, expected.model.state_dict()[name], rtol=0, atol=0
+        )

@@ -200,7 +200,12 @@ class MetricCallback(TrainCallback):
         if self._step_metrics is not None:
             self._append("step", context, **self._step_metrics)
             self._step_metrics = None
-        if context.optimizer_step - self.last_log_flush_step >= self.save_interval:
+
+    def on_batch_end(self, context):
+        if (
+            context.checkpoint_safe
+            and context.optimizer_step - self.last_log_flush_step >= self.save_interval
+        ):
             self._flush(context.epoch, context.optimizer_step)
             self.last_log_flush_step = context.optimizer_step
 

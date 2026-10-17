@@ -1,6 +1,7 @@
 """Common training strategy lifecycle and interfaces."""
 
 from abc import ABC
+from collections.abc import Mapping
 from typing import (
     Any,
     Callable,
@@ -249,28 +250,35 @@ class BaseStrategy(ABC):
 
     @staticmethod
     def batch_size(batch: Any) -> int:
-        """Return input records; strategies may override custom batch layouts."""
+        """Count records from defined sample fields, never metadata order."""
         if isinstance(batch, RolloutResult):
             return batch.prompts.shape[0]
-        return len(next(iter(batch.values())))
-
-    def run_optimizer_step(
-        self, optimizer: Optimizer, on_commit: Callable[[], None]
-    ) -> None:
-        """Complete bookkeeping even if online publication fails after commit.
-
-        Subclasses customize optimizer_step; the trainer does not inspect rollout
-        coordinators or policy versions to determine whether weights changed.
-        """
-        previous_version = self.policy_version
-        try:
-            self.optimizer_step(optimizer)
-        except BaseException:
-            if previous_version is not None and self.policy_version > previous_version:
-                on_commit()
-            raise
-        else:
-            on_commit()
+        if not isinstance(batch, Mapping):
+            raise ValueError("Custom batch layouts must override strategy.batch_size()")
+        sizes = []
+        for name in (
+            "input_ids",
+            "target_ids",
+            "chosen",
+            "rejected",
+            "prompts",
+            "instruction",
+        ):
+            if name not in batch:
+                continue
+            value = batch[name]
+            if not isinstance(value, (Tensor, list, tuple)) or (
+                isinstance(value, Tensor) and value.ndim == 0
+            ):
+                raise ValueError(
+                    f"Batch field {name!r} needs a leading sample dimension"
+                )
+            sizes.append(len(value))
+        if not sizes:
+            raise ValueError("Custom batch layouts must override strategy.batch_size()")
+        if sizes[0] < 1 or any(size != sizes[0] for size in sizes):
+            raise ValueError("Batch sample dimensions must be nonempty and agree")
+        return sizes[0]
 
     def optimizer_step(self, optimizer: Optimizer):
         """Step the optimizer at an atomic online-rollout version boundary."""

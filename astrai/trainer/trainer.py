@@ -1,5 +1,4 @@
 import logging
-from functools import partial
 from typing import List, Optional
 
 from astrai.config import TrainConfig
@@ -55,19 +54,14 @@ class Trainer:
             if method:
                 method(context)
 
-    @staticmethod
-    def _complete_update(context: TrainContext) -> None:
+    def _commit_update(self, context: TrainContext) -> None:
+        self._call_callbacks("before_optimizer_step", context)
+        context.checkpoint_safe = False
+        context.strategy.optimizer_step(context.optimizer)
         context.optimizer.zero_grad()
         if context.scheduler:
             context.scheduler.step()
         context.commit_update()
-
-    def _commit_update(self, context: TrainContext) -> None:
-        self._call_callbacks("before_optimizer_step", context)
-        context.checkpoint_safe = False
-        context.strategy.run_optimizer_step(
-            context.optimizer, partial(self._complete_update, context)
-        )
         self._call_callbacks("after_optimizer_step", context)
 
     def _train_batch(self, context: TrainContext, batch) -> None:
@@ -100,6 +94,10 @@ class Trainer:
                 context.metrics = update_metrics
                 if executor.sync_gradients:
                     self._commit_update(context)
+            # A batch can yield several learner updates. Only exhaustion of
+            # that work makes its input records safe to skip after resume.
+            if executor.sync_gradients:
+                context.commit_samples()
             self._call_callbacks("on_batch_end", context)
 
     def _train_epoch(self, context: TrainContext, epoch: int) -> None:

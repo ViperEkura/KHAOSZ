@@ -124,8 +124,11 @@ class TrainContext:
         self._stop_event.set()
 
     def commit_update(self) -> None:
-        """Publish progress after a complete optimizer/scheduler update."""
+        """Record a complete optimizer/scheduler update."""
         self.optimizer_step += 1
+
+    def commit_samples(self) -> None:
+        """Commit input records after all their learner updates complete."""
         self.consumed_samples += self.pending_samples
         self.pending_samples = 0
         self.checkpoint_safe = True
@@ -141,7 +144,31 @@ def restore_training_progress(
     )
     if not isinstance(step, int) or isinstance(step, bool) or step < 0:
         raise ValueError("Checkpoint optimizer_step must be nonnegative")
-    return step, checkpoint.consumed_samples
+    cursor = checkpoint.consumed_samples
+    if not isinstance(cursor, int) or isinstance(cursor, bool) or cursor < 0:
+        raise ValueError("Checkpoint consumed_samples must be nonnegative")
+    saved_microbatch = checkpoint.meta.get(
+        "batch_per_device", config.batch_per_device
+    ) * checkpoint.meta.get("dp_size", dp_size)
+    saved_per_step = saved_microbatch * checkpoint.meta.get(
+        "grad_accum_steps", config.grad_accum_steps
+    )
+    scheduler_step = checkpoint.extra.get("scheduler", {}).get("last_epoch")
+    periodic_offset = (
+        scheduler_step == step + 1
+        and cursor == (step + 1) * saved_per_step - saved_microbatch
+    )
+    partial_cursor = (
+        step * saved_per_step < cursor < (step + 1) * saved_per_step
+        and cursor % saved_microbatch == 0
+    )
+    if config.rollout_mode != "async_round" and (periodic_offset or partial_cursor):
+        raise ValueError(
+            "Checkpoint progress is inconsistent or ambiguous; do not resume it "
+            "unchanged. For a confirmed legacy checkpoint, run "
+            "python -m scripts.tools.checkpoint SOURCE OUTPUT, then resume OUTPUT."
+        )
+    return step, cursor
 
 
 def repair_legacy_training_progress(checkpoint: Checkpoint) -> Tuple[int, int]:
