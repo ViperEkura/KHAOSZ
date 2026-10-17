@@ -247,6 +247,31 @@ class BaseStrategy(ABC):
                 "so weight mutation and policy-version publication are atomic"
             )
 
+    @staticmethod
+    def batch_size(batch: Any) -> int:
+        """Return input records; strategies may override custom batch layouts."""
+        if isinstance(batch, RolloutResult):
+            return batch.prompts.shape[0]
+        return len(next(iter(batch.values())))
+
+    def run_optimizer_step(
+        self, optimizer: Optimizer, on_commit: Callable[[], None]
+    ) -> None:
+        """Complete bookkeeping even if online publication fails after commit.
+
+        Subclasses customize optimizer_step; the trainer does not inspect rollout
+        coordinators or policy versions to determine whether weights changed.
+        """
+        previous_version = self.policy_version
+        try:
+            self.optimizer_step(optimizer)
+        except BaseException:
+            if previous_version is not None and self.policy_version > previous_version:
+                on_commit()
+            raise
+        else:
+            on_commit()
+
     def optimizer_step(self, optimizer: Optimizer):
         """Step the optimizer at an atomic online-rollout version boundary."""
         if self._rollout_runner is None:

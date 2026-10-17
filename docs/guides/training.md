@@ -51,35 +51,59 @@ to a fused CUDA kernel when available.
 
 ## Training Loop
 
-Two-level loop: **epoch** → **batch**. Optimizer step fires every `grad_accum_steps` batches.
+Two-level loop: **epoch** → **batch**. Gradient accumulation continues across
+epoch boundaries; the final incomplete accumulation is not applied.
 
-```
+The optimizer step is an explicit count of completed updates. The data cursor
+(`consumed_samples`) advances only when an update commits; samples in an
+unfinished accumulation remain in `pending_samples` and are replayed after
+resume because their gradients are not checkpointed.
+
+~~~text
 on_train_begin
   model.train()
   on_epoch_begin
     for batch in dataloader:
+      pending_samples += actual_batch_size * dp_size
       with executor.accumulate(model):
         on_batch_begin
-        loss_output = strategy(batch)
-        context.loss = loss_output["loss"].item()
-        context.metrics = loss_output["metrics"]
-        stand_loss = loss_output["loss"] / executor.grad_accum_steps
-        executor.backward(stand_loss)
-        context.consumed_samples += (
-            context.config.batch_per_device * context.world_size
-        )
-        on_batch_end
-
+        forward / backward
         if executor.sync_gradients:
-          before_optimizer_step
+          before_optimizer_step       # gradient statistics and clipping
+          checkpoint_safe = False
           strategy.optimizer_step(optimizer)
           optimizer.zero_grad()
-          if scheduler:
-            scheduler.step()
-          after_optimizer_step
+          scheduler.step()
+          optimizer_step += 1
+          consumed_samples += pending_samples
+          pending_samples = 0
+          checkpoint_safe = True
+          after_optimizer_step        # metrics, progress and checkpoint
+        on_batch_end
     on_epoch_end
 on_train_end
-```
+~~~
+
+Responsibilities stay within the existing components:
+
+- The strategy defines batch shape and optimizer/publication behavior.
+- The trainer orders backward, optimizer completion, scheduler and callbacks.
+- `TrainContext.commit_update()` is the single owner of progress mutation.
+- `restore_training_progress()` adapts checkpoint metadata at the load boundary;
+  the builder only assigns its normalized result.
+- Callbacks observe completed state and do not advance counters.
+
+A failure during an update leaves `checkpoint_safe=False`, preventing a
+checkpoint that mixes partially updated state. Async rollout publication retains
+its existing version-based commit detection.
+
+Runtime progress uses one `optimizer_step` counter and the committed data cursor.
+Checkpoint metadata stores the same `optimizer_step` field without an alias.
+Resume restores the counter and cursor independently rather than
+deriving the step from the current batch size. Legacy checkpoints require explicit normalization with
+`repair_legacy_training_progress()` before resume. Normal resume does not infer
+whether a cursor includes unfinished accumulation or silently change it.
+Progress displays cumulative completed steps after each update.
 
 ### Callback Lifecycle
 
@@ -88,9 +112,9 @@ on_train_end
 | `on_train_begin` | Before training starts | `GradientCheckpointingCallback`, `CheckpointCallback`, `MetricCallback` |
 | `on_epoch_begin` | Start of each epoch | `ProgressBarCallback` |
 | `on_batch_begin` | Every batch | — |
-| `before_optimizer_step` | Every accumulation window, before `optimizer.step()` | `MetricCallback`, `ProgressBarCallback`, `GradientClippingCallback` |
+| `before_optimizer_step` | Every accumulation window, before `optimizer.step()` | `MetricCallback`, `GradientClippingCallback` |
 | `on_batch_end` | Every batch | — |
-| `after_optimizer_step` | Every accumulation window, after `optimizer.step()` and `scheduler.step()` | `CheckpointCallback` |
+| `after_optimizer_step` | Every accumulation window, after the update and committed counters | `CheckpointCallback`, `MetricCallback`, `ProgressBarCallback` |
 | `on_epoch_end` | End of each epoch | `MetricCallback`, `ProgressBarCallback` |
 | `on_error` | On exception during training | `CheckpointCallback`, `MetricCallback` |
 | `on_train_end` | Training exits after `on_train_begin` completes (via `finally`) | `GradientCheckpointingCallback`, `CheckpointCallback`, `MetricCallback` |

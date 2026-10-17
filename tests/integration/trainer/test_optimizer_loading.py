@@ -10,7 +10,10 @@ from astrai.optimization.optimizer import OptimizerFactory
 from astrai.serialization import Checkpoint
 from astrai.serialization import checkpoint as checkpoint_module
 from astrai.trainer.components import load_optimizer_state_dict
-from astrai.trainer.train_context import TrainContextBuilder
+from astrai.trainer.train_context import (
+    TrainContextBuilder,
+    repair_legacy_training_progress,
+)
 from tests.support.models import make_model
 
 
@@ -199,3 +202,48 @@ def test_muon_adamw_reuses_both_histories_with_new_stage_lr():
     new.step()
     scheduler.step()
     assert all(group["lr"] == pytest.approx(0.016) for group in new.param_groups)
+
+
+@pytest.mark.parametrize(
+    "legacy,step,cursor,batch,accum,expected_step,expected_cursor",
+    [
+        (True, 2, 5, 1, 2, 3, 6),
+        (True, 3, 7, 1, 2, 3, 6),
+        (False, 3, 5, 2, 2, 3, 5),
+        (False, 3, 7, 1, 2, 3, 7),
+    ],
+)
+def test_resume_progress_formats(
+    tmp_path,
+    monkeypatch,
+    legacy,
+    step,
+    cursor,
+    batch,
+    accum,
+    expected_step,
+    expected_cursor,
+):
+    checkpoint = _save_checkpoint(tmp_path)
+    checkpoint.consumed_samples = cursor
+    checkpoint.meta.update(
+        optimizer_step=step,
+        batch_per_device=batch,
+        dp_size=1,
+        grad_accum_steps=accum,
+    )
+    if legacy:
+        repaired_step, repaired_cursor = repair_legacy_training_progress(checkpoint)
+        checkpoint.meta["optimizer_step"] = repaired_step
+        checkpoint.consumed_samples = repaired_cursor
+    checkpoint.save(tmp_path)
+    monkeypatch.setenv("LOCAL_DEVICE", "cpu")
+    context = (
+        TrainContextBuilder(_config(batch_per_device=batch, grad_accum_steps=accum))
+        .with_param_path(str(tmp_path), resume=True)
+        .build()
+    )
+    assert context.optimizer_step == expected_step
+    assert context.consumed_samples == expected_cursor
+    assert context.pending_samples == 0
+    assert context.scheduler.state_dict()["last_epoch"] == 3

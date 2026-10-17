@@ -1,4 +1,5 @@
 import logging
+from functools import partial
 from typing import List, Optional
 
 from astrai.config import TrainConfig
@@ -54,33 +55,24 @@ class Trainer:
             if method:
                 method(context)
 
-    def _commit_update(self, context: TrainContext, batch) -> None:
+    @staticmethod
+    def _complete_update(context: TrainContext) -> None:
+        context.optimizer.zero_grad()
+        if context.scheduler:
+            context.scheduler.step()
+        context.commit_update()
+
+    def _commit_update(self, context: TrainContext) -> None:
         self._call_callbacks("before_optimizer_step", context)
-        coordinator = context.async_rollout
-        if coordinator is None:
-            context.strategy.optimizer_step(context.optimizer)
-            context.optimizer.zero_grad()
-            if context.scheduler:
-                context.scheduler.step()
-        else:
-            context.checkpoint_safe = False
-            version_before = coordinator.policy_version
-            try:
-                context.strategy.optimizer_step(context.optimizer)
-            finally:
-                # A version advance marks a committed step, even if later
-                # publication fails and an error checkpoint is needed.
-                if coordinator.policy_version > version_before:
-                    context.optimizer.zero_grad()
-                    if context.scheduler:
-                        context.scheduler.step()
-                    context.consumed_samples += batch.prompts.shape[0] * context.dp_size
-                    context.optimizer_steps_completed += 1
-                    context.checkpoint_safe = True
+        context.checkpoint_safe = False
+        context.strategy.run_optimizer_step(
+            context.optimizer, partial(self._complete_update, context)
+        )
         self._call_callbacks("after_optimizer_step", context)
 
     def _train_batch(self, context: TrainContext, batch) -> None:
         executor = context.executor
+        context.pending_samples += context.strategy.batch_size(batch) * context.dp_size
         with executor.accumulate(context.model):
             self._call_callbacks("on_batch_begin", context)
             microbatch_prompts = (
@@ -107,11 +99,7 @@ class Trainer:
                 context.loss = float(update_loss.item())
                 context.metrics = update_metrics
                 if executor.sync_gradients:
-                    self._commit_update(context, batch)
-            if context.async_rollout is None:
-                context.consumed_samples += (
-                    context.config.batch_per_device * context.dp_size
-                )
+                    self._commit_update(context)
             self._call_callbacks("on_batch_end", context)
 
     def _train_epoch(self, context: TrainContext, epoch: int) -> None:

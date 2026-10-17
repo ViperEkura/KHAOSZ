@@ -81,7 +81,8 @@ class TrainContext:
     #: own sampling params. ``None`` keeps the legacy validate_online path.
     val_evaluator: Optional["RolloutEvaluator"] = field(default=None)
     async_rollout: Optional["RolloutRunner"] = field(default=None)
-    optimizer_steps_completed: Optional[int] = field(default=None)
+    optimizer_step: int = field(default=0)
+    pending_samples: int = field(default=0)
     checkpoint_safe: bool = field(default=True)
 
     world_size: int = field(default=1)
@@ -122,17 +123,48 @@ class TrainContext:
     def request_stop(self) -> None:
         self._stop_event.set()
 
-    @property
-    def optimizer_step(self) -> int:
-        if self.optimizer_steps_completed is not None:
-            return self.optimizer_steps_completed
-        return self.consumed_samples // (
-            self.config.batch_per_device * self.dp_size * self.config.grad_accum_steps
-        )
+    def commit_update(self) -> None:
+        """Publish progress after a complete optimizer/scheduler update."""
+        self.optimizer_step += 1
+        self.consumed_samples += self.pending_samples
+        self.pending_samples = 0
+        self.checkpoint_safe = True
+
+
+def restore_training_progress(
+    checkpoint: Checkpoint, config: TrainConfig, dp_size: int
+) -> Tuple[int, int]:
+    """Restore the saved counter and committed cursor without guessing."""
+    per_step = config.batch_per_device * dp_size * config.grad_accum_steps
+    step = checkpoint.meta.get(
+        "optimizer_step", checkpoint.consumed_samples // per_step
+    )
+    if not isinstance(step, int) or isinstance(step, bool) or step < 0:
+        raise ValueError("Checkpoint optimizer_step must be nonnegative")
+    return step, checkpoint.consumed_samples
+
+
+def repair_legacy_training_progress(checkpoint: Checkpoint) -> Tuple[int, int]:
+    """Explicitly normalize a checkpoint from the old sample-derived counter.
+
+    This is a migration helper, not part of automatic resume. Callers apply the
+    returned values only after identifying a legacy checkpoint.
+    """
+    step = checkpoint.meta["optimizer_step"]
+    microbatch = checkpoint.meta["batch_per_device"] * checkpoint.meta["dp_size"]
+    per_step = microbatch * checkpoint.meta["grad_accum_steps"]
+    cursor = checkpoint.consumed_samples
+    scheduler_step = checkpoint.extra.get("scheduler", {}).get("last_epoch")
+    if scheduler_step == step + 1 and cursor == (step + 1) * per_step - microbatch:
+        return step + 1, (step + 1) * per_step
+    if scheduler_step == step and step * per_step <= cursor < (step + 1) * per_step:
+        return step, step * per_step
+    raise ValueError("Legacy checkpoint progress cannot be repaired unambiguously")
 
 
 @dataclass
 class _PreloadedState:
+    optimizer_step: int = 0
     model_config: Dict = field(default_factory=dict)
     state_dict: Optional[Dict] = None
     epoch: int = 0
@@ -242,6 +274,8 @@ class TrainContextBuilder:
         state = _PreloadedState(
             epoch=cfg.start_epoch,
             consumed_samples=cfg.start_samples * self._topology.dp_size,
+            optimizer_step=cfg.start_samples
+            // (cfg.batch_per_device * cfg.grad_accum_steps),
         )
         if self._param_path:
             config_path = Path(self._param_path) / "config.json"
@@ -277,18 +311,10 @@ class TrainContextBuilder:
                 state.model_config = checkpoint.config or state.model_config
                 if self._resume:
                     state.epoch = checkpoint.epoch
-                    per_step = (
-                        cfg.batch_per_device
-                        * self._topology.dp_size
-                        * cfg.grad_accum_steps
-                    )
-                    # Async GRPO commits even a short final round. Rounding
-                    # its cursor to a full batch would replay those samples
-                    # after resume despite the optimizer step being saved.
-                    state.consumed_samples = (
-                        checkpoint.consumed_samples
-                        if cfg.rollout_mode == "async_round"
-                        else checkpoint.consumed_samples // per_step * per_step
+                    state.optimizer_step, state.consumed_samples = (
+                        restore_training_progress(
+                            checkpoint, cfg, self._topology.dp_size
+                        )
                     )
                     state.checkpoint = checkpoint
                 for name in ("optimizer", "scheduler"):
@@ -327,6 +353,7 @@ class TrainContextBuilder:
             executor=executor,
             epoch=state.epoch,
             consumed_samples=state.consumed_samples,
+            optimizer_step=state.optimizer_step,
             checkpoint=state.checkpoint,
             param_path=self._param_path,
         )
