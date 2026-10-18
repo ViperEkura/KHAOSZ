@@ -24,7 +24,7 @@ from astrai.trainer.callbacks.metric_util import (
 )
 
 if TYPE_CHECKING:
-    from astrai.trainer.train_context import TrainContext
+    from astrai.trainer.context import TrainContext
 
 
 @CallbackFactory.register("metric")

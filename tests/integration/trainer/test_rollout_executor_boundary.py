@@ -10,16 +10,16 @@ from torch import nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import Dataset
 
-import astrai.parallel.executor as executor_module
+import astrai.parallel.executor.base as executor_module
 from astrai.config import ComponentSpec, TrainConfig
 from astrai.model.autoregressive_lm import AutoRegressiveLM
 from astrai.parallel import get_rank
 from astrai.parallel.executor import DDPExecutor, FSDPExecutor, NoneExecutor
-from astrai.trainer import train_context
 from astrai.trainer.backend import run_batch
+from astrai.trainer.context import TrainContextBuilder
+from astrai.trainer.context import builder as train_context_builder
 from astrai.trainer.rollout.setup import configure_rollout, resolve_async_rollout
 from astrai.trainer.rollout.types import SamplingParams
-from astrai.trainer.train_context import TrainContextBuilder
 from tests.support.inference import make_cpu_scheduler
 from tests.support.models import make_rollout_config
 from tests.support.tokenizers import FakeTokenizer
@@ -148,9 +148,9 @@ def test_train_context_passes_ddp_inference_view_to_rollout(tmp_path, monkeypatc
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr(train_context, "EngineCore", _EngineCore)
+    monkeypatch.setattr(train_context_builder, "EngineCore", _EngineCore)
     monkeypatch.setattr(
-        train_context.AutoTokenizer,
+        train_context_builder.AutoTokenizer,
         "from_pretrained",
         lambda _param_path: FakeTokenizer(),
     )
@@ -175,7 +175,7 @@ def test_train_context_passes_ddp_inference_view_to_rollout(tmp_path, monkeypatc
 
 def test_online_rollout_rejects_torch_compile_before_scheduler(monkeypatch):
     monkeypatch.setattr(
-        train_context.AutoTokenizer,
+        train_context_builder.AutoTokenizer,
         "from_pretrained",
         lambda _param_path: pytest.fail("tokenizer should not be loaded"),
     )
@@ -369,7 +369,7 @@ def test_runtime_world_size_rejected_before_loading_models(monkeypatch):
     builder = TrainContextBuilder(_config())
     load = Mock()
     builder._load_preloaded_state = load
-    monkeypatch.setattr("astrai.trainer.train_context.get_world_size", lambda: 2)
+    monkeypatch.setattr("astrai.trainer.context.builder.get_world_size", lambda: 2)
     with pytest.raises(ValueError, match="world_size must match configured nprocs"):
         builder.build()
     load.assert_not_called()

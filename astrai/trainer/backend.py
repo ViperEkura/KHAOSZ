@@ -204,7 +204,7 @@ class ReplicaBackend:
     """Frozen policy copy on its own device, with its own core/KV pool.
 
     The model is expected to be already placed on ``device`` and frozen
-    (see :func:`astrai.trainer.train_context.create_ref_model`); it never
+    (see :func:`astrai.trainer.components.create_ref_model`); it never
     toggles out of eval mode.  All scheduler work — construction (CUDA
     graph capture) and generation — runs pinned to ``device``.
     """

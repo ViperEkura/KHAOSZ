@@ -11,7 +11,7 @@ from astrai.config import ComponentSpec, TrainConfig
 from astrai.model.autoregressive_lm import AutoRegressiveLM
 from astrai.signal_handler import register_signal_handlers
 from astrai.trainer import Trainer
-from astrai.trainer.train_context import TrainContext
+from astrai.trainer.context import TrainContext
 from tests.support.checkpoint import load_checkpoint_meta
 from tests.support.models import TINY_CONFIG, make_tiny_config
 

@@ -14,9 +14,9 @@ from astrai.optimization.scheduler import SchedulerFactory
 from astrai.serialization import Checkpoint
 from astrai.trainer.backend import ColocatedBackend, P2PCopyPublisher, ReplicaBackend
 from astrai.trainer.callbacks import CheckpointCallback
+from astrai.trainer.context import TrainContext, TrainContextBuilder
 from astrai.trainer.rollout import BaseRewardModel, RolloutEvaluator
 from astrai.trainer.strategy import GRPOStrategy, PPOStrategy
-from astrai.trainer.train_context import TrainContext, TrainContextBuilder
 from astrai.trainer.trainer import Trainer
 from tests.support.models import make_frozen, make_model, make_rollout_config
 from tests.support.rollout import FakeExecutor

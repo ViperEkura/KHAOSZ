@@ -24,7 +24,7 @@ from astrai.trainer.rollout.async_round import AsyncRoundCoordinator
 from astrai.trainer.strategy import StrategyFactory
 
 if TYPE_CHECKING:
-    from astrai.trainer.train_context import TrainContext
+    from astrai.trainer.context import TrainContext
 
 
 @dataclass(frozen=True)

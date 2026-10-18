@@ -11,8 +11,8 @@ from astrai.trainer.callbacks import (
     CallbackFactory,
     TrainCallback,
 )
+from astrai.trainer.context import TrainContext, TrainContextBuilder
 from astrai.trainer.session import TrainSession
-from astrai.trainer.train_context import TrainContext, TrainContextBuilder
 
 logger = logging.getLogger(__name__)
 

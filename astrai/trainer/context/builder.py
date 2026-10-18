@@ -1,19 +1,16 @@
+"""Assemble a training context from the config, the checkpoint, and the runtime."""
+
 import logging
-import threading
-from dataclasses import dataclass, field
 from functools import partial
-from pathlib import Path
-from typing import Any, Dict, Optional, Self, Tuple
+from typing import Dict, Optional, Self, Tuple
 
 import torch
 from torch import nn
-from torch.utils.data import DataLoader, Dataset
 
-from astrai.config.model_config import ConfigFactory
 from astrai.config.train_config import TrainConfig, _TrainRuntimeDependencies
 from astrai.inference.core.engine_core import EngineCore
 from astrai.model.components.lora import inject_lora
-from astrai.optimization.protocols import OptimizerProtocol, SchedulerProtocol
+from astrai.optimization.protocols import OptimizerProtocol
 from astrai.parallel.cp import CPState, CPStrategy, LossReduction
 from astrai.parallel.executor import (
     BaseExecutor,
@@ -24,15 +21,7 @@ from astrai.parallel.executor import (
 from astrai.parallel.setup import get_current_device, get_rank, get_world_size
 from astrai.parallel.topology import ParallelTopology, build_topology
 from astrai.parallel.tp import TPState
-from astrai.serialization import (
-    Checkpoint,
-    adapt_config,
-    convert_hf_weights,
-    load_json,
-    looks_like_hf_state_dict,
-)
 from astrai.tokenize import AutoTokenizer
-from astrai.trainer.callbacks.metric_util import GradSNRTracker
 from astrai.trainer.components import (
     build_dataloader,
     build_dataset_component,
@@ -42,143 +31,18 @@ from astrai.trainer.components import (
     create_ref_model,
     load_optimizer_state_dict,
 )
+from astrai.trainer.context.resume import PreloadedState, ResumeLoader
+from astrai.trainer.context.state import TrainContext
 from astrai.trainer.optional_extras import (
-    CONTEXT_EXTRAS,
     component_extra_keys,
     load_component_extra,
     require_component_extras,
     restore_checkpoint_extras,
 )
-from astrai.trainer.rollout import RolloutEvaluator, RolloutRunner
 from astrai.trainer.rollout.setup import configure_rollout
-from astrai.trainer.strategy import BaseStrategy, StrategyFactory
+from astrai.trainer.strategy import StrategyFactory
 
 logger = logging.getLogger(__name__)
-
-
-def samples_per_step(config: TrainConfig, dp_size: int) -> int:
-    """Samples one optimizer step consumes; the unit of the data cursor.
-
-    The cursor, the saved ``consumed_samples`` and the resume check all read
-    this one definition, so "one step" is the same number of samples wherever
-    it is counted.
-    """
-    return config.batch_per_device * dp_size * config.grad_accum_steps
-
-
-@dataclass
-class TrainContext:
-    model: nn.Module = field(default=None)
-    strategy: BaseStrategy = field(default=None)
-    dataset: Optional[Dataset] = field(default=None)
-    val_dataset: Optional[Dataset] = field(default=None)
-    dataloader: DataLoader = field(default=None)
-    #: Iterator currently being drained; owned by the trainer so shutdown can
-    #: stop its workers before anything is written.
-    dataloader_iter: Any = field(default=None)
-    optimizer: OptimizerProtocol = field(default=None)
-    scheduler: SchedulerProtocol = field(default=None)
-    checkpoint: Checkpoint = field(default=None)
-    config: TrainConfig = field(default=None)
-    model_config: Dict = field(default_factory=dict)
-    executor: BaseExecutor = field(default=None)
-    epoch: int = field(default=0)
-    consumed_samples: int = field(default=0)
-    loss: float = field(default=0.0)
-    metrics: Dict[str, float] = field(default_factory=dict)
-    grad_norm: Optional[float] = field(default=None)
-    grad_snr_tracker: GradSNRTracker = field(default_factory=GradSNRTracker)
-    grad_snr_value: Optional[float] = field(default=None)
-    val_dataloader: Optional[DataLoader] = field(default=None)
-    val_loss: Optional[float] = field(default=None)
-    #: Online-strategy validation: reward-statistics evaluator under its
-    #: own sampling params. ``None`` keeps the legacy validate_online path.
-    val_evaluator: Optional["RolloutEvaluator"] = field(default=None)
-    async_rollout: Optional["RolloutRunner"] = field(default=None)
-    #: Committed optimizer steps. Advanced once per commit in every rollout
-    #: mode, so a checkpoint's step number never has to be derived from the
-    #: data cursor (a batch that is replayed yields several steps).
-    optimizer_steps_completed: int = field(default=0)
-    checkpoint_safe: bool = field(default=True)
-    #: A stop request that every rank has agreed on, so leaving the loop cannot
-    #: strand a peer inside a collective.
-    stop_agreed: bool = field(default=False)
-
-    world_size: int = field(default=1)
-    rank: int = field(default=0)
-    topology: Optional[ParallelTopology] = field(default=None)
-    kwargs: Dict[str, Any] = field(default_factory=dict)
-    param_path: Optional[str] = field(default=None)
-
-    _stop_event: threading.Event = field(default_factory=threading.Event)
-
-    def __post_init__(self):
-        # A topology is always answerable: contexts built outside the
-        # builder (tests, tools) still get rank-layout math from their
-        # world_size, with a trivial layout by definition.
-        if self.topology is None:
-            self.topology = ParallelTopology(self.world_size)
-
-    @property
-    def dp_size(self) -> int:
-        """Data-parallel degree — the unit for data sharding and step math.
-
-        Ranks sharing a dp_rank consume the same batch (cp peers hold
-        different sequence slices of it), so sample and step counts derived
-        from world size must use this instead.
-        """
-        return self.topology.dp_size
-
-    @property
-    def dataset_len(self) -> int:
-        if self.dataset is None:
-            raise RuntimeError("Training dataset has not been initialized")
-        return len(self.dataset)
-
-    @property
-    def stop_requested(self) -> bool:
-        return self._stop_event.is_set()
-
-    def request_stop(self) -> None:
-        self._stop_event.set()
-
-    def close_dataloader(self) -> None:
-        """Stop DataLoader workers so their death cannot abort the shutdown save."""
-        train_iterator = self.dataloader_iter
-        self.dataloader_iter = None
-        self._stop_iterator(train_iterator)
-        self._stop_iterator(getattr(self.val_dataloader, "_iterator", None))
-
-    @staticmethod
-    def _stop_iterator(iterator) -> None:
-        shutdown = getattr(iterator, "_shutdown_workers", None)
-        if shutdown is None:
-            return
-        try:
-            shutdown()
-        except Exception:
-            logger.debug("DataLoader worker shutdown failed", exc_info=True)
-
-    @property
-    def samples_per_step(self) -> int:
-        """Samples one optimizer step consumes; the unit of the data cursor."""
-        return samples_per_step(self.config, self.dp_size)
-
-    @property
-    def optimizer_step(self) -> int:
-        """Committed optimizer steps; the checkpoint's ``meta.optimizer_step``."""
-        return self.optimizer_steps_completed
-
-
-@dataclass
-class _PreloadedState:
-    model_config: Dict = field(default_factory=dict)
-    state_dict: Optional[Dict] = None
-    epoch: int = 0
-    consumed_samples: int = 0
-    optimizer_steps_completed: int = 0
-    checkpoint: Optional[Checkpoint] = None
-    component_states: Dict = field(default_factory=dict)
 
 
 class TrainContextBuilder:
@@ -277,116 +141,18 @@ class TrainContextBuilder:
             **kwargs,
         )
 
-    def _load_preloaded_state(self) -> _PreloadedState:
-        cfg = self.config
-        state = _PreloadedState(
-            epoch=cfg.start_epoch,
-            consumed_samples=cfg.start_samples * self._topology.dp_size,
-        )
-        if self._param_path:
-            config_path = Path(self._param_path) / "config.json"
-            if config_path.exists():
-                state.model_config = adapt_config(
-                    load_json(config_path), self._param_path
-                )
-            options = cfg.state_dict_load_options(self._resume)
-            context_keys = [name for name, _ in CONTEXT_EXTRAS]
-            extra_keys = [name for name in context_keys if options[name]]
-            if self._resume:
-                extra_keys.extend(
-                    path.stem
-                    for path in Path(self._param_path).glob("*.pt")
-                    if path.stem not in context_keys
-                )
-            checkpoint = Checkpoint.load_any(
-                self._param_path, extra_keys=extra_keys, load_weights=options["model"]
-            )
-            if checkpoint is not None:
-                if checkpoint.config:
-                    checkpoint.config = adapt_config(
-                        checkpoint.config, self._param_path
-                    )
-                if checkpoint.state_dict and looks_like_hf_state_dict(
-                    checkpoint.state_dict
-                ):
-                    checkpoint.state_dict = convert_hf_weights(
-                        checkpoint.state_dict,
-                        ConfigFactory.load(checkpoint.config or state.model_config),
-                    )
-                checkpoint.state_dict = strip_compile_prefix(checkpoint.state_dict)
-                state.state_dict = checkpoint.state_dict if options["model"] else None
-                state.model_config = checkpoint.config or state.model_config
-                if self._resume:
-                    # A resume restores a whole training state or none of it: a
-                    # missing component would silently come back fresh, which is
-                    # a different run wearing the same step number.
-                    missing = [
-                        name
-                        for name in context_keys
-                        if options[name] and name not in checkpoint.extra
-                    ]
-                    if missing:
-                        raise ValueError(
-                            f"Cannot resume from {self._param_path}: no "
-                            f"{', '.join(missing)} state in the checkpoint; set "
-                            f"load_state_dict.{missing[0]}=False to accept a "
-                            "fresh one"
-                        )
-                    state.epoch = checkpoint.epoch
-                    per_step = samples_per_step(cfg, self._topology.dp_size)
-                    # The cursor only advances at commits, so a new checkpoint
-                    # is always on this boundary; one that is not came from an
-                    # older run and cannot say which state it describes.
-                    # Async GRPO is exempt: it advances by the prompts of a
-                    # round, which is not a whole number of steps.
-                    if (
-                        cfg.rollout_mode != "async_round"
-                        and checkpoint.consumed_samples % per_step
-                    ):
-                        raise ValueError(
-                            f"Checkpoint cursor {checkpoint.consumed_samples} is not on "
-                            f"an optimizer-step boundary ({per_step} samples); "
-                            "do not resume it unchanged"
-                        )
-                    state.consumed_samples = checkpoint.consumed_samples
-                    state.checkpoint = checkpoint
-                for name in context_keys:
-                    if name not in checkpoint.extra:
-                        continue
-                    saved_spec = checkpoint.meta.get(name)
-                    saved_type = (
-                        saved_spec.get("type")
-                        if isinstance(saved_spec, dict)
-                        else checkpoint.meta.get("optimizer_name")
-                        if name == "optimizer"
-                        else None
-                    )
-                    current_type = getattr(cfg, name).type
-                    if saved_type and saved_type != current_type:
-                        raise ValueError(
-                            f"Cannot load {name} state from {saved_type!r} into {current_type!r}; "
-                            f"set load_state_dict.{name}=False when changing components"
-                        )
-                    state.component_states[name] = checkpoint.extra[name]
-        if not state.model_config:
-            model = self._instantiate_model(state.model_config)
-            if hasattr(model, "config"):
-                state.model_config = model.config.to_dict()
-        # The committed step count is its own quantity: a replayed batch gives
-        # several steps for one data position, so deriving it from the cursor
-        # would mislabel every one of them.
-        steps = None
-        if state.checkpoint is not None and state.checkpoint.meta:
-            steps = state.checkpoint.meta.get("optimizer_step")
-        if steps is None:
-            steps = state.consumed_samples // samples_per_step(
-                cfg, self._topology.dp_size
-            )
-        state.optimizer_steps_completed = int(steps)
-        return state
+    def _load_preloaded_state(self) -> PreloadedState:
+        """Read what the checkpoint contributes; a stub point for tests."""
+        return ResumeLoader(
+            self.config,
+            self._param_path,
+            self._resume,
+            self._topology,
+            self._instantiate_model,
+        ).load()
 
     def _create_context(
-        self, state: _PreloadedState, executor: BaseExecutor
+        self, state: PreloadedState, executor: BaseExecutor
     ) -> TrainContext:
         return TrainContext(
             world_size=get_world_size(),
@@ -403,7 +169,7 @@ class TrainContextBuilder:
         )
 
     def _prepare_model(
-        self, context: TrainContext, executor: BaseExecutor, state: _PreloadedState
+        self, context: TrainContext, executor: BaseExecutor, state: PreloadedState
     ) -> None:
         cfg = self.config
         device = get_current_device()
@@ -487,7 +253,7 @@ class TrainContextBuilder:
             )
 
     def _restore_optimizer_state(
-        self, context: TrainContext, state: Optional[_PreloadedState] = None
+        self, context: TrainContext, state: Optional[PreloadedState] = None
     ) -> None:
         extras = (
             context.checkpoint.extra

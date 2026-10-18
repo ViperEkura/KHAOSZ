@@ -16,7 +16,7 @@ from astrai.trainer.optional_extras import (
 )
 
 if TYPE_CHECKING:
-    from astrai.trainer.train_context import TrainContext
+    from astrai.trainer.context import TrainContext
 
 
 _TOKENIZER_FILES = (

@@ -12,7 +12,7 @@ from astrai.signal_handler import (
     register_signal_handlers,
     unregister_signal_handlers,
 )
-from astrai.trainer.train_context import TrainContext
+from astrai.trainer.context import TrainContext
 
 logger = logging.getLogger(__name__)
 

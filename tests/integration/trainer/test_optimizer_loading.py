@@ -10,7 +10,7 @@ from astrai.optimization.optimizer import OptimizerFactory
 from astrai.serialization import Checkpoint
 from astrai.serialization import checkpoint as checkpoint_module
 from astrai.trainer.components import load_optimizer_state_dict
-from astrai.trainer.train_context import TrainContextBuilder
+from astrai.trainer.context import TrainContextBuilder
 from tests.support.models import make_model
 
 

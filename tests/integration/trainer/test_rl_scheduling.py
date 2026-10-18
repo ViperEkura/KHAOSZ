@@ -14,6 +14,7 @@ from torch.utils.data import Dataset
 
 from astrai.config import ComponentSpec, TrainConfig
 from astrai.serialization import Checkpoint
+from astrai.trainer.context import TrainContext, TrainContextBuilder
 from astrai.trainer.optional_extras import (
     checkpoint_extras,
     restore_checkpoint_extras,
@@ -26,7 +27,6 @@ from astrai.trainer.strategy import (
     get_logprobs,
     move_to_device,
 )
-from astrai.trainer.train_context import TrainContext, TrainContextBuilder
 from astrai.trainer.trainer import Trainer
 from tests.support.tokenizers import CHAT_TEMPLATE
 

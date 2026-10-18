@@ -10,7 +10,7 @@ from torch.utils.data import Dataset
 
 from astrai.config import ComponentSpec, TrainConfig
 from astrai.serialization import Checkpoint
-from astrai.trainer import train_context
+from astrai.trainer.context import builder as train_context_builder
 from astrai.trainer.rollout import BaseRewardModel
 from astrai.trainer.rollout.setup import configure_rollout
 from astrai.trainer.trainer import Trainer
@@ -105,13 +105,15 @@ def test_online_rollout_end_to_end(
 ):
     """Run one epoch of online RL rollout with KV-cache-backed generation."""
     created_reference_models = []
-    create_ref_model = train_context.create_ref_model
+    create_ref_model = train_context_builder.create_ref_model
 
     def track_reference_model(*args, **kwargs):
         created_reference_models.append(strategy)
         return create_ref_model(*args, **kwargs)
 
-    monkeypatch.setattr(train_context, "create_ref_model", track_reference_model)
+    monkeypatch.setattr(
+        train_context_builder, "create_ref_model", track_reference_model
+    )
 
     test_dir = base_test_env["test_dir"]
     device = base_test_env["device"]

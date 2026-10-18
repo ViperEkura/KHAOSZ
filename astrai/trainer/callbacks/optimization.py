@@ -11,7 +11,7 @@ from torch.utils.checkpoint import checkpoint as torch_checkpoint
 from astrai.trainer.callbacks.base import CallbackFactory, TrainCallback
 
 if TYPE_CHECKING:
-    from astrai.trainer.train_context import TrainContext
+    from astrai.trainer.context import TrainContext
 
 logger = logging.getLogger(__name__)
 

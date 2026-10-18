@@ -11,7 +11,7 @@ from astrai.parallel import only_on_rank
 from astrai.trainer.callbacks.base import CallbackFactory, TrainCallback
 
 if TYPE_CHECKING:
-    from astrai.trainer.train_context import TrainContext
+    from astrai.trainer.context import TrainContext
 
 
 @CallbackFactory.register("progress_bar")
