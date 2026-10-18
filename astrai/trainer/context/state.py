@@ -3,7 +3,7 @@
 import logging
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
@@ -37,9 +37,10 @@ class TrainContext:
     dataset: Optional[Dataset] = field(default=None)
     val_dataset: Optional[Dataset] = field(default=None)
     dataloader: DataLoader = field(default=None)
-    #: Iterator currently being drained; owned by the trainer so shutdown can
-    #: stop its workers before anything is written.
-    dataloader_iter: Any = field(default=None)
+    #: Iterator the trainer is draining right now. It is state (not just a
+    #: cleanup detail): the shutdown hook closes it so a worker death cannot
+    #: abort the save, and a reader can see what the run is consuming.
+    train_iterator: Any = field(default=None)
     optimizer: OptimizerProtocol = field(default=None)
     scheduler: SchedulerProtocol = field(default=None)
     checkpoint: Checkpoint = field(default=None)
@@ -63,7 +64,6 @@ class TrainContext:
     #: mode, so a checkpoint's step number never has to be derived from the
     #: data cursor (a batch that is replayed yields several steps).
     optimizer_steps_completed: int = field(default=0)
-    checkpoint_safe: bool = field(default=True)
     #: A stop request that every rank has agreed on, so leaving the loop cannot
     #: strand a peer inside a collective.
     stop_agreed: bool = field(default=False)
@@ -75,6 +75,8 @@ class TrainContext:
     param_path: Optional[str] = field(default=None)
 
     _stop_event: threading.Event = field(default_factory=threading.Event)
+    #: Named cleanup steps, run by the session before any observer writes.
+    _shutdown_hooks: Dict[str, Callable[[], None]] = field(default_factory=dict)
 
     def __post_init__(self):
         # A topology is always answerable: contexts built outside the
@@ -106,22 +108,25 @@ class TrainContext:
     def request_stop(self) -> None:
         self._stop_event.set()
 
-    def close_dataloader(self) -> None:
-        """Stop DataLoader workers so their death cannot abort the shutdown save."""
-        train_iterator = self.dataloader_iter
-        self.dataloader_iter = None
-        self._stop_iterator(train_iterator)
-        self._stop_iterator(getattr(self.val_dataloader, "_iterator", None))
+    def on_shutdown(self, name: str, hook: Callable[[], None]) -> None:
+        """Register a cleanup step for the session to run at shutdown.
 
-    @staticmethod
-    def _stop_iterator(iterator) -> None:
-        shutdown = getattr(iterator, "_shutdown_workers", None)
-        if shutdown is None:
-            return
-        try:
-            shutdown()
-        except Exception:
-            logger.debug("DataLoader worker shutdown failed", exc_info=True)
+        Registering the same name twice replaces the hook, so a loop that runs
+        once per epoch does not accumulate dead iterators.
+        """
+        self._shutdown_hooks[name] = hook
+
+    def run_shutdown(self) -> None:
+        """Run the registered cleanup steps, even when one of them raises."""
+        error = None
+        for name, hook in list(self._shutdown_hooks.items()):
+            try:
+                hook()
+            except BaseException as failure:
+                logger.exception("Shutdown hook %r failed", name)
+                error = error or failure
+        if error is not None:
+            raise error
 
     @property
     def samples_per_step(self) -> int:

@@ -3,48 +3,46 @@
 Two kinds of state ride along in a checkpoint, and they need different
 mechanics:
 
-* **Global accelerator state** — the fp8 delayed-scaling rings and the RNG
-  states.  It is context-free and restored centrally, so it goes through the
-  ``_EXTRAS`` registry: one ``(key, provider, restorer)`` triple per
-  component, and neither the checkpoint callback nor the context builder
-  imports the component or knows it exists.
+* **Run-owned state** — the optimizer moments, the scheduler position, the fp8
+  delayed-scaling rings and the RNG states.  It is declared once in
+  :data:`EXTRAS` as ``(key, snapshot, restore)``; the checkpoint callback
+  snapshots through it and the builder restores through it, so neither has to
+  know which components exist.
 * **Component-owned tensor state** — the PPO critic, its optimizer, the frozen
   DPO/GRPO reference.  It is declared once in :data:`COMPONENT_EXTRAS` and
   snapshotted generically by the checkpoint callback, but each component
   restores its own entry: the build order differs (the critic exists before
-  its optimizer, the frozen reference only after the strategy is built).  The
-  table is still the single source for the key names, the owning strategy
-  attribute, and what a missing entry means on resume — so a new component
-  needs one table row, not edits in three call sites.
+  its optimizer, the frozen reference only after the strategy is built).
 
-Adding a component = one registry triple (global state) or one table row
-(component-owned state); the checkpoint callback and ``TrainContextBuilder``
-stay untouched.
+Adding a component = one :class:`Extra` row (run-owned) or one
+:class:`ComponentExtra` row (component-owned); the checkpoint callback and
+``TrainContextBuilder`` stay untouched.
 """
 
 import logging
 import random
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, Literal, Optional, Tuple
 
 import numpy as np
 import torch
 
 from astrai.extension.policy.quantization import autocast
+from astrai.trainer.components import load_optimizer_state_dict
 
 logger = logging.getLogger(__name__)
 
 
-def _fp8_extra() -> Optional[Dict]:
+def _fp8_snapshot(_context: Any) -> Optional[Dict]:
     sd = autocast.fp8_state_dict()
     return sd if sd["entries"] else None
 
 
-def _fp8_restore(sd: Dict) -> None:
+def _fp8_restore(_context: Any, sd: Dict) -> None:
     autocast.fp8_load_state_dict(sd)
 
 
-def _rng_extra() -> Dict:
+def _rng_snapshot(_context: Any) -> Dict:
     """Snapshot every RNG the training loop draws from.
 
     Covers python's ``random``, torch CPU and (when initialized) CUDA
@@ -62,7 +60,7 @@ def _rng_extra() -> Dict:
     return state
 
 
-def _rng_restore(state: Dict) -> None:
+def _rng_restore(_context: Any, state: Dict) -> None:
     random.setstate(state["python"])
     torch.set_rng_state(state["torch"])
     if "torch_cuda" in state and torch.cuda.is_available():
@@ -73,50 +71,108 @@ def _rng_restore(state: Dict) -> None:
         np.random.set_state(state["numpy"])
 
 
-# (checkpoint key, snapshot provider, restorer) — provider returns None when
-# the component has nothing to persist under the current configuration.
-_EXTRAS: Tuple[Tuple[str, Any, Any], ...] = (
-    ("fp8_state", _fp8_extra, _fp8_restore),
-    ("rng_state", _rng_extra, _rng_restore),
+def _optimizer_snapshot(context: Any) -> Optional[Dict]:
+    return context.optimizer.state_dict() if context.optimizer is not None else None
+
+
+def _optimizer_restore(context: Any, state: Dict) -> None:
+    # A full resume keeps the saved parameter-group options (betas, weight
+    # decay); a partial one keeps the configured ones and only reuses the
+    # moments, which is what load_optimizer_state_dict exists for.
+    full_resume = (
+        context.checkpoint is not None and "scheduler" in context.checkpoint.extra
+    )
+    if full_resume:
+        context.optimizer.load_state_dict(state)
+    else:
+        load_optimizer_state_dict(context.optimizer, state)
+
+
+def _scheduler_snapshot(context: Any) -> Optional[Dict]:
+    return context.scheduler.state_dict() if context.scheduler is not None else None
+
+
+def _scheduler_restore(context: Any, state: Dict) -> None:
+    if context.scheduler is None:
+        return
+    context.scheduler.load_state_dict(state)
+    # The saved schedule position wins over the configured warmup start.
+    for group, lr in zip(
+        context.optimizer.param_groups,
+        context.scheduler.get_last_lr(),
+        strict=True,
+    ):
+        group["lr"] = lr
+
+
+@dataclass(frozen=True)
+class Extra:
+    """One run-owned state that must survive a resume.
+
+    Attributes:
+        key: Checkpoint extra key (also the ``<key>.pt`` file stem).
+        snapshot: Reads the state off the context; ``None`` means "nothing to
+            persist under this configuration".
+        restore: Writes it back.  Order in :data:`EXTRAS` is the restore order,
+            because the scheduler fix-up reads the optimizer's groups.
+        resumable: Whether a resume must carry this entry.  A missing resumable
+            entry is refused; a missing optional one is simply not restored.
+        purpose: One-line reason the state must survive a resume.
+    """
+
+    key: str
+    snapshot: Callable[[Any], Any]
+    restore: Callable[[Any, Any], None]
+    resumable: bool = False
+    purpose: str = ""
+
+
+EXTRAS: Tuple[Extra, ...] = (
+    Extra(
+        key="optimizer",
+        snapshot=_optimizer_snapshot,
+        restore=_optimizer_restore,
+        resumable=True,
+        purpose="the optimizer's moments",
+    ),
+    Extra(
+        key="scheduler",
+        snapshot=_scheduler_snapshot,
+        restore=_scheduler_restore,
+        resumable=True,
+        purpose="the LR schedule position",
+    ),
+    Extra(key="fp8_state", snapshot=_fp8_snapshot, restore=_fp8_restore),
+    Extra(key="rng_state", snapshot=_rng_snapshot, restore=_rng_restore),
 )
 
+EXTRA_KEYS: Tuple[str, ...] = tuple(entry.key for entry in EXTRAS)
 
-def checkpoint_extras() -> Dict[str, Any]:
-    """Snapshot every optional component that has state worth persisting."""
+
+def snapshot_extras(context: Any) -> Dict[str, Any]:
+    """Snapshot every run-owned component that has state worth persisting."""
     extra: Dict[str, Any] = {}
-    for name, provider, _ in _EXTRAS:
-        sd = provider()
-        if sd is not None:
-            extra[name] = sd
+    for entry in EXTRAS:
+        state = entry.snapshot(context)
+        if state is not None:
+            extra[entry.key] = state
     return extra
 
 
-def restore_checkpoint_extras(extra: Dict[str, Any]) -> None:
-    """Restore whatever of the known optional extras is present in a loaded
-    checkpoint; unknown keys are ignored."""
-    for name, _, restorer in _EXTRAS:
-        if name in extra:
-            restorer(extra[name])
+def restore_extras(context: Any, extra: Dict[str, Any]) -> None:
+    """Restore whatever of the declared run-owned extras is present."""
+    for entry in EXTRAS:
+        if entry.key in extra:
+            entry.restore(context, extra[entry.key])
 
 
-# (checkpoint key, context attribute) — the state the run owns on the context
-# itself.  The key is the checkpoint contract the loader reads back, so both
-# sides read one declaration instead of agreeing on an attribute lookup.
-CONTEXT_EXTRAS: Tuple[Tuple[str, str], ...] = (
-    ("optimizer", "optimizer"),
-    ("scheduler", "scheduler"),
-)
-
-
-def context_extras(context: Any) -> Dict[str, Any]:
-    """Snapshot the context-owned components that carry resumable state."""
-    extra: Dict[str, Any] = {}
-    for key, attribute in CONTEXT_EXTRAS:
-        component = getattr(context, attribute, None)
-        if component is None:
-            continue
-        extra[key] = component.state_dict()
-    return extra
+def missing_resumable_extras(extra: Dict[str, Any], options: Dict[str, bool]) -> list:
+    """Declared entries a resume cannot do without, that this one lacks."""
+    return [
+        entry.key
+        for entry in EXTRAS
+        if entry.resumable and options.get(entry.key, True) and entry.key not in extra
+    ]
 
 
 ExtraKind = Literal["module", "optimizer"]

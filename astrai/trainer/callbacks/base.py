@@ -40,11 +40,13 @@ class TrainCallback(Protocol):
     def after_optimizer_step(self, context: TrainContext):
         """Called after the optimizer and scheduler step (sync step only)."""
 
-    def on_stop_requested(self, context: TrainContext):
-        """Called when a graceful stop is agreed; the run is ending normally."""
+    def on_shutdown(self, context: TrainContext):
+        """Called once when the run ends, before ``on_train_end``.
 
-    def on_failure(self, context: TrainContext):
-        """Called when training raises; the context may be partially advanced."""
+        Persist whatever must survive the process: a graceful stop and a
+        failure both arrive here.  The callbacks must be idempotent, because a
+        normal end also passes through it.
+        """
 
 
 class CallbackFactory(BaseFactory[TrainCallback]):

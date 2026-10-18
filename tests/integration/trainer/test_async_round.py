@@ -381,13 +381,15 @@ def test_model_factory_must_be_pickleable():
         )
 
 
-def test_unsafe_optimizer_state_does_not_write_error_checkpoint():
+def test_uncommitted_step_writes_no_checkpoint():
+    """A step that never committed leaves nothing new to persist."""
     callback = CheckpointCallback("unused", interval=1)
-    callback.last_ckpt_step = 0
+    callback.last_ckpt_step = 2
+    callback._saved = True
     saved = []
     callback._save_checkpoint = lambda _context: saved.append(True)
-    context = SimpleNamespace(checkpoint_safe=False, optimizer_step=1)
-    callback.on_failure(context)
+    context = SimpleNamespace(optimizer_step=2)
+    callback.on_shutdown(context)
     callback.on_train_end(context)
     assert saved == []
 

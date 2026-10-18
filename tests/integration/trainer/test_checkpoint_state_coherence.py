@@ -4,7 +4,6 @@ A checkpoint must describe one training state: the saved weights already include
 the optimizer step of the saving batch, so the saved cursor must include it too.
 """
 
-import hashlib
 import json
 
 import pytest
@@ -197,9 +196,7 @@ def test_off_boundary_cursor_is_refused(train_config_factory, tmp_path):
     # size mismatch: the real legacy checkpoint passed this check too.
     manifest_path = checkpoint / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
-    payload = meta_path.read_bytes()
-    manifest["files"]["meta.json"]["size"] = len(payload)
-    manifest["files"]["meta.json"]["sha256"] = hashlib.sha256(payload).hexdigest()
+    manifest["files"]["meta.json"]["size"] = len(meta_path.read_bytes())
     manifest_path.write_text(json.dumps(manifest))
 
     with pytest.raises(ValueError, match="optimizer-step boundary"):

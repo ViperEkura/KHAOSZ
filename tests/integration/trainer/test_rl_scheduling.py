@@ -16,8 +16,8 @@ from astrai.config import ComponentSpec, TrainConfig
 from astrai.serialization import Checkpoint
 from astrai.trainer.context import TrainContext, TrainContextBuilder
 from astrai.trainer.optional_extras import (
-    checkpoint_extras,
-    restore_checkpoint_extras,
+    restore_extras,
+    snapshot_extras,
 )
 from astrai.trainer.rollout import BaseRewardModel, RolloutResult
 from astrai.trainer.strategy import (
@@ -224,7 +224,6 @@ def test_shared_train_batch_commits_async_round_once():
         scheduler=None,
         consumed_samples=0,
         optimizer_steps_completed=0,
-        checkpoint_safe=True,
         loss=0.0,
         metrics={},
     )
@@ -235,7 +234,6 @@ def test_shared_train_batch_commits_async_round_once():
     assert coordinator.policy_version == 1
     assert context.optimizer_steps_completed == 1
     assert context.consumed_samples == 3
-    assert context.checkpoint_safe
     assert not torch.equal(before, strategy.model.embed.weight)
 
 
@@ -398,9 +396,10 @@ def test_rng_state_round_trip():
     torch.manual_seed(1)
     first = (torch.rand(3), random.random())
 
-    state = checkpoint_extras()["rng_state"]
+    context = SimpleNamespace(optimizer=None, scheduler=None)
+    state = snapshot_extras(context)["rng_state"]
     diverged = (torch.rand(3), random.random())
-    restore_checkpoint_extras({"rng_state": state})
+    restore_extras(SimpleNamespace(), {"rng_state": state})
     replayed = (torch.rand(3), random.random())
 
     # Restore rewinds to the snapshot, so the post-restore draw replays the

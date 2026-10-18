@@ -46,31 +46,23 @@ class TrainSession:
             raise
         return self.context
 
-    def _shutdown_steps(
-        self, context: TrainContext, failed: bool
-    ) -> list[tuple[str, Callable[[], None]]]:
+    def _shutdown_steps(self, context: TrainContext, failed: bool):
         """The cleanup steps of one session, in the order they must run.
 
-        The workers go first: a worker killed by the same signal that stopped
-        training would otherwise raise from PyTorch's SIGCHLD handler in the
-        middle of the checkpoint save.  The observers run while the rollout is
-        still alive, because an online checkpoint persists state the rollout
-        owns.  Every step is attempted even when an earlier one raised.
+        The registered hooks go first: they stop the DataLoader workers, and a
+        worker killed by the same signal that stopped training would otherwise
+        raise from PyTorch's SIGCHLD handler in the middle of the checkpoint
+        save.  The observers then persist state while the rollout is still
+        alive, because an online checkpoint captures state the rollout owns.
+        Every step is attempted even when an earlier one raised.
         """
-        steps: list[tuple[str, Callable[[], None]]] = []
-        if context.dataloader is not None:
-            steps.append(("close_dataloader", context.close_dataloader))
-        if failed:
-            steps.append(
-                ("on_failure", lambda: self._call_callbacks("on_failure", context))
-            )
-        elif context.stop_requested:
-            steps.append(
-                (
-                    "on_stop_requested",
-                    lambda: self._call_callbacks("on_stop_requested", context),
-                )
-            )
+        steps: list[tuple[str, Callable[[], None]]] = [
+            ("shutdown_hooks", context.run_shutdown),
+            (
+                "on_shutdown",
+                lambda: self._call_callbacks("on_shutdown", context),
+            ),
+        ]
         if context.async_rollout is not None:
             steps.append(("close_rollout", context.async_rollout.close))
         steps.append(

@@ -29,7 +29,7 @@ from astrai.trainer.components import (
     build_optimizer_component,
     build_scheduler_component,
     create_ref_model,
-    load_optimizer_state_dict,
+    stop_loader_workers,
 )
 from astrai.trainer.context.resume import PreloadedState, ResumeLoader
 from astrai.trainer.context.state import TrainContext
@@ -37,7 +37,7 @@ from astrai.trainer.optional_extras import (
     component_extra_keys,
     load_component_extra,
     require_component_extras,
-    restore_checkpoint_extras,
+    restore_extras,
 )
 from astrai.trainer.rollout.setup import configure_rollout
 from astrai.trainer.strategy import StrategyFactory
@@ -251,32 +251,23 @@ class TrainContextBuilder:
                 0,
                 shuffle=False,
             )
+            context.on_shutdown(
+                "val_loader", partial(stop_loader_workers, context.val_dataloader)
+            )
 
     def _restore_optimizer_state(
         self, context: TrainContext, state: Optional[PreloadedState] = None
     ) -> None:
+        """Hand every declared extra to its restorer; the table owns the order."""
         extras = (
             context.checkpoint.extra
             if context.checkpoint
             else (state.component_states if state is not None else {})
         )
-        if "optimizer" in extras:
-            if context.checkpoint and "scheduler" in extras:
-                context.optimizer.load_state_dict(extras["optimizer"])
-            else:
-                load_optimizer_state_dict(context.optimizer, extras["optimizer"])
-            logger.info("Loaded checkpoint optimizer state")
-        if "scheduler" in extras and context.scheduler is not None:
-            context.scheduler.load_state_dict(extras["scheduler"])
-            for group, lr in zip(
-                context.optimizer.param_groups,
-                context.scheduler.get_last_lr(),
-                strict=True,
-            ):
-                group["lr"] = lr
-            logger.info("Loaded checkpoint scheduler state")
-        if context.checkpoint:
-            restore_checkpoint_extras(context.checkpoint.extra)
+        if not extras:
+            return
+        restore_extras(context, extras)
+        logger.info("Restored %s from the checkpoint", ", ".join(sorted(extras)))
 
     def _create_strategy(self, context: TrainContext, executor: BaseExecutor) -> Dict:
         cfg = self.config

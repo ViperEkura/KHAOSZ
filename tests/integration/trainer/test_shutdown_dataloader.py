@@ -76,7 +76,7 @@ class _StopAndRecordWorkers(TrainCallback):
         if self.worker_pids or context.optimizer_step < self.steps:
             return
         self.worker_pids = [
-            worker.pid for worker in getattr(context.dataloader_iter, "_workers", [])
+            worker.pid for worker in getattr(context.train_iterator, "_workers", [])
         ]
         if self.kill_workers:
             for pid in self.worker_pids:

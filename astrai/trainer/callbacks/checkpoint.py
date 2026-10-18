@@ -10,9 +10,8 @@ from typing import TYPE_CHECKING, Dict, Optional
 from astrai.serialization import Checkpoint
 from astrai.trainer.callbacks.base import CallbackFactory, TrainCallback
 from astrai.trainer.optional_extras import (
-    checkpoint_extras,
-    context_extras,
     snapshot_component_extras,
+    snapshot_extras,
 )
 
 if TYPE_CHECKING:
@@ -75,13 +74,6 @@ class CheckpointCallback(TrainCallback):
                     f"epoch_{context.epoch}_step_{context.optimizer_step}",
                 )
                 extra = self.save_extra_fn(context)
-                meta = {
-                    **context.config.to_dict(),
-                    "optimizer_step": context.optimizer_step,
-                }
-                policy_version = context.strategy.policy_version
-                if policy_version is not None:
-                    meta["policy_version"] = policy_version
                 context.checkpoint = Checkpoint(
                     state_dict=state_dict,
                     epoch=context.epoch,
@@ -90,43 +82,60 @@ class CheckpointCallback(TrainCallback):
                     consumed_samples=context.consumed_samples,
                     config=context.model_config,
                     extra=extra,
-                    meta=meta,
+                    meta=self._meta(context),
                 )
                 context.checkpoint.save(save_path)
                 _copy_tokenizer_files(context.param_path, save_path)
         self.last_ckpt_step = context.optimizer_step
         self._saved = True
 
+    @staticmethod
+    def _meta(context: TrainContext) -> Dict:
+        """Run state plus what a report reads; not a copy of the CLI config."""
+        cfg = context.config
+        meta = {
+            "optimizer_step": context.optimizer_step,
+            "strategy": cfg.strategy,
+            "dp_size": context.dp_size,
+            "cp_size": cfg.cp_size,
+            "batch_per_device": cfg.batch_per_device,
+            "grad_accum_steps": cfg.grad_accum_steps,
+            # The resume check compares these against the configured types.
+            "optimizer": {"type": cfg.optimizer.type},
+            "scheduler": {"type": cfg.scheduler.type},
+        }
+        policy_version = context.strategy.policy_version
+        if policy_version is not None:
+            meta["policy_version"] = policy_version
+        return meta
+
     def after_optimizer_step(self, context: TrainContext):
         if context.optimizer_step - self.last_ckpt_step >= self.interval:
             self._save_checkpoint(context)
 
     def _save_pending(self, context: TrainContext):
-        """Persist an interrupted run, unless that is unsafe or already done."""
-        if not context.checkpoint_safe:
-            return
+        """Persist the current step unless that step is already on disk.
+
+        The step counter advances only when a step commits, so "the same step"
+        is exactly "nothing new was applied since the last save".
+        """
         if self._saved and context.optimizer_step == self.last_ckpt_step:
             return
         self._save_checkpoint(context)
 
-    def on_train_end(self, context: TrainContext):
-        if context.checkpoint_safe and context.optimizer_step != self.last_ckpt_step:
-            self._save_checkpoint(context)
-
-    def on_stop_requested(self, context: TrainContext):
-        # A requested stop must always leave a checkpoint behind: on a slow
+    def on_shutdown(self, context: TrainContext):
+        # An interrupted run must always leave a checkpoint behind: on a slow
         # start the signal can arrive before the first optimizer step, where
         # the change-based guard alone would skip the save entirely.
         self._save_pending(context)
 
-    def on_failure(self, context: TrainContext):
-        self._save_pending(context)
+    def on_train_end(self, context: TrainContext):
+        if context.optimizer_step != self.last_ckpt_step:
+            self._save_checkpoint(context)
 
     @staticmethod
     def save_extra(context: TrainContext) -> Dict:
-        extra = context_extras(context)
-        # Global accelerator state (fp8 rings, RNG) via the extras registry.
-        extra.update(checkpoint_extras())
+        extra = snapshot_extras(context)
         # Strategy-owned tensor state (critic, frozen reference, ...) via the
         # declarative table in optional_extras: which keys exist, where the
         # state lives and how it is snapshotted are declared once there, so

@@ -7,12 +7,17 @@ import os
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from astrai.parallel.executor.base import BaseExecutor, strip_compile_prefix
+from astrai.parallel.executor.base import (
+    BaseExecutor,
+    ExecutorFactory,
+    strip_compile_prefix,
+)
 from astrai.parallel.setup import get_rank, get_world_size
 
 logger = logging.getLogger(__name__)
 
 
+@ExecutorFactory.register("ddp")
 class DDPExecutor(BaseExecutor):
     def __init__(
         self,

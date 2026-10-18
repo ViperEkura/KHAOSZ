@@ -2,6 +2,7 @@
 
 import importlib
 import inspect
+import logging
 from copy import deepcopy
 from typing import Any, Callable, Dict, Optional
 
@@ -23,6 +24,8 @@ from astrai.parallel.executor import (
 )
 from astrai.parallel.setup import follow_parent
 from astrai.parallel.topology import ParallelTopology
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_component(path: str) -> Any:
@@ -230,6 +233,24 @@ def resolve_collate(spec: ComponentSpec):
         if train_type == "grpo":
             return grpo_collate_fn
     return None
+
+
+def stop_loader_workers(target) -> None:
+    """Join the workers a DataLoader (or its live iterator) still owns.
+
+    A worker killed by the same signal that stopped training raises from
+    PyTorch's SIGCHLD handler, and that error must never land inside a
+    checkpoint save.
+    """
+    for candidate in (target, getattr(target, "_iterator", None)):
+        shutdown = getattr(candidate, "_shutdown_workers", None)
+        if shutdown is None:
+            continue
+        try:
+            shutdown()
+        except Exception:
+            logger.debug("DataLoader worker shutdown failed", exc_info=True)
+        return
 
 
 def build_dataloader(

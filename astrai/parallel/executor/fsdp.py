@@ -15,12 +15,14 @@ from torch.distributed.tensor import DTensor
 from astrai.parallel.executor.base import (
     _COMPILE_PREFIX,
     BaseExecutor,
+    ExecutorFactory,
     RolloutCapabilities,
 )
 
 logger = logging.getLogger(__name__)
 
 
+@ExecutorFactory.register("fsdp")
 class FSDPExecutor(BaseExecutor):
     """FSDP executor using `torch.distributed.fsdp.fully_shard` (per-module API).
 

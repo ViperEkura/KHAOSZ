@@ -24,7 +24,11 @@ from astrai.serialization import (
     looks_like_hf_state_dict,
 )
 from astrai.trainer.context.state import samples_per_step
-from astrai.trainer.optional_extras import CONTEXT_EXTRAS
+from astrai.trainer.optional_extras import (
+    EXTRA_KEYS,
+    EXTRAS,
+    missing_resumable_extras,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,13 +91,18 @@ class ResumeLoader:
             state.model_config = adapt_config(load_json(config_path), self.param_path)
 
         options = cfg.state_dict_load_options(self.resume)
-        context_keys = [name for name, _ in CONTEXT_EXTRAS]
-        extra_keys = [name for name in context_keys if options[name]]
+        # The optional extras carry no resumable state, so a warm start
+        # keeps its own RNG instead of inheriting a foreign one.
+        extra_keys = [
+            entry.key
+            for entry in EXTRAS
+            if options.get(entry.key, True) and (entry.resumable or self.resume)
+        ]
         if self.resume:
             extra_keys.extend(
                 path.stem
                 for path in Path(self.param_path).glob("*.pt")
-                if path.stem not in context_keys
+                if path.stem not in EXTRA_KEYS
             )
         checkpoint = Checkpoint.load_any(
             self.param_path, extra_keys=extra_keys, load_weights=options["model"]
@@ -114,10 +123,12 @@ class ResumeLoader:
 
         if self.resume:
             self._take_cursor(state, checkpoint, options)
-        for name in context_keys:
+        for entry in EXTRAS:
+            name = entry.key
             if name not in checkpoint.extra:
                 continue
-            self._check_component_type(name, checkpoint)
+            if hasattr(getattr(self.config, name, None), "type"):
+                self._check_component_type(name, checkpoint)
             state.component_states[name] = checkpoint.extra[name]
 
     def _take_cursor(
@@ -125,12 +136,7 @@ class ResumeLoader:
     ) -> None:
         """Adopt the checkpoint's epoch and data cursor, refusing stale layouts."""
         cfg = self.config
-        context_keys = [name for name, _ in CONTEXT_EXTRAS]
-        missing = [
-            name
-            for name in context_keys
-            if options[name] and name not in checkpoint.extra
-        ]
+        missing = missing_resumable_extras(checkpoint.extra, options)
         if missing:
             raise ValueError(
                 f"Cannot resume from {self.param_path}: no "

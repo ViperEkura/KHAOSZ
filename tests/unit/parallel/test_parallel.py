@@ -67,3 +67,22 @@ def test_setup_parallel_applies_process_group_timeout(monkeypatch):
         pass
 
     assert captured["timeout"] == timedelta(seconds=120)
+
+
+def test_every_advertised_executor_is_registered():
+    """The factory must resolve every name the docs advertise.
+
+    A registry entry is wired by an import-time decorator, so a split or a
+    moved class can silently drop it; this CPU test catches that instead of the
+    GPU-only DDP/FSDP suites.
+    """
+    from astrai.parallel.executor import (
+        DDPExecutor,
+        ExecutorFactory,
+        FSDPExecutor,
+        NoneExecutor,
+    )
+
+    assert ExecutorFactory.get_component_class("none") is NoneExecutor
+    assert ExecutorFactory.get_component_class("ddp") is DDPExecutor
+    assert ExecutorFactory.get_component_class("fsdp") is FSDPExecutor

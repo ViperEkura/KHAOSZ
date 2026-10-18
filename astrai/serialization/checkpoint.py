@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -17,11 +18,16 @@ import torch.distributed as dist
 
 from astrai.parallel.setup import get_rank
 
+logger = logging.getLogger(__name__)
+
 _META_FILE = "meta.json"
 _CONFIG_FILE = "config.json"
 _WEIGHTS_FILE = "model.safetensors"
 _MANIFEST_FILE = "manifest.json"
-_CHECKPOINT_FORMAT_VERSION = 1
+#: v2 dropped the per-file checksum: the atomic directory publish already
+#: guarantees "visible means complete", and hashing 8.5 GB cost ~45 s per save.
+_CHECKPOINT_FORMAT_VERSION = 2
+_SUPPORTED_FORMAT_VERSIONS = (1, 2)
 
 
 def save_safetensors(state_dict: Dict, path: Union[str, Path]):
@@ -101,13 +107,6 @@ def cleanup_stale_staging(save_path: Path, max_age: float = STALE_STAGING_SECOND
             continue
 
 
-def _carry_over(source: Path, target: Path) -> None:
-    """Copy files this save does not produce, such as the tokenizer snapshot."""
-    for path in source.iterdir():
-        if path.is_file() and not (target / path.name).exists():
-            shutil.copy2(path, target / path.name)
-
-
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as file:
@@ -138,10 +137,7 @@ def _checkpoint_manifest(
     files = {}
     for path in sorted(save_path.iterdir()):
         if path.is_file() and path.name != _MANIFEST_FILE:
-            files[path.name] = {
-                "size": path.stat().st_size,
-                "sha256": _sha256(path),
-            }
+            files[path.name] = {"size": path.stat().st_size}
     return {
         "format_version": _CHECKPOINT_FORMAT_VERSION,
         "created_at": meta["timestamp"],
@@ -159,11 +155,9 @@ def _validate_manifest(
 ) -> Dict:
     def validate() -> Dict:
         manifest = load_json(save_path / _MANIFEST_FILE)
-        if manifest.get("format_version") != _CHECKPOINT_FORMAT_VERSION:
-            raise ValueError(
-                "Unsupported checkpoint format version: "
-                f"{manifest.get('format_version')}"
-            )
+        version = manifest.get("format_version")
+        if version not in _SUPPORTED_FORMAT_VERSIONS:
+            raise ValueError(f"Unsupported checkpoint format version: {version}")
 
         files = manifest.get("files")
         if not isinstance(files, dict):
@@ -180,7 +174,11 @@ def _validate_manifest(
                 raise ValueError(f"Checkpoint file is missing: {name}")
             if path.stat().st_size != descriptor.get("size"):
                 raise ValueError(f"Checkpoint file size mismatch: {name}")
-            if verify_checksums and _sha256(path) != descriptor.get("sha256"):
+            if (
+                verify_checksums
+                and "sha256" in descriptor
+                and _sha256(path) != descriptor["sha256"]
+            ):
                 raise ValueError(f"Checkpoint file checksum mismatch: {name}")
         return manifest
 
@@ -257,13 +255,20 @@ class Checkpoint:
     meta: Dict[str, Any] = field(default_factory=dict)
     config: Dict[str, Any] = field(default_factory=dict)
 
-    def save(self, save_dir: str):
+    def save(self, save_dir: str) -> bool:
+        """Publish this state; ``False`` when that step is already on disk."""
         save_path = Path(save_dir)
         save_path.parent.mkdir(parents=True, exist_ok=True)
         if save_path.exists() and not save_path.is_dir():
             raise FileExistsError(
                 f"Checkpoint path exists and is not a directory: {save_path}"
             )
+        if (save_path / _MANIFEST_FILE).exists():
+            # Publication is write-once per step: the interval save and the
+            # shutdown save at the same step describe the same state, so the
+            # second one is a no-op instead of a re-publish.
+            logger.info("Checkpoint %s is already published; keeping it", save_path)
+            return False
         cleanup_stale_staging(save_path)
 
         staging_path = Path(
@@ -279,7 +284,6 @@ class Checkpoint:
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             **self.meta,
         }
-        retired_path: Optional[Path] = None
         try:
             save_json(meta, staging_path / _META_FILE)
             save_json(self.config, staging_path / _CONFIG_FILE)
@@ -294,31 +298,41 @@ class Checkpoint:
                     _sync_file(path)
             _sync_directory(staging_path)
 
-            # Re-publishing an existing step (re-runs into the same output
-            # directory) atomically retires the old payload first; a crash
-            # between the two renames leaves the previous checkpoint hidden
-            # under the retired name instead of a partial directory.
-            retired_path = None
             if save_path.exists():
-                retired_path = Path(
-                    tempfile.mkdtemp(
-                        prefix=f".{save_path.name}.retired-",
-                        dir=save_path.parent,
-                    )
-                )
-                retired_path.rmdir()
-                os.replace(save_path, retired_path)
-                # Re-publishing the same step must not drop files the save
-                # does not write itself (tokenizer, metric history).
-                _carry_over(retired_path, staging_path)
+                # A directory without a manifest is not a checkpoint: a crashed
+                # writer stages and never publishes, so this is manual junk.
+                logger.warning("Replacing %s: it carries no manifest", save_path)
+                shutil.rmtree(save_path)
             os.replace(staging_path, save_path)
             _sync_directory(save_path.parent)
         except BaseException:
             shutil.rmtree(staging_path, ignore_errors=True)
             raise
-        finally:
-            if retired_path is not None:
-                shutil.rmtree(retired_path, ignore_errors=True)
+        return True
+
+    @classmethod
+    def verify(cls, save_dir: str, checksums: bool = True) -> Dict[str, Any]:
+        """Validate a published checkpoint without loading its weights.
+
+        Sizes are always checked. Per-file checksums are verified only when
+        the manifest carries them (v1 directories still do); v2 publishes
+        without hashing, because the atomic rename already means "visible
+        means complete".
+        """
+        save_path = Path(save_dir)
+        manifest = _validate_manifest(save_path, verify_checksums=checksums)
+        files = manifest.get("files") or {}
+        return {
+            "path": str(save_path),
+            "format_version": manifest.get("format_version"),
+            "files": len(files),
+            "tensors": len(manifest.get("tensors") or ()),
+            "checksums": (
+                "verified"
+                if any("sha256" in descriptor for descriptor in files.values())
+                else "absent"
+            ),
+        }
 
     @classmethod
     def load(

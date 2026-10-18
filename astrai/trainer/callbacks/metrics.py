@@ -230,8 +230,5 @@ class MetricCallback(TrainCallback):
         self._flush()
         self.last_log_flush_step = context.optimizer_step
 
-    def on_stop_requested(self, context):
-        self._flush()
-
-    def on_failure(self, context):
+    def on_shutdown(self, context):
         self._flush()

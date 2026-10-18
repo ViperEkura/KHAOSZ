@@ -1,5 +1,6 @@
 import logging
 import random
+from functools import partial
 from typing import List, Optional
 
 import numpy as np
@@ -11,6 +12,7 @@ from astrai.trainer.callbacks import (
     CallbackFactory,
     TrainCallback,
 )
+from astrai.trainer.components import stop_loader_workers
 from astrai.trainer.context import TrainContext, TrainContextBuilder
 from astrai.trainer.session import TrainSession
 
@@ -105,7 +107,6 @@ class Trainer:
         """Publish one policy version; the cursor follows the version, not the call."""
         self._call_callbacks("before_optimizer_step", context)
         coordinator = context.async_rollout
-        context.checkpoint_safe = False
         version_before = coordinator.policy_version
         try:
             context.strategy.optimizer_step(context.optimizer)
@@ -119,7 +120,6 @@ class Trainer:
                 context.optimizer_steps_completed += 1
                 if new_data:
                     context.consumed_samples += batch.prompts.shape[0] * context.dp_size
-                context.checkpoint_safe = True
 
     def _train_batch(self, context: TrainContext, batch) -> None:
         executor = context.executor
@@ -185,7 +185,10 @@ class Trainer:
         if not context.stop_agreed:
             self._agree_stop(context)
         iterator = iter(batches)
-        context.dataloader_iter = iterator
+        context.train_iterator = iterator
+        # The session runs this before any checkpoint is written: a worker
+        # killed by the stop signal would otherwise raise mid-save.
+        context.on_shutdown("train_loader", partial(stop_loader_workers, iterator))
         while not self._should_stop(context):
             try:
                 batch = next(iterator)

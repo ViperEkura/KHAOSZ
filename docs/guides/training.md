@@ -92,8 +92,7 @@ on_train_end
 | `on_batch_end` | Every batch | — |
 | `after_optimizer_step` | Every accumulation window, after `optimizer.step()` and `scheduler.step()` | `CheckpointCallback` |
 | `on_epoch_end` | End of each epoch | `MetricCallback`, `ProgressBarCallback` |
-| `on_stop_requested` | A graceful stop was agreed; the run is ending normally | `CheckpointCallback`, `MetricCallback` |
-| `on_failure` | Training raised; the context may be partially advanced | `CheckpointCallback`, `MetricCallback` |
+| `on_shutdown` | The run is ending: a graceful stop or a failure | `CheckpointCallback`, `MetricCallback` |
 | `on_train_end` | Training exits after `on_train_begin` completes (via `finally`) | `GradientCheckpointingCallback`, `CheckpointCallback`, `MetricCallback` |
 
 Default callbacks (in order): `gradient_checkpointing` (activation checkpointing, optional), `checkpoint` (safetensors, rank-0), `metric` (JSONL + validation, rank-0), `progress_bar` (tqdm, rank-0), `gradient_clipping`. The gradient-clipping callback is always registered and always calls `executor.clip_grad_norm()` with the numeric `max_grad_norm` value.
@@ -343,12 +342,15 @@ Checkpoint(state_dict, epoch, consumed_samples, extra, meta, config)
   └── load(save_dir, broadcast=False, verify_checksums=False)    loads locally or broadcasts from rank-0
 ```
 
-`Checkpoint.save()` writes to a hidden sibling staging directory, records file
-sizes and SHA-256 checksums in `manifest.json`, flushes the files, and atomically
-renames the completed directory into place. Published checkpoint directories are
-immutable: saving to an existing non-empty path raises `FileExistsError`. Legacy
-checkpoints without a manifest remain loadable. Pass `verify_checksums=True` when
-loading to hash every published file.
+`Checkpoint.save()` writes to a hidden sibling staging directory, records the file
+sizes in `manifest.json`, flushes the files, and atomically renames the completed
+directory into place. That rename is the completeness guarantee: a directory is
+never visible half-written, which is why v2 no longer hashes its files (hashing an
+8.5 GB checkpoint cost ~45 s per save). Publication is write-once per step — saving
+to an already-published step is a no-op and returns `False`, so the interval save
+and the shutdown save can both run without re-writing anything. Legacy v1
+directories still load, and `Checkpoint.verify(dir)` re-checks their checksums on
+demand.
 
 During training, `CheckpointCallback` uses the executor checkpoint context so
 only rank 0 receives a state dict and calls `save()`.
@@ -426,11 +428,11 @@ same signal that stopped training, and PyTorch turns a dead worker into a
 `RuntimeError` from its SIGCHLD handler — one that can land in the middle of the
 save and cost the checkpoint.
 
-The shutdown is an ordered plan owned by `TrainSession`: close the loader, notify
-the observers (`on_stop_requested` for a graceful stop, `on_failure` for an
-exception), close the rollout, run `on_train_end`, then the final barrier. Every
-step is attempted even when an earlier one raised, so a failed save cannot also
-skip the rollout shutdown.
+The shutdown is an ordered plan owned by `TrainSession`: run the registered
+cleanup hooks (the DataLoader workers), call `on_shutdown` once on every observer,
+close the rollout, run `on_train_end`, then the final barrier. Every step is
+attempted even when an earlier one raised, so a failed save cannot also skip the
+rollout shutdown.
 
 `metric.jsonl` is a run log, not checkpoint state: it sits beside the step
 directories and is appended to, so the checkpoint directory keeps a single writer

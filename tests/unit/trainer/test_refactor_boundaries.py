@@ -198,9 +198,8 @@ def test_train_session_cleans_up_when_start_callback_fails(monkeypatch):
     context = SimpleNamespace(
         async_rollout=rollout,
         executor=SimpleNamespace(use_distributed=False),
-        dataloader=SimpleNamespace(),
         stop_requested=False,
-        close_dataloader=lambda: events.append("close_dataloader"),
+        run_shutdown=lambda: events.append("shutdown_hooks"),
     )
 
     def callback(name, _):
@@ -214,8 +213,8 @@ def test_train_session_cleans_up_when_start_callback_fails(monkeypatch):
     assert events == [
         "register",
         "on_train_begin",
-        "close_dataloader",
-        "on_failure",
+        "shutdown_hooks",
+        "on_shutdown",
         "close",
         "on_train_end",
         "unregister",
