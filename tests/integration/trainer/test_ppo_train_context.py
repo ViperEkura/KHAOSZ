@@ -172,7 +172,8 @@ def test_builder_resumes_critic_from_checkpoint(device, temp_dir, monkeypatch):
     checkpoint = Checkpoint(
         state_dict=model.state_dict(),
         epoch=0,
-        consumed_samples=2,
+        # A cursor must sit on an optimizer-step boundary to be resumable.
+        consumed_samples=0,
         config=config.to_dict(),
         extra={
             "optimizer": policy_optimizer.state_dict(),

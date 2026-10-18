@@ -85,6 +85,29 @@ def load_torch(path: Union[str, Path], broadcast: bool = False) -> Any:
     return torch.load(buf, map_location="cpu", weights_only=False)
 
 
+# A staging directory older than this was abandoned by a killed save.
+STALE_STAGING_SECONDS = 3600.0
+
+
+def cleanup_stale_staging(save_path: Path, max_age: float = STALE_STAGING_SECONDS):
+    """Remove staging directories a crashed or killed save left behind."""
+    now = time.time()
+    for staging in save_path.parent.glob(".*.tmp-*"):
+        try:
+            if not staging.is_dir() or now - staging.stat().st_mtime < max_age:
+                continue
+            shutil.rmtree(staging, ignore_errors=True)
+        except OSError:
+            continue
+
+
+def _carry_over(source: Path, target: Path) -> None:
+    """Copy files this save does not produce, such as the tokenizer snapshot."""
+    for path in source.iterdir():
+        if path.is_file() and not (target / path.name).exists():
+            shutil.copy2(path, target / path.name)
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as file:
@@ -241,6 +264,7 @@ class Checkpoint:
             raise FileExistsError(
                 f"Checkpoint path exists and is not a directory: {save_path}"
             )
+        cleanup_stale_staging(save_path)
 
         staging_path = Path(
             tempfile.mkdtemp(
@@ -284,6 +308,9 @@ class Checkpoint:
                 )
                 retired_path.rmdir()
                 os.replace(save_path, retired_path)
+                # Re-publishing the same step must not drop files the save
+                # does not write itself (tokenizer, metric history).
+                _carry_over(retired_path, staging_path)
             os.replace(staging_path, save_path)
             _sync_directory(save_path.parent)
         except BaseException:

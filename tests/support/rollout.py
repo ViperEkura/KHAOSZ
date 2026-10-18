@@ -56,7 +56,7 @@ class RandomTokenDataset(Dataset):
 
 
 class FakeExecutor:
-    """Executor stub tracking ``sync_gradients`` and providing ``unwrap_model``."""
+    """Executor stub tracking ``sync_gradients`` and providing ``model_state_dict``."""
 
     use_distributed = False
 
@@ -67,5 +67,5 @@ class FakeExecutor:
     def sync_gradients(self):
         return self._sync_gradients
 
-    def unwrap_model(self, model):
+    def model_state_dict(self, model):
         return model.state_dict()

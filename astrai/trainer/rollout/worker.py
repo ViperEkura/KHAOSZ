@@ -7,6 +7,7 @@ from typing import List, Optional, Tuple
 
 import torch
 
+from astrai.parallel.setup import die_with_parent
 from astrai.tokenize import AutoTokenizer
 from astrai.trainer.backend import ReplicaBackend
 from astrai.trainer.rollout.batching import merge_rollouts, slice_batch
@@ -44,6 +45,7 @@ class RolloutWorkerSpec:
 
 
 def run_rollout_worker(conn, spec: RolloutWorkerSpec):
+    die_with_parent()
     channel = None
     failed = False
     request_id = 0

@@ -40,8 +40,11 @@ class TrainCallback(Protocol):
     def after_optimizer_step(self, context: TrainContext):
         """Called after the optimizer and scheduler step (sync step only)."""
 
-    def on_error(self, context: TrainContext):
-        """Called when an error occurs during training."""
+    def on_stop_requested(self, context: TrainContext):
+        """Called when a graceful stop is agreed; the run is ending normally."""
+
+    def on_failure(self, context: TrainContext):
+        """Called when training raises; the context may be partially advanced."""
 
 
 class CallbackFactory(BaseFactory[TrainCallback]):

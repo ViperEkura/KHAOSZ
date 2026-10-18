@@ -47,6 +47,10 @@ class MetricCallback(TrainCallback):
         self._next_val_step = 0
 
         self.ckpt_dir = Path(ckpt_dir) if ckpt_dir else Path.cwd() / "checkpoint"
+        # A run log, not checkpoint state: the checkpoint directory is published
+        # atomically by its own writer, and a second writer inside it made a
+        # re-published step drop the records of the steps before it.
+        self.log_path = self.ckpt_dir / "metric.jsonl"
 
         self.log_cache = []
 
@@ -155,13 +159,33 @@ class MetricCallback(TrainCallback):
 
     def on_train_begin(self, context: TrainContext):
         self.last_log_flush_step = context.optimizer_step
+        # A resumed run replays the steps the crashed one logged after its last
+        # checkpoint; drop those records so the log holds one pass per step.
+        if context.checkpoint is not None:
+            self._drop_records_after(context.optimizer_step)
 
     @only_on_rank(0)
-    def _flush(self, epoch, step):
-        log_file = self.ckpt_dir / f"epoch_{epoch}_step_{step}" / "metric.jsonl"
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_file, "w") as f:
+    def _drop_records_after(self, step: int):
+        if not self.log_path.exists():
+            return
+        kept = []
+        for line in self.log_path.read_text().splitlines():
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if int(record.get("step", 0)) <= step:
+                kept.append(line)
+        self.log_path.write_text("".join(f"{line}\n" for line in kept))
+
+    @only_on_rank(0)
+    def _flush(self):
+        if not self.log_cache:
+            return
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.log_path, "a") as f:
             f.writelines(json.dumps(log) + "\n" for log in self.log_cache)
+        self.log_cache.clear()
 
     def before_optimizer_step(self, context):
         # GradSNR keeps model-sized first-moment state. Only update it when
@@ -196,19 +220,18 @@ class MetricCallback(TrainCallback):
 
     def after_optimizer_step(self, context):
         if context.optimizer_step - self.last_log_flush_step >= self.save_interval:
-            self._flush(context.epoch, context.optimizer_step)
+            self._flush()
             self.last_log_flush_step = context.optimizer_step
 
     def on_epoch_end(self, context):
         self._append("epoch", context)
 
     def on_train_end(self, context):
-        if (
-            self.last_log_flush_step is None
-            or context.optimizer_step != self.last_log_flush_step
-        ):
-            self._flush(context.epoch, context.optimizer_step)
-            self.last_log_flush_step = context.optimizer_step
+        self._flush()
+        self.last_log_flush_step = context.optimizer_step
 
-    def on_error(self, context):
-        self._flush(context.epoch, context.optimizer_step)
+    def on_stop_requested(self, context):
+        self._flush()
+
+    def on_failure(self, context):
+        self._flush()

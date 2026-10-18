@@ -127,21 +127,10 @@ class BaseStrategy(ABC):
         )
 
     def compute_loss(self, batch: Dict[str, Tensor]) -> Tensor:
-        """Compute loss for the given batch.
-
-        Args:
-            batch: Dictionary containing batch tensors
-
-        Returns:
-            Computed loss tensor
-        """
+        """Scalar view of :meth:`compute_loss_output`, for callers that need one."""
         return self.compute_loss_output(batch)["loss"]
 
     def compute_loss_output(self, batch: Dict[str, Tensor]) -> LossOutput:
-        if type(self).forward_tokens is BaseStrategy.forward_tokens:
-            # Legacy contract: a strategy overriding only compute_loss
-            # (returning a tensor) still gets a normalized LossOutput.
-            return self._normalize_output(self.compute_loss(batch))
         batch = self.prepare_batch(batch)
         forward = self.forward_tokens(batch)
         tokens = self.reduce_loss(forward, batch)
@@ -181,12 +170,6 @@ class BaseStrategy(ABC):
             "loss": total_loss,
             "metrics": {name: value.detach().item() for name, value in metrics.items()},
         }
-
-    @staticmethod
-    def _normalize_output(output: Union[LossOutput, Tensor]) -> LossOutput:
-        if isinstance(output, dict):
-            return output
-        return {"loss": output, "metrics": {"loss": output.detach().item()}}
 
     def supports_online(self) -> bool:
         """Whether this strategy can operate with a rollout runner.

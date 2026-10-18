@@ -387,7 +387,7 @@ def test_unsafe_optimizer_state_does_not_write_error_checkpoint():
     saved = []
     callback._save_checkpoint = lambda _context: saved.append(True)
     context = SimpleNamespace(checkpoint_safe=False, optimizer_step=1)
-    callback.on_error(context)
+    callback.on_failure(context)
     callback.on_train_end(context)
     assert saved == []
 

@@ -43,6 +43,7 @@ from astrai.trainer.components import (
     load_optimizer_state_dict,
 )
 from astrai.trainer.optional_extras import (
+    CONTEXT_EXTRAS,
     component_extra_keys,
     load_component_extra,
     require_component_extras,
@@ -55,6 +56,16 @@ from astrai.trainer.strategy import BaseStrategy, StrategyFactory
 logger = logging.getLogger(__name__)
 
 
+def samples_per_step(config: TrainConfig, dp_size: int) -> int:
+    """Samples one optimizer step consumes; the unit of the data cursor.
+
+    The cursor, the saved ``consumed_samples`` and the resume check all read
+    this one definition, so "one step" is the same number of samples wherever
+    it is counted.
+    """
+    return config.batch_per_device * dp_size * config.grad_accum_steps
+
+
 @dataclass
 class TrainContext:
     model: nn.Module = field(default=None)
@@ -62,6 +73,9 @@ class TrainContext:
     dataset: Optional[Dataset] = field(default=None)
     val_dataset: Optional[Dataset] = field(default=None)
     dataloader: DataLoader = field(default=None)
+    #: Iterator currently being drained; owned by the trainer so shutdown can
+    #: stop its workers before anything is written.
+    dataloader_iter: Any = field(default=None)
     optimizer: OptimizerProtocol = field(default=None)
     scheduler: SchedulerProtocol = field(default=None)
     checkpoint: Checkpoint = field(default=None)
@@ -81,8 +95,14 @@ class TrainContext:
     #: own sampling params. ``None`` keeps the legacy validate_online path.
     val_evaluator: Optional["RolloutEvaluator"] = field(default=None)
     async_rollout: Optional["RolloutRunner"] = field(default=None)
-    optimizer_steps_completed: Optional[int] = field(default=None)
+    #: Committed optimizer steps. Advanced once per commit in every rollout
+    #: mode, so a checkpoint's step number never has to be derived from the
+    #: data cursor (a batch that is replayed yields several steps).
+    optimizer_steps_completed: int = field(default=0)
     checkpoint_safe: bool = field(default=True)
+    #: A stop request that every rank has agreed on, so leaving the loop cannot
+    #: strand a peer inside a collective.
+    stop_agreed: bool = field(default=False)
 
     world_size: int = field(default=1)
     rank: int = field(default=0)
@@ -122,13 +142,32 @@ class TrainContext:
     def request_stop(self) -> None:
         self._stop_event.set()
 
+    def close_dataloader(self) -> None:
+        """Stop DataLoader workers so their death cannot abort the shutdown save."""
+        train_iterator = self.dataloader_iter
+        self.dataloader_iter = None
+        self._stop_iterator(train_iterator)
+        self._stop_iterator(getattr(self.val_dataloader, "_iterator", None))
+
+    @staticmethod
+    def _stop_iterator(iterator) -> None:
+        shutdown = getattr(iterator, "_shutdown_workers", None)
+        if shutdown is None:
+            return
+        try:
+            shutdown()
+        except Exception:
+            logger.debug("DataLoader worker shutdown failed", exc_info=True)
+
+    @property
+    def samples_per_step(self) -> int:
+        """Samples one optimizer step consumes; the unit of the data cursor."""
+        return samples_per_step(self.config, self.dp_size)
+
     @property
     def optimizer_step(self) -> int:
-        if self.optimizer_steps_completed is not None:
-            return self.optimizer_steps_completed
-        return self.consumed_samples // (
-            self.config.batch_per_device * self.dp_size * self.config.grad_accum_steps
-        )
+        """Committed optimizer steps; the checkpoint's ``meta.optimizer_step``."""
+        return self.optimizer_steps_completed
 
 
 @dataclass
@@ -137,6 +176,7 @@ class _PreloadedState:
     state_dict: Optional[Dict] = None
     epoch: int = 0
     consumed_samples: int = 0
+    optimizer_steps_completed: int = 0
     checkpoint: Optional[Checkpoint] = None
     component_states: Dict = field(default_factory=dict)
 
@@ -250,12 +290,13 @@ class TrainContextBuilder:
                     load_json(config_path), self._param_path
                 )
             options = cfg.state_dict_load_options(self._resume)
-            extra_keys = [name for name in ("optimizer", "scheduler") if options[name]]
+            context_keys = [name for name, _ in CONTEXT_EXTRAS]
+            extra_keys = [name for name in context_keys if options[name]]
             if self._resume:
                 extra_keys.extend(
                     path.stem
                     for path in Path(self._param_path).glob("*.pt")
-                    if path.stem not in ("optimizer", "scheduler")
+                    if path.stem not in context_keys
                 )
             checkpoint = Checkpoint.load_any(
                 self._param_path, extra_keys=extra_keys, load_weights=options["model"]
@@ -276,22 +317,40 @@ class TrainContextBuilder:
                 state.state_dict = checkpoint.state_dict if options["model"] else None
                 state.model_config = checkpoint.config or state.model_config
                 if self._resume:
+                    # A resume restores a whole training state or none of it: a
+                    # missing component would silently come back fresh, which is
+                    # a different run wearing the same step number.
+                    missing = [
+                        name
+                        for name in context_keys
+                        if options[name] and name not in checkpoint.extra
+                    ]
+                    if missing:
+                        raise ValueError(
+                            f"Cannot resume from {self._param_path}: no "
+                            f"{', '.join(missing)} state in the checkpoint; set "
+                            f"load_state_dict.{missing[0]}=False to accept a "
+                            "fresh one"
+                        )
                     state.epoch = checkpoint.epoch
-                    per_step = (
-                        cfg.batch_per_device
-                        * self._topology.dp_size
-                        * cfg.grad_accum_steps
-                    )
-                    # Async GRPO commits even a short final round. Rounding
-                    # its cursor to a full batch would replay those samples
-                    # after resume despite the optimizer step being saved.
-                    state.consumed_samples = (
-                        checkpoint.consumed_samples
-                        if cfg.rollout_mode == "async_round"
-                        else checkpoint.consumed_samples // per_step * per_step
-                    )
+                    per_step = samples_per_step(cfg, self._topology.dp_size)
+                    # The cursor only advances at commits, so a new checkpoint
+                    # is always on this boundary; one that is not came from an
+                    # older run and cannot say which state it describes.
+                    # Async GRPO is exempt: it advances by the prompts of a
+                    # round, which is not a whole number of steps.
+                    if (
+                        cfg.rollout_mode != "async_round"
+                        and checkpoint.consumed_samples % per_step
+                    ):
+                        raise ValueError(
+                            f"Checkpoint cursor {checkpoint.consumed_samples} is not on "
+                            f"an optimizer-step boundary ({per_step} samples); "
+                            "do not resume it unchanged"
+                        )
+                    state.consumed_samples = checkpoint.consumed_samples
                     state.checkpoint = checkpoint
-                for name in ("optimizer", "scheduler"):
+                for name in context_keys:
                     if name not in checkpoint.extra:
                         continue
                     saved_spec = checkpoint.meta.get(name)
@@ -313,6 +372,17 @@ class TrainContextBuilder:
             model = self._instantiate_model(state.model_config)
             if hasattr(model, "config"):
                 state.model_config = model.config.to_dict()
+        # The committed step count is its own quantity: a replayed batch gives
+        # several steps for one data position, so deriving it from the cursor
+        # would mislabel every one of them.
+        steps = None
+        if state.checkpoint is not None and state.checkpoint.meta:
+            steps = state.checkpoint.meta.get("optimizer_step")
+        if steps is None:
+            steps = state.consumed_samples // samples_per_step(
+                cfg, self._topology.dp_size
+            )
+        state.optimizer_steps_completed = int(steps)
         return state
 
     def _create_context(
@@ -327,6 +397,7 @@ class TrainContextBuilder:
             executor=executor,
             epoch=state.epoch,
             consumed_samples=state.consumed_samples,
+            optimizer_steps_completed=state.optimizer_steps_completed,
             checkpoint=state.checkpoint,
             param_path=self._param_path,
         )
@@ -580,7 +651,7 @@ class TrainContextBuilder:
                 requirement="critic state",
             )
 
-        state_dict = executor.unwrap_model(context.model)
+        state_dict = executor.model_state_dict(context.model)
         if executor.use_distributed:
             state_dict = broadcast_state_dict(state_dict)
         critic = self.runtime.critic_model_fn()

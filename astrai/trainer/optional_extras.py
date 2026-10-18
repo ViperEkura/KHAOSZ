@@ -99,6 +99,26 @@ def restore_checkpoint_extras(extra: Dict[str, Any]) -> None:
             restorer(extra[name])
 
 
+# (checkpoint key, context attribute) — the state the run owns on the context
+# itself.  The key is the checkpoint contract the loader reads back, so both
+# sides read one declaration instead of agreeing on an attribute lookup.
+CONTEXT_EXTRAS: Tuple[Tuple[str, str], ...] = (
+    ("optimizer", "optimizer"),
+    ("scheduler", "scheduler"),
+)
+
+
+def context_extras(context: Any) -> Dict[str, Any]:
+    """Snapshot the context-owned components that carry resumable state."""
+    extra: Dict[str, Any] = {}
+    for key, attribute in CONTEXT_EXTRAS:
+        component = getattr(context, attribute, None)
+        if component is None:
+            continue
+        extra[key] = component.state_dict()
+    return extra
+
+
 ExtraKind = Literal["module", "optimizer"]
 
 

@@ -198,6 +198,9 @@ def test_train_session_cleans_up_when_start_callback_fails(monkeypatch):
     context = SimpleNamespace(
         async_rollout=rollout,
         executor=SimpleNamespace(use_distributed=False),
+        dataloader=SimpleNamespace(),
+        stop_requested=False,
+        close_dataloader=lambda: events.append("close_dataloader"),
     )
 
     def callback(name, _):
@@ -211,7 +214,8 @@ def test_train_session_cleans_up_when_start_callback_fails(monkeypatch):
     assert events == [
         "register",
         "on_train_begin",
-        "on_error",
+        "close_dataloader",
+        "on_failure",
         "close",
         "on_train_end",
         "unregister",
@@ -249,3 +253,17 @@ def test_builder_closes_rollout_after_configuration_failure(monkeypatch):
     with pytest.raises(RuntimeError, match="rollout setup failed"):
         builder.build()
     assert closed == [True]
+
+
+def test_rollout_worker_follows_its_parent_first(monkeypatch):
+    """A replica sets its parent-death signal before touching any state."""
+    from astrai.trainer.rollout import worker as worker_module
+
+    class ParentDied(RuntimeError):
+        pass
+
+    monkeypatch.setattr(
+        worker_module, "die_with_parent", lambda: (_ for _ in ()).throw(ParentDied())
+    )
+    with pytest.raises(ParentDied):
+        worker_module.run_rollout_worker(None, None)

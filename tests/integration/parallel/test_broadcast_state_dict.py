@@ -67,14 +67,14 @@ def test_broadcast_state_dict_reuses_compatible_local_tensors():
 
 
 def _create_ref_model_worker():
-    """Verify create_ref_model works when unwrap_model returns None on non-rank-0."""
+    """Verify create_ref_model works when model_state_dict returns None on non-rank-0."""
 
     class FakeFSDPExecutor:
-        """Simulates FSDP: unwrap_model returns state_dict on rank-0, None elsewhere."""
+        """Simulates FSDP: model_state_dict returns state_dict on rank-0, None elsewhere."""
 
         use_distributed = True
 
-        def unwrap_model(self, model):
+        def model_state_dict(self, model):
             if get_rank() == 0:
                 return model.state_dict()
             return None
@@ -133,7 +133,7 @@ def _sync_old_model_worker():
     class _DistExecutor:
         use_distributed = True
 
-        def unwrap_model(self, m):
+        def model_state_dict(self, m):
             if get_rank() == 0:
                 return m.state_dict()
             return None

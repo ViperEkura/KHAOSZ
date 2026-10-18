@@ -30,3 +30,40 @@ def test_spawn_only_on_rank():
 
 def test_spawn_all_reduce():
     spawn_parallel_fn(all_reduce, world_size=2, backend="gloo")
+
+
+def test_setup_parallel_applies_process_group_timeout(monkeypatch):
+    from datetime import timedelta
+    from types import SimpleNamespace
+
+    from astrai.parallel import setup as setup_module
+
+    captured = {}
+
+    class FakeDist:
+        group = SimpleNamespace(WORLD=None)
+
+        def is_available(self):
+            return True
+
+        def is_initialized(self):
+            return False
+
+        def init_process_group(self, **kwargs):
+            captured.update(kwargs)
+
+        def destroy_process_group(self):
+            pass
+
+    monkeypatch.setattr(setup_module, "dist", FakeDist())
+    with setup_module.setup_parallel(
+        rank=0,
+        world_size=2,
+        local_rank=0,
+        backend="gloo",
+        device_type="cpu",
+        process_group_timeout=120,
+    ):
+        pass
+
+    assert captured["timeout"] == timedelta(seconds=120)

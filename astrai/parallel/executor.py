@@ -242,8 +242,14 @@ class BaseExecutor:
     def backward(self, loss: torch.Tensor):
         loss.backward()
 
-    def unwrap_model(self, model: nn.Module):
+    def model_state_dict(self, model: nn.Module):
+        """The checkpoint payload of *model*, without the compile prefix."""
         return strip_compile_prefix(model.state_dict())
+
+    @property
+    def writes_checkpoints(self) -> bool:
+        """Whether this rank owns the published checkpoint payload."""
+        return not self.use_distributed or get_rank() == 0
 
     @contextmanager
     def checkpoint_context(self, model: nn.Module):
@@ -255,8 +261,8 @@ class BaseExecutor:
             dist.barrier()
 
     def _gather_state_dict(self, model: nn.Module):
-        state_dict = self.unwrap_model(model)
-        if self.use_distributed and get_rank() != 0:
+        state_dict = self.model_state_dict(model)
+        if not self.writes_checkpoints:
             return None
         return state_dict
 
@@ -349,7 +355,7 @@ class DDPExecutor(BaseExecutor):
             return model.module
         return model
 
-    def unwrap_model(self, model: nn.Module):
+    def model_state_dict(self, model: nn.Module):
         if isinstance(model, DDP):
             return strip_compile_prefix(model.module.state_dict())
         return strip_compile_prefix(model.state_dict())
@@ -475,7 +481,7 @@ class FSDPExecutor(BaseExecutor):
 
         return total_norm.item()
 
-    def unwrap_model(self, model: nn.Module):
+    def model_state_dict(self, model: nn.Module):
         if not self.use_distributed:
             return model.state_dict()
 
@@ -491,16 +497,16 @@ class FSDPExecutor(BaseExecutor):
             k = k.removeprefix(_COMPILE_PREFIX)
             if isinstance(v, DTensor):
                 full = v.full_tensor()
-                if get_rank() == 0:
+                if self.writes_checkpoints:
                     result[k] = full
-            elif get_rank() == 0:
+            elif self.writes_checkpoints:
                 result[k] = v
 
         for module in model.modules():
             if isinstance(module, FSDPModule):
                 module.reshard()
 
-        if get_rank() != 0:
+        if not self.writes_checkpoints:
             return None
 
         return result

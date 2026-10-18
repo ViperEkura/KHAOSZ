@@ -11,6 +11,7 @@ from astrai.serialization import Checkpoint
 from astrai.trainer.callbacks.base import CallbackFactory, TrainCallback
 from astrai.trainer.optional_extras import (
     checkpoint_extras,
+    context_extras,
     snapshot_component_extras,
 )
 
@@ -51,18 +52,14 @@ class CheckpointCallback(TrainCallback):
     Checkpoint callback for trainer.
     """
 
-    extra_keys = ("optimizer", "scheduler")
-
     def __init__(
         self,
         save_dir: str,
         interval: int,
-        weight_only: bool = False,
         save_extra_fn: Optional[Callable[["TrainContext"], Dict]] = None,
     ):
         self.save_dir = save_dir
         self.interval = interval
-        self.weight_only = weight_only
         self.save_extra_fn = save_extra_fn or CheckpointCallback.save_extra
         self.last_ckpt_step = None
         self._saved = False
@@ -88,6 +85,8 @@ class CheckpointCallback(TrainCallback):
                 context.checkpoint = Checkpoint(
                     state_dict=state_dict,
                     epoch=context.epoch,
+                    # The cursor only advances when a step lands, so it already
+                    # describes the last committed step these weights contain.
                     consumed_samples=context.consumed_samples,
                     config=context.model_config,
                     extra=extra,
@@ -102,27 +101,30 @@ class CheckpointCallback(TrainCallback):
         if context.optimizer_step - self.last_ckpt_step >= self.interval:
             self._save_checkpoint(context)
 
+    def _save_pending(self, context: TrainContext):
+        """Persist an interrupted run, unless that is unsafe or already done."""
+        if not context.checkpoint_safe:
+            return
+        if self._saved and context.optimizer_step == self.last_ckpt_step:
+            return
+        self._save_checkpoint(context)
+
     def on_train_end(self, context: TrainContext):
         if context.checkpoint_safe and context.optimizer_step != self.last_ckpt_step:
             self._save_checkpoint(context)
 
-    def on_error(self, context: TrainContext):
-        # An interrupted run must always leave at least one checkpoint
-        # behind: on a slow start the signal can be handled before the
-        # first optimizer step, where optimizer_step == last_ckpt_step
-        # and the change-based guard alone would skip the save entirely.
-        if context.checkpoint_safe and (
-            not self._saved or context.optimizer_step != self.last_ckpt_step
-        ):
-            self._save_checkpoint(context)
+    def on_stop_requested(self, context: TrainContext):
+        # A requested stop must always leave a checkpoint behind: on a slow
+        # start the signal can arrive before the first optimizer step, where
+        # the change-based guard alone would skip the save entirely.
+        self._save_pending(context)
+
+    def on_failure(self, context: TrainContext):
+        self._save_pending(context)
 
     @staticmethod
     def save_extra(context: TrainContext) -> Dict:
-        extra = {}
-        for name in CheckpointCallback.extra_keys:
-            obj = getattr(context, name, None)
-            if obj:
-                extra[name] = obj.state_dict()
+        extra = context_extras(context)
         # Global accelerator state (fp8 rings, RNG) via the extras registry.
         extra.update(checkpoint_extras())
         # Strategy-owned tensor state (critic, frozen reference, ...) via the

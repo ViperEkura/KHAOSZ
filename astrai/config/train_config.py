@@ -127,7 +127,6 @@ class TrainConfig(BaseConfig):
         random_seed (int): Random seed. Defaults to 3407.
         num_workers (int): Number of workers for dataloader. Defaults to 0.
         prefetch_factor (Optional[int]): Prefetch factor for dataloader. Defaults to None.
-        persistent_workers (bool): Keep DataLoader workers alive between epochs. Defaults to False.
         pin_memory (bool): Pin memory for dataloader. Defaults to False.
         dp_size (int): Data-parallel replicas; total training processes (``nprocs``) are derived as ``dp_size * cp_size * tp_size``. Defaults to 1.
         cp_size (int): Context-parallel group size: shards the sequence across contiguous ranks (seq pretraining, torch-native attention only). Defaults to 1.
@@ -136,6 +135,7 @@ class TrainConfig(BaseConfig):
         backend (str): Distributed training backend. Defaults to "nccl".
         master_addr (str): Master address for distributed training. Defaults to "localhost".
         master_port (str): Master port for distributed training. Defaults to "29500".
+        process_group_timeout (Optional[float]): Seconds a stalled collective may block before the run aborts, which also bounds how long a dead rank goes unnoticed. Defaults to the backend default (10 minutes for NCCL).
         start_method (str): Multiprocessing start method: spawn/fork/forkserver. Defaults to "spawn".
         device_type (str): Device type for distributed training. Defaults to "cuda".
         val_split (Optional[float]): Ratio to split from training dataset for validation, e.g. 0.05. Defaults to None.
@@ -207,7 +207,6 @@ class TrainConfig(BaseConfig):
     random_seed: int = 3407
     num_workers: int = 0
     prefetch_factor: Optional[int] = None
-    persistent_workers: bool = False
     pin_memory: bool = False
 
     dp_size: int = 1
@@ -217,6 +216,7 @@ class TrainConfig(BaseConfig):
     backend: str = "nccl"
     master_addr: str = "localhost"
     master_port: str = "29500"
+    process_group_timeout: Optional[float] = None
     start_method: str = "spawn"
 
     device_type: str = "cuda"

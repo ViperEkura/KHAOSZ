@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import time
 
 import pytest
 import torch
@@ -204,3 +205,42 @@ def simple_training():
 
 def test_multi_process():
     spawn_parallel_fn(simple_training, world_size=2, backend="gloo")
+
+
+def test_stale_staging_is_cleaned_before_the_next_save(tmp_path):
+    """A killed save leaves a staging dir; the next save must reclaim it."""
+    target = tmp_path / "epoch_0_step_9"
+    stale = tmp_path / ".epoch_0_step_9.tmp-abandoned"
+    stale.mkdir()
+    (stale / "model.safetensors").write_bytes(b"partial")
+    old = time.time() - 2 * checkpoint_module.STALE_STAGING_SECONDS
+    os.utime(stale, (old, old))
+
+    live = tmp_path / ".epoch_0_step_9.tmp-live"
+    live.mkdir()
+
+    model = torch.nn.Linear(4, 2)
+    Checkpoint(state_dict=model.state_dict(), epoch=0, consumed_samples=9).save(
+        str(target)
+    )
+
+    assert target.is_dir()
+    assert not stale.exists()
+    assert live.exists()
+
+
+def test_republish_keeps_files_the_save_does_not_produce(tmp_path):
+    """Re-writing the same step must not drop the files other writers left."""
+    target = tmp_path / "epoch_0_step_3"
+    torch.manual_seed(0)
+    model = torch.nn.Linear(4, 2)
+    checkpoint = Checkpoint(state_dict=model.state_dict(), epoch=0, consumed_samples=3)
+    checkpoint.save(str(target))
+
+    (target / "tokenizer.json").write_text('{"version": 1}')
+    (target / "notes.json").write_text('{"loss": 1.0}\n')
+
+    checkpoint.save(str(target))
+
+    assert json.loads((target / "tokenizer.json").read_text()) == {"version": 1}
+    assert (target / "notes.json").read_text().strip() == '{"loss": 1.0}'
