@@ -2,6 +2,7 @@
 
 import importlib
 import inspect
+import logging
 from copy import deepcopy
 from typing import Any, Callable, Dict, Optional
 
@@ -21,7 +22,10 @@ from astrai.parallel.executor import (
     broadcast_state_dict,
     strip_compile_prefix,
 )
+from astrai.parallel.setup import follow_parent
 from astrai.parallel.topology import ParallelTopology
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_component(path: str) -> Any:
@@ -152,14 +156,14 @@ def create_ref_model(
     builds the model, loads the broadcast state dict, and freezes it.  The
     distributed mechanics live in :func:`broadcast_state_dict`.
 
-    In distributed mode (FSDP), ``unwrap_model`` returns ``None`` on
+    In distributed mode (FSDP), ``model_state_dict`` returns ``None`` on
     non-rank-0.  The state_dict is broadcast from rank-0 to all ranks
     so every rank gets a complete copy.
     """
     if state_dict is None and executor is not None and model is not None:
-        state_dict = executor.unwrap_model(model)
+        state_dict = executor.model_state_dict(model)
 
-    # FSDP's unwrap_model returns None on non-rank-0. Broadcast from
+    # FSDP's model_state_dict returns None on non-rank-0. Broadcast from
     # rank-0 so every rank receives a complete state_dict.
     if executor is not None and executor.use_distributed:
         state_dict = broadcast_state_dict(state_dict)
@@ -231,6 +235,24 @@ def resolve_collate(spec: ComponentSpec):
     return None
 
 
+def stop_loader_workers(target) -> None:
+    """Join the workers a DataLoader (or its live iterator) still owns.
+
+    A worker killed by the same signal that stopped training raises from
+    PyTorch's SIGCHLD handler, and that error must never land inside a
+    checkpoint save.
+    """
+    for candidate in (target, getattr(target, "_iterator", None)):
+        shutdown = getattr(candidate, "_shutdown_workers", None)
+        if shutdown is None:
+            continue
+        try:
+            shutdown()
+        except Exception:
+            logger.debug("DataLoader worker shutdown failed", exc_info=True)
+        return
+
+
 def build_dataloader(
     dataset: Dataset,
     spec: ComponentSpec,
@@ -256,8 +278,14 @@ def build_dataloader(
         pin_memory=config.pin_memory,
         collate_fn=resolve_collate(spec),
     )
+    # Use a dedicated generator for the worker seeds: PyTorch draws them from the
+    # global RNG on every iterator creation, and a resumed run creates one more
+    # iterator, which would shift every later dropout mask and dataset draw.
+    loader_generator = torch.Generator()
+    loader_generator.manual_seed(config.random_seed + epoch)
+    kwargs["generator"] = loader_generator
     if config.num_workers > 0:
-        kwargs["persistent_workers"] = config.persistent_workers
+        kwargs["worker_init_fn"] = follow_parent
         if config.prefetch_factor is not None:
             kwargs["prefetch_factor"] = config.prefetch_factor
     return DataLoader(**kwargs)

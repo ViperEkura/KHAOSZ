@@ -7,9 +7,9 @@ from torch.utils.data import Dataset
 from astrai.config import ComponentSpec, TrainConfig
 from astrai.factory import BaseFactory
 from astrai.trainer import components as dataset_component
+from astrai.trainer.context import TrainContext, TrainContextBuilder
 from astrai.trainer.session import TrainSession
 from astrai.trainer.strategy import BaseStrategy, StrategyFactory
-from astrai.trainer.train_context import TrainContext, TrainContextBuilder
 
 
 class NoCopyDataset(Dataset):
@@ -128,13 +128,13 @@ def test_builder_resolves_custom_dataset():
 
 
 def test_scheduler_uses_dataset_owned_by_context(monkeypatch):
-    import astrai.trainer.train_context as context_module
+    import astrai.trainer.context.builder as builder_module
 
     seen = []
     config = _config()
     context = TrainContext(dataset=NoCopyDataset(), config=config)
     builder = TrainContextBuilder(config)
-    monkeypatch.setattr(context_module, "get_current_device", lambda: "cpu")
+    monkeypatch.setattr(builder_module, "get_current_device", lambda: "cpu")
     monkeypatch.setattr(
         builder, "_instantiate_scheduler", lambda optimizer, length: seen.append(length)
     )
@@ -198,6 +198,8 @@ def test_train_session_cleans_up_when_start_callback_fails(monkeypatch):
     context = SimpleNamespace(
         async_rollout=rollout,
         executor=SimpleNamespace(use_distributed=False),
+        stop_requested=False,
+        run_shutdown=lambda: events.append("shutdown_hooks"),
     )
 
     def callback(name, _):
@@ -211,7 +213,8 @@ def test_train_session_cleans_up_when_start_callback_fails(monkeypatch):
     assert events == [
         "register",
         "on_train_begin",
-        "on_error",
+        "shutdown_hooks",
+        "on_shutdown",
         "close",
         "on_train_end",
         "unregister",
@@ -219,15 +222,15 @@ def test_train_session_cleans_up_when_start_callback_fails(monkeypatch):
 
 
 def test_builder_closes_rollout_after_configuration_failure(monkeypatch):
-    import astrai.trainer.train_context as context_module
+    import astrai.trainer.context.builder as builder_module
 
     closed = []
     rollout = SimpleNamespace(close=lambda: closed.append(True))
     context = SimpleNamespace(async_rollout=None, dataset=[], val_dataset=None)
     builder = TrainContextBuilder(_config())
-    monkeypatch.setattr(context_module, "get_world_size", lambda: 1)
+    monkeypatch.setattr(builder_module, "get_world_size", lambda: 1)
     monkeypatch.setattr(
-        context_module, "build_topology", lambda **_: SimpleNamespace(tp_size=1)
+        builder_module, "build_topology", lambda **_: SimpleNamespace(tp_size=1)
     )
     monkeypatch.setattr(
         builder, "_load_preloaded_state", lambda: SimpleNamespace(model_config={})
@@ -249,3 +252,17 @@ def test_builder_closes_rollout_after_configuration_failure(monkeypatch):
     with pytest.raises(RuntimeError, match="rollout setup failed"):
         builder.build()
     assert closed == [True]
+
+
+def test_rollout_worker_follows_its_parent_first(monkeypatch):
+    """A replica sets its parent-death signal before touching any state."""
+    from astrai.trainer.rollout import worker as worker_module
+
+    class ParentDied(RuntimeError):
+        pass
+
+    monkeypatch.setattr(
+        worker_module, "die_with_parent", lambda: (_ for _ in ()).throw(ParentDied())
+    )
+    with pytest.raises(ParentDied):
+        worker_module.run_rollout_worker(None, None)

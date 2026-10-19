@@ -24,7 +24,7 @@ from astrai.trainer.rollout.async_round import AsyncRoundCoordinator
 from astrai.trainer.strategy import StrategyFactory
 
 if TYPE_CHECKING:
-    from astrai.trainer.train_context import TrainContext
+    from astrai.trainer.context import TrainContext
 
 
 @dataclass(frozen=True)
@@ -241,11 +241,6 @@ def configure_rollout(
             ),
         )
         context.async_rollout = RolloutRunner(coordinator=coordinator)
-        context.optimizer_steps_completed = (
-            context.checkpoint.meta.get("optimizer_step", context.optimizer_step)
-            if context.checkpoint is not None
-            else context.optimizer_step
-        )
         context.strategy.set_rollout_runner(context.async_rollout)
         return
 

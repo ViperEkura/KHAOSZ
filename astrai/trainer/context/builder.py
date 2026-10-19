@@ -1,19 +1,16 @@
+"""Assemble a training context from the config, the checkpoint, and the runtime."""
+
 import logging
-import threading
-from dataclasses import dataclass, field
 from functools import partial
-from pathlib import Path
-from typing import Any, Dict, Optional, Self, Tuple
+from typing import Dict, Optional, Self, Tuple
 
 import torch
 from torch import nn
-from torch.utils.data import DataLoader, Dataset
 
-from astrai.config.model_config import ConfigFactory
 from astrai.config.train_config import TrainConfig, _TrainRuntimeDependencies
 from astrai.inference.core.engine_core import EngineCore
 from astrai.model.components.lora import inject_lora
-from astrai.optimization.protocols import OptimizerProtocol, SchedulerProtocol
+from astrai.optimization.protocols import OptimizerProtocol
 from astrai.parallel.cp import CPState, CPStrategy, LossReduction
 from astrai.parallel.executor import (
     BaseExecutor,
@@ -24,15 +21,7 @@ from astrai.parallel.executor import (
 from astrai.parallel.setup import get_current_device, get_rank, get_world_size
 from astrai.parallel.topology import ParallelTopology, build_topology
 from astrai.parallel.tp import TPState
-from astrai.serialization import (
-    Checkpoint,
-    adapt_config,
-    convert_hf_weights,
-    load_json,
-    looks_like_hf_state_dict,
-)
 from astrai.tokenize import AutoTokenizer
-from astrai.trainer.callbacks.metric_util import GradSNRTracker
 from astrai.trainer.components import (
     build_dataloader,
     build_dataset_component,
@@ -40,105 +29,20 @@ from astrai.trainer.components import (
     build_optimizer_component,
     build_scheduler_component,
     create_ref_model,
-    load_optimizer_state_dict,
+    stop_loader_workers,
 )
+from astrai.trainer.context.resume import PreloadedState, ResumeLoader
+from astrai.trainer.context.state import TrainContext
 from astrai.trainer.optional_extras import (
     component_extra_keys,
     load_component_extra,
     require_component_extras,
-    restore_checkpoint_extras,
+    restore_extras,
 )
-from astrai.trainer.rollout import RolloutEvaluator, RolloutRunner
 from astrai.trainer.rollout.setup import configure_rollout
-from astrai.trainer.strategy import BaseStrategy, StrategyFactory
+from astrai.trainer.strategy import StrategyFactory
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class TrainContext:
-    model: nn.Module = field(default=None)
-    strategy: BaseStrategy = field(default=None)
-    dataset: Optional[Dataset] = field(default=None)
-    val_dataset: Optional[Dataset] = field(default=None)
-    dataloader: DataLoader = field(default=None)
-    optimizer: OptimizerProtocol = field(default=None)
-    scheduler: SchedulerProtocol = field(default=None)
-    checkpoint: Checkpoint = field(default=None)
-    config: TrainConfig = field(default=None)
-    model_config: Dict = field(default_factory=dict)
-    executor: BaseExecutor = field(default=None)
-    epoch: int = field(default=0)
-    consumed_samples: int = field(default=0)
-    loss: float = field(default=0.0)
-    metrics: Dict[str, float] = field(default_factory=dict)
-    grad_norm: Optional[float] = field(default=None)
-    grad_snr_tracker: GradSNRTracker = field(default_factory=GradSNRTracker)
-    grad_snr_value: Optional[float] = field(default=None)
-    val_dataloader: Optional[DataLoader] = field(default=None)
-    val_loss: Optional[float] = field(default=None)
-    #: Online-strategy validation: reward-statistics evaluator under its
-    #: own sampling params. ``None`` keeps the legacy validate_online path.
-    val_evaluator: Optional["RolloutEvaluator"] = field(default=None)
-    async_rollout: Optional["RolloutRunner"] = field(default=None)
-    optimizer_steps_completed: Optional[int] = field(default=None)
-    checkpoint_safe: bool = field(default=True)
-
-    world_size: int = field(default=1)
-    rank: int = field(default=0)
-    topology: Optional[ParallelTopology] = field(default=None)
-    kwargs: Dict[str, Any] = field(default_factory=dict)
-    param_path: Optional[str] = field(default=None)
-
-    _stop_event: threading.Event = field(default_factory=threading.Event)
-
-    def __post_init__(self):
-        # A topology is always answerable: contexts built outside the
-        # builder (tests, tools) still get rank-layout math from their
-        # world_size, with a trivial layout by definition.
-        if self.topology is None:
-            self.topology = ParallelTopology(self.world_size)
-
-    @property
-    def dp_size(self) -> int:
-        """Data-parallel degree — the unit for data sharding and step math.
-
-        Ranks sharing a dp_rank consume the same batch (cp peers hold
-        different sequence slices of it), so sample and step counts derived
-        from world size must use this instead.
-        """
-        return self.topology.dp_size
-
-    @property
-    def dataset_len(self) -> int:
-        if self.dataset is None:
-            raise RuntimeError("Training dataset has not been initialized")
-        return len(self.dataset)
-
-    @property
-    def stop_requested(self) -> bool:
-        return self._stop_event.is_set()
-
-    def request_stop(self) -> None:
-        self._stop_event.set()
-
-    @property
-    def optimizer_step(self) -> int:
-        if self.optimizer_steps_completed is not None:
-            return self.optimizer_steps_completed
-        return self.consumed_samples // (
-            self.config.batch_per_device * self.dp_size * self.config.grad_accum_steps
-        )
-
-
-@dataclass
-class _PreloadedState:
-    model_config: Dict = field(default_factory=dict)
-    state_dict: Optional[Dict] = None
-    epoch: int = 0
-    consumed_samples: int = 0
-    checkpoint: Optional[Checkpoint] = None
-    component_states: Dict = field(default_factory=dict)
 
 
 class TrainContextBuilder:
@@ -237,86 +141,18 @@ class TrainContextBuilder:
             **kwargs,
         )
 
-    def _load_preloaded_state(self) -> _PreloadedState:
-        cfg = self.config
-        state = _PreloadedState(
-            epoch=cfg.start_epoch,
-            consumed_samples=cfg.start_samples * self._topology.dp_size,
-        )
-        if self._param_path:
-            config_path = Path(self._param_path) / "config.json"
-            if config_path.exists():
-                state.model_config = adapt_config(
-                    load_json(config_path), self._param_path
-                )
-            options = cfg.state_dict_load_options(self._resume)
-            extra_keys = [name for name in ("optimizer", "scheduler") if options[name]]
-            if self._resume:
-                extra_keys.extend(
-                    path.stem
-                    for path in Path(self._param_path).glob("*.pt")
-                    if path.stem not in ("optimizer", "scheduler")
-                )
-            checkpoint = Checkpoint.load_any(
-                self._param_path, extra_keys=extra_keys, load_weights=options["model"]
-            )
-            if checkpoint is not None:
-                if checkpoint.config:
-                    checkpoint.config = adapt_config(
-                        checkpoint.config, self._param_path
-                    )
-                if checkpoint.state_dict and looks_like_hf_state_dict(
-                    checkpoint.state_dict
-                ):
-                    checkpoint.state_dict = convert_hf_weights(
-                        checkpoint.state_dict,
-                        ConfigFactory.load(checkpoint.config or state.model_config),
-                    )
-                checkpoint.state_dict = strip_compile_prefix(checkpoint.state_dict)
-                state.state_dict = checkpoint.state_dict if options["model"] else None
-                state.model_config = checkpoint.config or state.model_config
-                if self._resume:
-                    state.epoch = checkpoint.epoch
-                    per_step = (
-                        cfg.batch_per_device
-                        * self._topology.dp_size
-                        * cfg.grad_accum_steps
-                    )
-                    # Async GRPO commits even a short final round. Rounding
-                    # its cursor to a full batch would replay those samples
-                    # after resume despite the optimizer step being saved.
-                    state.consumed_samples = (
-                        checkpoint.consumed_samples
-                        if cfg.rollout_mode == "async_round"
-                        else checkpoint.consumed_samples // per_step * per_step
-                    )
-                    state.checkpoint = checkpoint
-                for name in ("optimizer", "scheduler"):
-                    if name not in checkpoint.extra:
-                        continue
-                    saved_spec = checkpoint.meta.get(name)
-                    saved_type = (
-                        saved_spec.get("type")
-                        if isinstance(saved_spec, dict)
-                        else checkpoint.meta.get("optimizer_name")
-                        if name == "optimizer"
-                        else None
-                    )
-                    current_type = getattr(cfg, name).type
-                    if saved_type and saved_type != current_type:
-                        raise ValueError(
-                            f"Cannot load {name} state from {saved_type!r} into {current_type!r}; "
-                            f"set load_state_dict.{name}=False when changing components"
-                        )
-                    state.component_states[name] = checkpoint.extra[name]
-        if not state.model_config:
-            model = self._instantiate_model(state.model_config)
-            if hasattr(model, "config"):
-                state.model_config = model.config.to_dict()
-        return state
+    def _load_preloaded_state(self) -> PreloadedState:
+        """Read what the checkpoint contributes; a stub point for tests."""
+        return ResumeLoader(
+            self.config,
+            self._param_path,
+            self._resume,
+            self._topology,
+            self._instantiate_model,
+        ).load()
 
     def _create_context(
-        self, state: _PreloadedState, executor: BaseExecutor
+        self, state: PreloadedState, executor: BaseExecutor
     ) -> TrainContext:
         return TrainContext(
             world_size=get_world_size(),
@@ -327,12 +163,13 @@ class TrainContextBuilder:
             executor=executor,
             epoch=state.epoch,
             consumed_samples=state.consumed_samples,
+            optimizer_steps_completed=state.optimizer_steps_completed,
             checkpoint=state.checkpoint,
             param_path=self._param_path,
         )
 
     def _prepare_model(
-        self, context: TrainContext, executor: BaseExecutor, state: _PreloadedState
+        self, context: TrainContext, executor: BaseExecutor, state: PreloadedState
     ) -> None:
         cfg = self.config
         device = get_current_device()
@@ -414,32 +251,23 @@ class TrainContextBuilder:
                 0,
                 shuffle=False,
             )
+            context.on_shutdown(
+                "val_loader", partial(stop_loader_workers, context.val_dataloader)
+            )
 
     def _restore_optimizer_state(
-        self, context: TrainContext, state: Optional[_PreloadedState] = None
+        self, context: TrainContext, state: Optional[PreloadedState] = None
     ) -> None:
+        """Hand every declared extra to its restorer; the table owns the order."""
         extras = (
             context.checkpoint.extra
             if context.checkpoint
             else (state.component_states if state is not None else {})
         )
-        if "optimizer" in extras:
-            if context.checkpoint and "scheduler" in extras:
-                context.optimizer.load_state_dict(extras["optimizer"])
-            else:
-                load_optimizer_state_dict(context.optimizer, extras["optimizer"])
-            logger.info("Loaded checkpoint optimizer state")
-        if "scheduler" in extras and context.scheduler is not None:
-            context.scheduler.load_state_dict(extras["scheduler"])
-            for group, lr in zip(
-                context.optimizer.param_groups,
-                context.scheduler.get_last_lr(),
-                strict=True,
-            ):
-                group["lr"] = lr
-            logger.info("Loaded checkpoint scheduler state")
-        if context.checkpoint:
-            restore_checkpoint_extras(context.checkpoint.extra)
+        if not extras:
+            return
+        restore_extras(context, extras)
+        logger.info("Restored %s from the checkpoint", ", ".join(sorted(extras)))
 
     def _create_strategy(self, context: TrainContext, executor: BaseExecutor) -> Dict:
         cfg = self.config
@@ -580,7 +408,7 @@ class TrainContextBuilder:
                 requirement="critic state",
             )
 
-        state_dict = executor.unwrap_model(context.model)
+        state_dict = executor.model_state_dict(context.model)
         if executor.use_distributed:
             state_dict = broadcast_state_dict(state_dict)
         critic = self.runtime.critic_model_fn()

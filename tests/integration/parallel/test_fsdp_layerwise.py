@@ -23,7 +23,7 @@ def test_fsdp_layerwise_wraps_blocks_before_parent(monkeypatch):
     calls = []
     monkeypatch.setattr(FSDPExecutor, "use_distributed", property(lambda self: True))
     monkeypatch.setattr(
-        "astrai.parallel.executor.fully_shard",
+        "astrai.parallel.executor.fsdp.fully_shard",
         lambda module, **kwargs: calls.append((module, kwargs)),
     )
     model = _Model()
@@ -41,7 +41,7 @@ def test_fsdp_coarse_wrap_remains_available(monkeypatch):
     calls = []
     monkeypatch.setattr(FSDPExecutor, "use_distributed", property(lambda self: True))
     monkeypatch.setattr(
-        "astrai.parallel.executor.fully_shard",
+        "astrai.parallel.executor.fsdp.fully_shard",
         lambda module, **kwargs: calls.append(module),
     )
     model = _Model()

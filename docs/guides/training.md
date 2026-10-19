@@ -51,32 +51,36 @@ to a fused CUDA kernel when available.
 
 ## Training Loop
 
-Two-level loop: **epoch** → **batch**. Optimizer step fires every `grad_accum_steps` batches.
+Two-level loop: **epoch** → **batch**. The outline below shows offline training:
+an optimizer step fires every `grad_accum_steps` batches, or on the last batch
+of an epoch if fewer remain. Online strategies may publish several updates per batch.
 
 ```
 on_train_begin
   model.train()
   on_epoch_begin
     for batch in dataloader:
-      with executor.accumulate(model):
+      with executor.accumulate(model, force_sync=is_epoch_tail):
+        context.pending_samples += samples_in_batch_across_dp_ranks
         on_batch_begin
         loss_output = strategy(batch)
         context.loss = loss_output["loss"].item()
         context.metrics = loss_output["metrics"]
         stand_loss = loss_output["loss"] / executor.grad_accum_steps
         executor.backward(stand_loss)
-        context.consumed_samples += (
-            context.config.batch_per_device * context.world_size
-        )
-        on_batch_end
-
         if executor.sync_gradients:
+          if executor.window_steps < executor.grad_accum_steps:
+            scale_gradients(grad_accum_steps / window_steps)
+          context.optimizer_steps_completed += 1
+          context.consumed_samples += context.pending_samples
           before_optimizer_step
           strategy.optimizer_step(optimizer)
           optimizer.zero_grad()
           if scheduler:
             scheduler.step()
+          context.pending_samples = 0
           after_optimizer_step
+        on_batch_end
     on_epoch_end
 on_train_end
 ```
@@ -92,7 +96,7 @@ on_train_end
 | `on_batch_end` | Every batch | — |
 | `after_optimizer_step` | Every accumulation window, after `optimizer.step()` and `scheduler.step()` | `CheckpointCallback` |
 | `on_epoch_end` | End of each epoch | `MetricCallback`, `ProgressBarCallback` |
-| `on_error` | On exception during training | `CheckpointCallback`, `MetricCallback` |
+| `on_shutdown` | The run is ending: a graceful stop or a failure | `CheckpointCallback`, `MetricCallback` |
 | `on_train_end` | Training exits after `on_train_begin` completes (via `finally`) | `GradientCheckpointingCallback`, `CheckpointCallback`, `MetricCallback` |
 
 Default callbacks (in order): `gradient_checkpointing` (activation checkpointing, optional), `checkpoint` (safetensors, rank-0), `metric` (JSONL + validation, rank-0), `progress_bar` (tqdm, rank-0), `gradient_clipping`. The gradient-clipping callback is always registered and always calls `executor.clip_grad_norm()` with the numeric `max_grad_norm` value.
@@ -342,12 +346,15 @@ Checkpoint(state_dict, epoch, consumed_samples, extra, meta, config)
   └── load(save_dir, broadcast=False, verify_checksums=False)    loads locally or broadcasts from rank-0
 ```
 
-`Checkpoint.save()` writes to a hidden sibling staging directory, records file
-sizes and SHA-256 checksums in `manifest.json`, flushes the files, and atomically
-renames the completed directory into place. Published checkpoint directories are
-immutable: saving to an existing non-empty path raises `FileExistsError`. Legacy
-checkpoints without a manifest remain loadable. Pass `verify_checksums=True` when
-loading to hash every published file.
+`Checkpoint.save()` writes to a hidden sibling staging directory, records the file
+sizes in `manifest.json`, flushes the files, and atomically renames the completed
+directory into place. That rename is the completeness guarantee: a directory is
+never visible half-written, which is why v2 no longer hashes its files (hashing an
+8.5 GB checkpoint cost ~45 s per save). Publication is write-once per step — saving
+to an already-published step is a no-op and returns `False`, so the interval save
+and the shutdown save can both run without re-writing anything. Legacy v1
+directories still load, and `Checkpoint.verify(dir)` re-checks their checksums on
+demand.
 
 During training, `CheckpointCallback` uses the executor checkpoint context so
 only rank 0 receives a state dict and calls `save()`.
@@ -381,6 +388,60 @@ layout requires `optimizer: false`.
 component flags, it loads all three components, including saved optimizer
 settings. Explicit `load_state_dict` entries override these defaults even on
 resume. To start a new stage on new data, omit `--resume`.
+
+### A checkpoint is one coherent state
+
+Everything a checkpoint records describes the same point in training:
+
+- the data cursor advances on optimizer commits and when an incomplete
+  epoch-tail window is discarded; `--resume` starts after that cursor, while
+  a window interrupted before a commit is read again;
+- `meta.json` reports the optimizer step those weights belong to; the cursor
+  also accounts for any discarded epoch-tail samples;
+- the RNG states, the data order and the scheduler position are saved with them.
+
+`Trainer` seeds every generator from `random_seed` before building the context, so
+a fresh run is reproducible; on `--resume` the checkpoint's RNG states replace that
+seed. The DataLoader gets its own epoch-seeded generator, because PyTorch draws the
+worker base seed from the global generator on every iterator creation — including
+the single-process one — and a resumed run creates one extra iterator.
+
+Signals are taken after an optimizer commit: a request that arrives inside an
+accumulation window finishes that window first (at most `grad_accum_steps - 1` more
+batches). At epoch end, a shorter window is discarded without an optimizer
+update. The checkpoint records the advanced data cursor and matching RNG state.
+
+Stopping is cooperative across ranks: a rank that receives a signal forwards it to
+the launcher, the launcher signals every rank, and each step ends with a one-element
+all-reduce of the stop flag, so all ranks leave on the same step. That matters because
+the rank that saves still needs the others alive for the collectives that materialise
+the weights. A rank that dies outright (SIGKILL, OOM kill) cannot be checkpointed at
+all: the survivors fail their next collective — gloo reports the closed connection at
+once, NCCL waits for the process-group timeout (10 minutes by default) — and the run
+resumes from the last interval checkpoint. Rank processes are tied to the launcher
+with `PR_SET_PDEATHSIG`, so killing the launcher leaves no GPU workers running
+unsupervised.
+
+`process_group_timeout` bounds how long a stalled collective may block; leave it
+unset to keep the backend default (10 minutes for NCCL). After a normal stop signal,
+the local launcher waits for every rank to finish its current update and checkpoint,
+even if that takes longer than the 30-second failure-cleanup grace period. A rank
+blocked outside a collective may still require an external forced stop.
+
+The DataLoader is dropped before anything is written. Its workers usually take the
+same signal that stopped training, and PyTorch turns a dead worker into a
+`RuntimeError` from its SIGCHLD handler — one that can land in the middle of the
+save and cost the checkpoint.
+
+The shutdown is an ordered plan owned by `TrainSession`: run the registered
+cleanup hooks (the DataLoader workers), call `on_shutdown` once on every observer,
+close the rollout, run `on_train_end`, then the final barrier. Every step is
+attempted even when an earlier one raised, so a failed save cannot also skip the
+rollout shutdown.
+
+`metric.jsonl` is a run log, not checkpoint state: it sits beside the step
+directories and is appended to, so the checkpoint directory keeps a single writer
+and a resume drops the records of the steps it is about to replay.
 
 The equivalent CLI override takes JSON:
 `--load_state_dict '{"optimizer": false}'`.

@@ -14,9 +14,10 @@ from torch.utils.data import Dataset
 
 from astrai.config import ComponentSpec, TrainConfig
 from astrai.serialization import Checkpoint
+from astrai.trainer.context import TrainContext, TrainContextBuilder
 from astrai.trainer.optional_extras import (
-    checkpoint_extras,
-    restore_checkpoint_extras,
+    restore_extras,
+    snapshot_extras,
 )
 from astrai.trainer.rollout import BaseRewardModel, RolloutResult
 from astrai.trainer.strategy import (
@@ -26,7 +27,6 @@ from astrai.trainer.strategy import (
     get_logprobs,
     move_to_device,
 )
-from astrai.trainer.train_context import TrainContext, TrainContextBuilder
 from astrai.trainer.trainer import Trainer
 from tests.support.tokenizers import CHAT_TEMPLATE
 
@@ -224,7 +224,6 @@ def test_shared_train_batch_commits_async_round_once():
         scheduler=None,
         consumed_samples=0,
         optimizer_steps_completed=0,
-        checkpoint_safe=True,
         loss=0.0,
         metrics={},
     )
@@ -235,7 +234,6 @@ def test_shared_train_batch_commits_async_round_once():
     assert coordinator.policy_version == 1
     assert context.optimizer_steps_completed == 1
     assert context.consumed_samples == 3
-    assert context.checkpoint_safe
     assert not torch.equal(before, strategy.model.embed.weight)
 
 
@@ -398,9 +396,10 @@ def test_rng_state_round_trip():
     torch.manual_seed(1)
     first = (torch.rand(3), random.random())
 
-    state = checkpoint_extras()["rng_state"]
+    context = SimpleNamespace(optimizer=None, scheduler=None)
+    state = snapshot_extras(context)["rng_state"]
     diverged = (torch.rand(3), random.random())
-    restore_checkpoint_extras({"rng_state": state})
+    restore_extras(SimpleNamespace(), {"rng_state": state})
     replayed = (torch.rand(3), random.random())
 
     # Restore rewinds to the snapshot, so the post-restore draw replays the
@@ -571,10 +570,14 @@ def test_online_minibatch_round_publication_and_reference_resume(base_test_env):
     config = _online_config(base_test_env, rl_update_epochs=2, rl_minibatch_prompts=1)
     Trainer(config).train(param_path=test_dir)
 
-    checkpoint_dir = os.path.join(test_dir, "ckpt", "epoch_0_step_2")
+    checkpoint_dir = os.path.join(test_dir, "ckpt", "epoch_0_step_8")
     checkpoint = Checkpoint.load(checkpoint_dir)
-    # 2 batches × (2 minibatches × 2 epochs) publications.
+    # 2 batches × (2 minibatches × 2 epochs) publications, one step each.
     assert checkpoint.meta["policy_version"] == 8
+    assert checkpoint.meta["optimizer_step"] == 8
+    # The cursor counts data positions, not steps: a replayed batch is one
+    # position however many updates it produces.
+    assert checkpoint.meta["consumed_samples"] == 4
     assert "reference_model" in checkpoint.extra
     assert "rng_state" in checkpoint.extra
     ref_keys = set(checkpoint.extra["reference_model"])

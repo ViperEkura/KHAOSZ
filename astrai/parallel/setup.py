@@ -1,10 +1,14 @@
+import ctypes
 import logging
 import os
 import signal
 import socket
+import sys
 import threading
+import time
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
+from datetime import timedelta
 from functools import wraps
 from typing import Callable, Dict, Optional
 
@@ -15,6 +19,10 @@ import torch.multiprocessing as mp
 from astrai.signal_handler import install_early_signal_handlers
 
 logger = logging.getLogger(__name__)
+
+# Rank processes get this long to honour a termination signal before the
+# launcher force-kills them; the same budget bounds the launcher's own cleanup.
+SHUTDOWN_GRACE_SECONDS = 30.0
 
 
 def find_free_port() -> str:
@@ -48,6 +56,7 @@ def setup_parallel(
     master_addr: str = "localhost",
     master_port: str = "29500",
     device_type: str = "cuda",
+    process_group_timeout: Optional[float] = None,
 ):
 
     if dist.is_available() and dist.is_initialized():
@@ -73,6 +82,10 @@ def setup_parallel(
     pg_kwargs = dict(rank=rank, world_size=world_size, backend=backend)
     if backend in ("nccl", "ccl"):
         pg_kwargs["device_id"] = device_id
+    if process_group_timeout:
+        # Bounds how long a stalled collective (dead or wedged peer) can block,
+        # which is also the worst-case latency of a graceful stop.
+        pg_kwargs["timeout"] = timedelta(seconds=process_group_timeout)
 
     dist.init_process_group(**pg_kwargs)
 
@@ -110,6 +123,48 @@ def only_on_rank(rank, sync=False):
     return decorator
 
 
+def die_with_parent() -> None:
+    """SIGTERM this rank when the launching process disappears."""
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG
+    except OSError:
+        return
+    if os.getppid() == 1:
+        os.kill(os.getpid(), signal.SIGTERM)
+
+
+def follow_parent(worker_id: int) -> None:
+    """DataLoader ``worker_init_fn``: tie a worker's life to its training rank."""
+    die_with_parent()
+
+
+def _reap(processes, grace: float) -> None:
+    """Join rank processes, force-killing any that outlive the grace period."""
+    deadline = time.monotonic() + grace
+    for process in processes:
+        process.join(max(0.0, deadline - time.monotonic()))
+    for process in processes:
+        if process.is_alive():
+            logger.warning(
+                "Rank %s did not exit within %.0fs, killing it", process.pid, grace
+            )
+            process.kill()
+            process.join()
+
+
+def agree_stop(requested: bool, device) -> bool:
+    """Agree on a stop with every rank, so they all leave on the same step."""
+    if not (dist.is_available() and dist.is_initialized()):
+        return requested
+    if dist.get_world_size() == 1:
+        return requested
+    flag = torch.tensor([1.0 if requested else 0.0], device=device)
+    dist.all_reduce(flag, op=dist.ReduceOp.MAX)
+    return bool(flag.item())
+
+
 def _run_single_rank(
     rank: int,
     world_size: int,
@@ -119,8 +174,13 @@ def _run_single_rank(
     device_type: str,
     func: Callable,
     kwargs: Dict,
+    process_group_timeout: Optional[float] = None,
+    child: bool = False,
 ):
     install_early_signal_handlers()
+    if child:
+        os.environ["ASTRAI_RANK_CHILD"] = "1"
+        die_with_parent()
     with setup_parallel(
         rank=rank,
         world_size=world_size,
@@ -129,6 +189,7 @@ def _run_single_rank(
         master_addr=master_addr,
         master_port=master_port,
         device_type=device_type,
+        process_group_timeout=process_group_timeout,
     ):
         func(**kwargs)
 
@@ -144,6 +205,7 @@ class LaunchStrategy(ABC):
         master_port: str,
         device_type: str,
         start_method: str,
+        process_group_timeout: Optional[float] = None,
     ):
         self.world_size = world_size
         self.backend = backend
@@ -151,6 +213,7 @@ class LaunchStrategy(ABC):
         self.master_port = master_port
         self.device_type = device_type
         self.start_method = start_method
+        self.process_group_timeout = process_group_timeout
 
     @abstractmethod
     def launch(self, func: Callable, **kwargs):
@@ -173,6 +236,7 @@ class TorchrunStrategy(LaunchStrategy):
             master_addr=os.environ.get("MASTER_ADDR", self.master_addr),
             master_port=os.environ.get("MASTER_PORT", self.master_port),
             device_type=self.device_type,
+            process_group_timeout=self.process_group_timeout,
         ):
             func(**kwargs)
 
@@ -189,22 +253,24 @@ class LocalStrategy(LaunchStrategy):
             self.device_type,
             func,
             kwargs,
+            self.process_group_timeout,
         )
 
         if self.world_size == 1:
-            _run_single_rank(0, *args)
+            _run_single_rank(0, *args, False)
             return
 
         install_early_signal_handlers()
         ctx = mp.start_processes(
             _run_single_rank,
-            args=args,
+            args=(*args, True),
             nprocs=self.world_size,
             start_method=self.start_method,
             join=False,
         )
 
         parent_stop = threading.Event()
+        received: list = []
         original_handlers = {}
 
         def _parent_handler(signum, frame):
@@ -214,6 +280,7 @@ class LocalStrategy(LaunchStrategy):
                 os.getpid(),
                 sig.name,
             )
+            received.append(signum)
             parent_stop.set()
             for p in ctx.processes:
                 if p.is_alive():
@@ -225,8 +292,12 @@ class LocalStrategy(LaunchStrategy):
                 original_handlers[sig] = prev
 
         try:
-            while not ctx.join() and not parent_stop.is_set():
-                pass
+            # Keep joining after a stop signal: a rank may need more than the
+            # failure-cleanup grace period to finish its step and checkpoint.
+            # A failed rank still makes join raise and enters bounded cleanup.
+            while True:
+                if ctx.join(timeout=1.0, grace_period=SHUTDOWN_GRACE_SECONDS):
+                    break
         except BaseException:
             logger.warning(
                 "Parent received unexpected exception, terminating children..."
@@ -238,11 +309,10 @@ class LocalStrategy(LaunchStrategy):
         finally:
             for sig, handler in original_handlers.items():
                 signal.signal(sig, handler)
+            _reap(ctx.processes, SHUTDOWN_GRACE_SECONDS)
 
-            for p in ctx.processes:
-                p.join()
-
-            ctx.join()
+        if parent_stop.is_set():
+            raise SystemExit(128 + (received[0] if received else signal.SIGTERM))
 
 
 def _is_external_launcher() -> bool:
@@ -264,16 +334,29 @@ def spawn_parallel_fn(
     master_port: Optional[str] = None,
     device_type: str = "cuda",
     start_method: str = "spawn",
+    process_group_timeout: Optional[float] = None,
     **kwargs,
 ):
     if master_port is None:
         master_port = find_free_port()
     if _is_external_launcher():
         strategy = TorchrunStrategy(
-            world_size, backend, master_addr, master_port, device_type, start_method
+            world_size,
+            backend,
+            master_addr,
+            master_port,
+            device_type,
+            start_method,
+            process_group_timeout,
         )
     else:
         strategy = LocalStrategy(
-            world_size, backend, master_addr, master_port, device_type, start_method
+            world_size,
+            backend,
+            master_addr,
+            master_port,
+            device_type,
+            start_method,
+            process_group_timeout,
         )
     strategy.launch(func, **kwargs)

@@ -174,7 +174,7 @@ class GRPOStrategy(BaseStrategy):
         """Copy current policy weights to old model."""
         if self.old_model is None:
             raise RuntimeError("Cannot sync an unconfigured old policy model")
-        state_dict = self.executor.unwrap_model(self.model)
+        state_dict = self.executor.model_state_dict(self.model)
         if self.executor.use_distributed:
             state_dict = broadcast_state_dict(state_dict)
         if state_dict is not None:

@@ -11,7 +11,7 @@ from astrai.parallel import only_on_rank
 from astrai.trainer.callbacks.base import CallbackFactory, TrainCallback
 
 if TYPE_CHECKING:
-    from astrai.trainer.train_context import TrainContext
+    from astrai.trainer.context import TrainContext
 
 
 @CallbackFactory.register("progress_bar")
@@ -30,7 +30,12 @@ class ProgressBarCallback(TrainCallback):
 
     @only_on_rank(0)
     def on_epoch_begin(self, context: TrainContext):
-        total_steps = len(context.dataloader) // context.executor.grad_accum_steps
+        if context.async_rollout is None:
+            total_steps = len(context.dataloader) // context.executor.grad_accum_steps
+        else:
+            total_steps = (
+                len(context.dataloader) + context.executor.grad_accum_steps - 1
+            ) // context.executor.grad_accum_steps
         self.progress_bar = tqdm(
             total=total_steps,
             desc=f"Epoch {context.epoch + 1}/{self.num_epoch}",

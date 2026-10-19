@@ -14,9 +14,9 @@ from astrai.optimization.scheduler import SchedulerFactory
 from astrai.serialization import Checkpoint
 from astrai.trainer.backend import ColocatedBackend, P2PCopyPublisher, ReplicaBackend
 from astrai.trainer.callbacks import CheckpointCallback
+from astrai.trainer.context import TrainContext, TrainContextBuilder
 from astrai.trainer.rollout import BaseRewardModel, RolloutEvaluator
 from astrai.trainer.strategy import GRPOStrategy, PPOStrategy
-from astrai.trainer.train_context import TrainContext, TrainContextBuilder
 from astrai.trainer.trainer import Trainer
 from tests.support.models import make_frozen, make_model, make_rollout_config
 from tests.support.rollout import FakeExecutor
@@ -172,7 +172,8 @@ def test_builder_resumes_critic_from_checkpoint(device, temp_dir, monkeypatch):
     checkpoint = Checkpoint(
         state_dict=model.state_dict(),
         epoch=0,
-        consumed_samples=2,
+        # A cursor must sit on an optimizer-step boundary to be resumable.
+        consumed_samples=0,
         config=config.to_dict(),
         extra={
             "optimizer": policy_optimizer.state_dict(),
