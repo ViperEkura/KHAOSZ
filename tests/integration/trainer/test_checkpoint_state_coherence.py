@@ -45,6 +45,12 @@ class _StopAfterBatches(TrainCallback):
             context.request_stop()
 
 
+class _StopAfterFirstEpoch(TrainCallback):
+    def on_epoch_end(self, context):
+        if context.epoch == 0:
+            context.request_stop()
+
+
 def _checkpoints(directory):
     paths = list(directory.glob("epoch_*_step_*"))
     return sorted(paths, key=lambda p: int(p.name.rsplit("_", 1)[1]))
@@ -172,8 +178,49 @@ def test_loader_iterator_leaves_global_rng_untouched(train_config_factory, tmp_p
     )
 
 
-def test_off_boundary_cursor_is_refused(train_config_factory, tmp_path):
-    """A cursor off the step boundary cannot describe a resumable state."""
+@pytest.mark.parametrize("length", [9, 10])
+def test_short_epoch_tail_commits_before_shutdown_and_resumes(
+    train_config_factory, tmp_path, length
+):
+    """An incomplete accumulation window is committed at the epoch boundary."""
+    baseline_dir = tmp_path / "baseline_tail"
+    split_dir = tmp_path / "split_tail"
+
+    def config_for(directory):
+        return train_config_factory(
+            RandomTokenDataset(length=length, max_length=8, vocab_size=100),
+            str(directory),
+            device="cpu",
+            n_epoch=2,
+            batch_per_device=2,
+            grad_accum_steps=2,
+            ckpt_interval=1000,
+            random_seed=1234,
+        )
+
+    _train(config_for(baseline_dir))
+    _train(config_for(split_dir), callbacks=[_StopAfterFirstEpoch()])
+    first = _checkpoints(split_dir)[-1]
+    checkpoint = Checkpoint.load(str(first))
+    assert checkpoint.meta["optimizer_step"] == 3
+    assert checkpoint.consumed_samples == length
+
+    _train(config_for(split_dir), param_path=str(first), resume=True)
+    baseline = Checkpoint.load(str(_checkpoints(baseline_dir)[-1]))
+    resumed = Checkpoint.load(str(_checkpoints(split_dir)[-1]))
+    assert baseline.meta["optimizer_step"] == resumed.meta["optimizer_step"] == 6
+    assert baseline.consumed_samples == resumed.consumed_samples == 2 * length
+    for key in baseline.state_dict:
+        torch.testing.assert_close(
+            baseline.state_dict[key], resumed.state_dict[key], rtol=0, atol=0
+        )
+    assert torch.equal(
+        baseline.extra["rng_state"]["torch"], resumed.extra["rng_state"]["torch"]
+    )
+
+
+def test_negative_cursor_is_refused(train_config_factory, tmp_path):
+    """A negative sample cursor cannot describe a resumable state."""
     directory = tmp_path / "run"
     config = train_config_factory(
         RandomTokenDataset(length=64, max_length=8, vocab_size=100),
@@ -189,15 +236,14 @@ def test_off_boundary_cursor_is_refused(train_config_factory, tmp_path):
     checkpoint = _checkpoints(directory)[-1]
     meta_path = checkpoint / "meta.json"
     meta = json.loads(meta_path.read_text())
-    meta["consumed_samples"] += 2
+    meta["consumed_samples"] = -1
     meta_path.write_text(json.dumps(meta))
 
-    # Keep the manifest honest, so the case under test is the cursor, not a
-    # size mismatch: the real legacy checkpoint passed this check too.
+    # Keep the manifest file-size table consistent with the edited metadata.
     manifest_path = checkpoint / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["files"]["meta.json"]["size"] = len(meta_path.read_bytes())
     manifest_path.write_text(json.dumps(manifest))
 
-    with pytest.raises(ValueError, match="optimizer-step boundary"):
+    with pytest.raises(ValueError, match="non-negative sample count"):
         _train(config, param_path=str(checkpoint), resume=True)

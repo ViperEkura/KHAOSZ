@@ -37,6 +37,6 @@ def test_early_stopping_simulation(
     trainer.train(param_path=load_dir, resume=True)
 
     # Verify checkpoint was saved at expected step
-    load_dir = os.path.join(base_test_env["test_dir"], "epoch_1_step_5")
+    load_dir = os.path.join(base_test_env["test_dir"], "epoch_1_step_6")
     meta = load_checkpoint_meta(load_dir)
     assert meta["consumed_samples"] == 20

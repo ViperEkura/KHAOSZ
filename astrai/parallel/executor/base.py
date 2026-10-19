@@ -171,8 +171,8 @@ class BaseExecutor:
         return contextlib.nullcontext()
 
     @contextmanager
-    def accumulate(self, model: nn.Module):
-        self.gradient_state._do_sync()
+    def accumulate(self, model: nn.Module, force_sync: bool = False):
+        self.gradient_state._do_sync(force_sync=force_sync)
         if not self.gradient_state.sync_gradients:
             with self._no_sync(model):
                 yield
@@ -217,6 +217,15 @@ class BaseExecutor:
     @property
     def grad_accum_steps(self) -> int:
         return self.gradient_state.num_steps
+
+    @property
+    def window_steps(self) -> int:
+        return self.gradient_state.window_steps
+
+    def scale_gradients(self, model: nn.Module, factor: float) -> None:
+        for parameter in model.parameters():
+            if parameter.grad is not None:
+                parameter.grad.mul_(factor)
 
     def clip_grad_norm(self, model: nn.Module, max_norm: float) -> float:
         total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)

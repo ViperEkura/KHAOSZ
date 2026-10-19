@@ -135,7 +135,6 @@ class ResumeLoader:
         self, state: PreloadedState, checkpoint: Checkpoint, options: Dict
     ) -> None:
         """Adopt the checkpoint's epoch and data cursor, refusing stale layouts."""
-        cfg = self.config
         missing = missing_resumable_extras(checkpoint.extra, options)
         if missing:
             raise ValueError(
@@ -144,20 +143,21 @@ class ResumeLoader:
                 f"load_state_dict.{missing[0]}=False to accept a fresh one"
             )
         state.epoch = checkpoint.epoch
-        per_step = samples_per_step(cfg, self.topology.dp_size)
-        # The cursor only advances at commits, so a new checkpoint is always on
-        # this boundary; one that is not came from an older run and cannot say
-        # which state it describes.  Async GRPO is exempt: it advances by the
-        # prompts of a round, which is not a whole number of steps.
-        if cfg.rollout_mode != "async_round" and (
-            checkpoint.consumed_samples % per_step
+        # An epoch-tail update may consume fewer samples than a nominal step.
+        # The exact committed count is the sampler cursor, independent of the
+        # optimizer step count; all data-parallel ranks share this count.
+        cursor = checkpoint.consumed_samples
+        if (
+            isinstance(cursor, bool)
+            or not isinstance(cursor, int)
+            or cursor < 0
+            or cursor % self.topology.dp_size
         ):
             raise ValueError(
-                f"Checkpoint cursor {checkpoint.consumed_samples} is not on an "
-                f"optimizer-step boundary ({per_step} samples); "
-                "do not resume it unchanged"
+                f"Checkpoint cursor {cursor!r} must be a non-negative sample "
+                f"count divisible by dp_size={self.topology.dp_size}"
             )
-        state.consumed_samples = checkpoint.consumed_samples
+        state.consumed_samples = cursor
         state.checkpoint = checkpoint
 
     def _check_component_type(self, name: str, checkpoint: Checkpoint) -> None:

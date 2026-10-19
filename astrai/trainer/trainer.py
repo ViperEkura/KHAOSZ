@@ -86,19 +86,21 @@ class Trainer:
         validate record the step they belong to; advancing it after would
         label every logged step with the previous one.
         """
+        committed_samples = context.pending_samples if new_data else 0
         context.optimizer_steps_completed += 1
         if new_data:
-            context.consumed_samples += context.samples_per_step
+            context.consumed_samples += committed_samples
         try:
             self._call_callbacks("before_optimizer_step", context)
             context.strategy.optimizer_step(context.optimizer)
             context.optimizer.zero_grad()
             if context.scheduler:
                 context.scheduler.step()
+            context.pending_samples = 0
         except BaseException:
             context.optimizer_steps_completed -= 1
             if new_data:
-                context.consumed_samples -= context.samples_per_step
+                context.consumed_samples -= committed_samples
             raise
 
     def _commit_online_update(
@@ -121,9 +123,24 @@ class Trainer:
                 if new_data:
                     context.consumed_samples += batch.prompts.shape[0] * context.dp_size
 
-    def _train_batch(self, context: TrainContext, batch) -> None:
+    def _train_batch(
+        self,
+        context: TrainContext,
+        batch,
+        force_sync: bool = False,
+        batch_samples: Optional[int] = None,
+    ) -> None:
         executor = context.executor
-        with executor.accumulate(context.model):
+        accumulation = (
+            executor.accumulate(context.model, force_sync=True)
+            if force_sync
+            else executor.accumulate(context.model)
+        )
+        with accumulation:
+            if context.async_rollout is None:
+                if batch_samples is None:
+                    batch_samples = context.config.batch_per_device * context.dp_size
+                context.pending_samples += batch_samples
             self._call_callbacks("on_batch_begin", context)
             microbatch_prompts = (
                 context.config.async_train_microbatch_prompts
@@ -153,6 +170,14 @@ class Trainer:
                 context.loss = float(update_loss.item())
                 context.metrics = update_metrics
                 if executor.sync_gradients:
+                    if (
+                        context.async_rollout is None
+                        and executor.window_steps < executor.grad_accum_steps
+                    ):
+                        executor.scale_gradients(
+                            context.model,
+                            executor.grad_accum_steps / executor.window_steps,
+                        )
                     self._commit_update(context, batch, new_data=not committed)
                     committed = True
             self._call_callbacks("on_batch_end", context)
@@ -181,20 +206,44 @@ class Trainer:
             batches = context.async_rollout.iter_rounds(
                 batches, lambda: context.stop_requested
             )
-        # Finish the current window first: a partial window has no valid cursor.
+        # A stop waits for the next commit. The final batch forces a short
+        # window commit when the epoch has too few batches to fill one.
         if not context.stop_agreed:
             self._agree_stop(context)
+        if context.async_rollout is None:
+            # Capture this before creating the iterator: worker prefetch can
+            # advance the sampler well beyond the batches the loop consumed.
+            remaining_samples = len(context.dataloader.sampler)
+            total_batches = len(context.dataloader)
         iterator = iter(batches)
         context.train_iterator = iterator
         # The session runs this before any checkpoint is written: a worker
         # killed by the stop signal would otherwise raise mid-save.
         context.on_shutdown("train_loader", partial(stop_loader_workers, iterator))
+        batch_index = 0
         while not self._should_stop(context):
             try:
                 batch = next(iterator)
             except StopIteration:
                 break
-            self._train_batch(context, batch)
+            if context.async_rollout is None:
+                batch_samples = (
+                    min(
+                        context.config.batch_per_device,
+                        remaining_samples
+                        - batch_index * context.config.batch_per_device,
+                    )
+                    * context.dp_size
+                )
+                self._train_batch(
+                    context,
+                    batch,
+                    force_sync=batch_index == total_batches - 1,
+                    batch_samples=batch_samples,
+                )
+            else:
+                self._train_batch(context, batch)
+            batch_index += 1
         self._call_callbacks("on_epoch_end", context)
 
     def _trainer_loop(self, param_path: Optional[str] = None, resume: bool = False):
