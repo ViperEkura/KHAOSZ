@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import torch
@@ -9,7 +10,10 @@ from astrai.trainer.callbacks import (
     GradientCheckpointingCallback,
     TrainCallback,
 )
-from astrai.trainer.callbacks.checkpoint import _copy_tokenizer_files
+from astrai.trainer.callbacks.checkpoint import (
+    CheckpointCallback,
+    _copy_tokenizer_files,
+)
 from astrai.trainer.trainer import Trainer
 from tests.support.checkpoint import load_checkpoint_meta
 from tests.support.rollout import RandomTokenDataset
@@ -202,6 +206,37 @@ def test_checkpoint_captures_completed_optimizer_step(
     assert checkpoint.meta["optimizer_step"] == 1
     # The run log lives beside the checkpoints, not inside a published step.
     assert (Path(base_test_env["test_dir"]) / "metric.jsonl").is_file()
+
+
+def test_metrics_are_flushed_before_checkpoint_publish(
+    base_test_env, train_config_factory, device, monkeypatch
+):
+    log_path = Path(base_test_env["test_dir"]) / "metric.jsonl"
+    original_save = CheckpointCallback._save_checkpoint
+    observed = []
+
+    def check_log_then_save(self, context):
+        records = [json.loads(line) for line in log_path.read_text().splitlines()]
+        assert any(
+            record["type"] == "step" and record["step"] == context.optimizer_step
+            for record in records
+        )
+        observed.append(context.optimizer_step)
+        return original_save(self, context)
+
+    monkeypatch.setattr(CheckpointCallback, "_save_checkpoint", check_log_then_save)
+    config = train_config_factory(
+        dataset=RandomTokenDataset(length=2),
+        test_dir=base_test_env["test_dir"],
+        device=device,
+        batch_per_device=2,
+        ckpt_interval=1,
+        log_flush_interval=100,
+    )
+
+    Trainer(config).train()
+
+    assert observed == [1]
 
 
 def test_checkpoint_snapshots_tokenizer_files(

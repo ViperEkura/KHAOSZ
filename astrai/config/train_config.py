@@ -121,6 +121,7 @@ class TrainConfig(BaseConfig):
         start_samples (int): Start samples count (per rank). Superseded by checkpoint consumed_samples. Defaults to 0.
         ckpt_dir (str): Checkpoint directory. Defaults to "./checkpoint".
         ckpt_interval (int): Number of optimizer steps between checkpoints. Defaults to 5000.
+        log_flush_interval (int): Maximum optimizer steps between metric log flushes. Defaults to 100.
         lora (Optional[LoRAConfig]): LoRA config. None means full fine-tuning. Defaults to None.
         metrics (List[str]): Metrics to record during training. Defaults to ["loss", "lr", "grad_norm"].
         grad_snr_interval (int): Update GradSNR every N optimizer steps when the metric is requested. Defaults to 1.
@@ -198,6 +199,7 @@ class TrainConfig(BaseConfig):
     start_samples: int = 0
     ckpt_dir: str = "./checkpoint"
     ckpt_interval: int = 5000
+    log_flush_interval: int = 100
 
     lora: Optional[LoRAConfig] = None
 
@@ -344,6 +346,7 @@ class TrainConfig(BaseConfig):
         "grad_accum_steps",
         "grad_snr_interval",
         "ckpt_interval",
+        "log_flush_interval",
         "val_step",
         "rollout_interval",
         "rollout_max_tokens",

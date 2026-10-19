@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import time
 from functools import partial
 from pathlib import Path
@@ -32,15 +34,20 @@ class MetricCallback(TrainCallback):
     def __init__(
         self,
         ckpt_dir: str,
-        save_interval: int,
+        flush_interval: int,
+        checkpoint_interval: int,
         metrics: List[str] = None,
         val_step: int = 0,
         grad_snr_interval: int = 1,
     ):
         if grad_snr_interval <= 0:
             raise ValueError("grad_snr_interval must be positive")
+        if flush_interval <= 0 or checkpoint_interval <= 0:
+            raise ValueError("log and checkpoint intervals must be positive")
         self.last_log_flush_step = None
-        self.save_interval = save_interval
+        self.last_checkpoint_flush_step = None
+        self.flush_interval = flush_interval
+        self.checkpoint_interval = checkpoint_interval
         self.metrics = metrics or ["loss", "lr"]
         self.val_step = val_step
         self.grad_snr_interval = grad_snr_interval
@@ -53,6 +60,7 @@ class MetricCallback(TrainCallback):
         self.log_path = self.ckpt_dir / "metric.jsonl"
 
         self.log_cache = []
+        self.pending_records = []
 
         self._metric_funcs = {
             "loss": ctx_get_loss,
@@ -97,7 +105,7 @@ class MetricCallback(TrainCallback):
         return result
 
     @only_on_rank(0)
-    def _append(self, event_type: str, context: TrainContext, **extra):
+    def _append(self, event_type: str, context: TrainContext, pending=False, **extra):
         entry = {
             "type": event_type,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -106,7 +114,7 @@ class MetricCallback(TrainCallback):
             "consumed_samples": context.consumed_samples,
             **extra,
         }
-        self.log_cache.append(entry)
+        (self.pending_records if pending else self.log_cache).append(entry)
 
     def _run_validation(self, context: TrainContext) -> float:
         context.model.eval()
@@ -159,24 +167,51 @@ class MetricCallback(TrainCallback):
 
     def on_train_begin(self, context: TrainContext):
         self.last_log_flush_step = context.optimizer_step
+        self.last_checkpoint_flush_step = context.optimizer_step
+        if self.val_step > 0:
+            self._next_val_step = (
+                1
+                + ((context.optimizer_step + self.val_step - 1) // self.val_step)
+                * self.val_step
+            )
         # A resumed run replays the steps the crashed one logged after its last
         # checkpoint; drop those records so the log holds one pass per step.
         if context.checkpoint is not None:
-            self._drop_records_after(context.optimizer_step)
+            self._drop_records_after(context.optimizer_step, context.consumed_samples)
 
     @only_on_rank(0)
-    def _drop_records_after(self, step: int):
+    def _drop_records_after(self, step: int, consumed_samples: int):
         if not self.log_path.exists():
             return
-        kept = []
-        for line in self.log_path.read_text().splitlines():
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if int(record.get("step", 0)) <= step:
-                kept.append(line)
-        self.log_path.write_text("".join(f"{line}\n" for line in kept))
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self.log_path.parent,
+                prefix=".metric-",
+                suffix=".tmp",
+                delete=False,
+            ) as destination:
+                temporary = Path(destination.name)
+                with self.log_path.open(encoding="utf-8") as source:
+                    for line in source:
+                        try:
+                            record = json.loads(line)
+                            cursor = (
+                                int(record["step"]),
+                                int(record["consumed_samples"]),
+                            )
+                        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                            continue
+                        if cursor <= (step, consumed_samples):
+                            destination.write(line)
+                destination.flush()
+                os.fsync(destination.fileno())
+            os.replace(temporary, self.log_path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     @only_on_rank(0)
     def _flush(self):
@@ -185,9 +220,12 @@ class MetricCallback(TrainCallback):
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.log_path, "a") as f:
             f.writelines(json.dumps(log) + "\n" for log in self.log_cache)
+            f.flush()
+            os.fsync(f.fileno())
         self.log_cache.clear()
 
     def before_optimizer_step(self, context):
+        self.pending_records.clear()
         # GradSNR keeps model-sized first-moment state. Only update it when
         # requested and at the configured sampling interval.
         if (
@@ -209,26 +247,46 @@ class MetricCallback(TrainCallback):
                 context.val_loss = None
                 val_metrics = self._run_rollout_validation(context)
                 self._next_val_step = context.optimizer_step + self.val_step
-                self._append("validation", context, **val_metrics)
+                self._append("validation", context, pending=True, **val_metrics)
             else:
                 context.val_loss = self._run_validation(context)
                 self._next_val_step = context.optimizer_step + self.val_step
-                self._append("validation", context, val_loss=context.val_loss)
+                self._append(
+                    "validation", context, pending=True, val_loss=context.val_loss
+                )
 
         step_metrics = [m for m in self.metrics if m != "val_loss"]
-        self._append("step", context, **self._metrics(context, step_metrics))
+        self._append(
+            "step", context, pending=True, **self._metrics(context, step_metrics)
+        )
 
     def after_optimizer_step(self, context):
-        if context.optimizer_step - self.last_log_flush_step >= self.save_interval:
+        for record in self.pending_records:
+            record["step"] = context.optimizer_step
+            record["consumed_samples"] = context.consumed_samples
+        self.log_cache.extend(self.pending_records)
+        self.pending_records.clear()
+        checkpoint_due = (
+            context.optimizer_step - self.last_checkpoint_flush_step
+            >= self.checkpoint_interval
+        )
+        if (
+            context.optimizer_step - self.last_log_flush_step >= self.flush_interval
+            or checkpoint_due
+        ):
             self._flush()
             self.last_log_flush_step = context.optimizer_step
+        if checkpoint_due:
+            self.last_checkpoint_flush_step = context.optimizer_step
 
     def on_epoch_end(self, context):
         self._append("epoch", context)
 
     def on_train_end(self, context):
+        self.pending_records.clear()
         self._flush()
         self.last_log_flush_step = context.optimizer_step
 
     def on_shutdown(self, context):
+        self.pending_records.clear()
         self._flush()

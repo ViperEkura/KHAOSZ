@@ -47,7 +47,8 @@ def test_seq_strategy_combines_and_reports_moe_aux_loss(device):
 def test_metric_callback_includes_dynamic_strategy_metrics(tmp_path):
     callback = MetricCallback(
         ckpt_dir=tmp_path,
-        save_interval=1,
+        flush_interval=1,
+        checkpoint_interval=1,
         metrics=["loss", "lr"],
     )
     context = SimpleNamespace(
@@ -78,7 +79,8 @@ def test_metric_callback_only_computes_requested_metrics(tmp_path):
 
     callback = MetricCallback(
         ckpt_dir=tmp_path,
-        save_interval=1,
+        flush_interval=1,
+        checkpoint_interval=1,
         metrics=["loss"],
     )
     callback._metric_funcs["grad_snr"] = fail_metric
