@@ -407,7 +407,7 @@ def _run_stats(args, torch):
         optimizer=opt,
         dp_size=1,
     )
-    default_metric = MetricCallback(ckpt_dir=None, save_interval=100)
+    default_metric = MetricCallback()
 
     def train_step(track):
         opt.zero_grad(set_to_none=True)
@@ -448,8 +448,6 @@ def _run_stats(args, torch):
         sample_ctx.grad_snr_tracker = GradSNRTracker()
         sample_ctx.grad_snr_value = None
         callback = MetricCallback(
-            ckpt_dir=None,
-            save_interval=100,
             metrics=["grad_snr"],
             grad_snr_interval=interval,
         )

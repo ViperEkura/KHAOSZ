@@ -433,9 +433,6 @@ _SPECS = [
     ),
     OptSpec("ckpt_interval", "Checkpoint", help="Steps between checkpoints."),
     OptSpec(
-        "log_flush_interval", "Checkpoint", help="Steps between metric log flushes."
-    ),
-    OptSpec(
         "ckpt_dir",
         "Checkpoint",
         type=click.Path(),
@@ -727,7 +724,6 @@ def train(
     grad_accum_steps: int,
     warmup_ratio: float,
     ckpt_interval: int,
-    log_flush_interval: int,
     ckpt_dir: str,
     val_split: float,
     val_step: int,
@@ -1006,7 +1002,6 @@ def train(
         start_epoch=start_epoch,
         start_samples=start_samples,
         ckpt_interval=ckpt_interval,
-        log_flush_interval=log_flush_interval,
         grad_accum_steps=grad_accum_steps,
         max_grad_norm=max_grad_norm,
         random_seed=random_seed,

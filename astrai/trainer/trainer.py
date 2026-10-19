@@ -41,24 +41,23 @@ class Trainer:
 
     def _get_default_callbacks(self) -> List[TrainCallback]:
         cfg = self.train_config
+        metric_callback = CallbackFactory.create_checked(
+            "metric",
+            metrics=cfg.metrics,
+            val_step=cfg.val_step,
+            grad_snr_interval=cfg.grad_snr_interval,
+        )
         callbacks = [
             CallbackFactory.create_checked(
                 "gradient_checkpointing",
                 modules=cfg.gradient_checkpointing_modules,
             ),
-            CallbackFactory.create_checked(
-                "metric",
-                ckpt_dir=cfg.ckpt_dir,
-                flush_interval=cfg.log_flush_interval,
-                checkpoint_interval=cfg.ckpt_interval,
-                metrics=cfg.metrics,
-                val_step=cfg.val_step,
-                grad_snr_interval=cfg.grad_snr_interval,
-            ),
+            metric_callback,
             CallbackFactory.create_checked(
                 "checkpoint",
                 cfg.ckpt_dir,
                 cfg.ckpt_interval,
+                metric_callback=metric_callback,
             ),
             CallbackFactory.create_checked("progress_bar", cfg.n_epoch),
             CallbackFactory.create_checked("gradient_clipping", cfg.max_grad_norm),

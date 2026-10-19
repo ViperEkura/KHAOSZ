@@ -255,7 +255,9 @@ class Checkpoint:
     meta: Dict[str, Any] = field(default_factory=dict)
     config: Dict[str, Any] = field(default_factory=dict)
 
-    def save(self, save_dir: str) -> bool:
+    def save(
+        self, save_dir: str, prepare_staging: Optional[Callable[[Path], None]] = None
+    ) -> bool:
         """Publish this state; ``False`` when that step is already on disk."""
         save_path = Path(save_dir)
         save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -290,6 +292,8 @@ class Checkpoint:
             save_safetensors(self.state_dict, staging_path / _WEIGHTS_FILE)
             for key, value in self.extra.items():
                 save_torch(value, staging_path / f"{key}.pt")
+            if prepare_staging is not None:
+                prepare_staging(staging_path)
 
             manifest = _checkpoint_manifest(staging_path, self.state_dict, meta)
             save_json(manifest, staging_path / _MANIFEST_FILE)

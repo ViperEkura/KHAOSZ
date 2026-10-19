@@ -159,6 +159,15 @@ def test_resume_reproduces_the_uninterrupted_run(
     ]
     assert not differing, f"resume diverged from the uninterrupted run: {differing[:5]}"
 
+    def metric_coordinates(directory):
+        path = _checkpoints(directory)[-1] / "metric.jsonl"
+        return [
+            (entry["type"], entry["step"], entry["consumed_samples"])
+            for entry in map(json.loads, path.read_text().splitlines())
+        ]
+
+    assert metric_coordinates(split_dir) == metric_coordinates(baseline_dir)
+
 
 def test_loader_iterator_leaves_global_rng_untouched(train_config_factory, tmp_path):
     """Creating a loader iterator must not shift the model's RNG stream."""

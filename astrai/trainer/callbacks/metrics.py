@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import json
-import os
-import tempfile
+import shutil
 import time
 from functools import partial
 from pathlib import Path
@@ -33,34 +32,19 @@ if TYPE_CHECKING:
 class MetricCallback(TrainCallback):
     def __init__(
         self,
-        ckpt_dir: str,
-        flush_interval: int,
-        checkpoint_interval: int,
         metrics: List[str] = None,
         val_step: int = 0,
         grad_snr_interval: int = 1,
     ):
         if grad_snr_interval <= 0:
             raise ValueError("grad_snr_interval must be positive")
-        if flush_interval <= 0 or checkpoint_interval <= 0:
-            raise ValueError("log and checkpoint intervals must be positive")
-        self.last_log_flush_step = None
-        self.last_checkpoint_flush_step = None
-        self.flush_interval = flush_interval
-        self.checkpoint_interval = checkpoint_interval
         self.metrics = metrics or ["loss", "lr"]
         self.val_step = val_step
         self.grad_snr_interval = grad_snr_interval
         self._next_val_step = 0
-
-        self.ckpt_dir = Path(ckpt_dir) if ckpt_dir else Path.cwd() / "checkpoint"
-        # A run log, not checkpoint state: the checkpoint directory is published
-        # atomically by its own writer, and a second writer inside it made a
-        # re-published step drop the records of the steps before it.
-        self.log_path = self.ckpt_dir / "metric.jsonl"
-
         self.log_cache = []
         self.pending_records = []
+        self.source_log_path = None
 
         self._metric_funcs = {
             "loss": ctx_get_loss,
@@ -166,8 +150,6 @@ class MetricCallback(TrainCallback):
         return {name: total / num_batches for name, total in totals.items()}
 
     def on_train_begin(self, context: TrainContext):
-        self.last_log_flush_step = context.optimizer_step
-        self.last_checkpoint_flush_step = context.optimizer_step
         if self.val_step > 0:
             next_slot = (
                 (context.optimizer_step + self.val_step - 1) // self.val_step
@@ -177,54 +159,29 @@ class MetricCallback(TrainCallback):
             self._next_val_step = next_slot + (
                 0 if context.async_rollout is not None else 1
             )
-        # A resumed run replays the steps the crashed one logged after its last
-        # checkpoint; drop those records so the log holds one pass per step.
-        if context.checkpoint is not None:
-            self._drop_records_after(context.optimizer_step, context.consumed_samples)
+        if context.checkpoint is not None and context.param_path is not None:
+            source = Path(context.param_path) / "metric.jsonl"
+            if source.is_file():
+                self.source_log_path = source
 
     @only_on_rank(0)
-    def _drop_records_after(self, step: int, consumed_samples: int):
-        if not self.log_path.exists():
-            return
-        temporary = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                dir=self.log_path.parent,
-                prefix=".metric-",
-                suffix=".tmp",
-                delete=False,
-            ) as destination:
-                temporary = Path(destination.name)
-                with self.log_path.open(encoding="utf-8") as source:
-                    for line in source:
-                        try:
-                            record = json.loads(line)
-                            cursor = (
-                                int(record["step"]),
-                                int(record["consumed_samples"]),
-                            )
-                        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-                            continue
-                        if cursor <= (step, consumed_samples):
-                            destination.write(line)
-                destination.flush()
-                os.fsync(destination.fileno())
-            os.replace(temporary, self.log_path)
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
+    def write_snapshot(self, destination: Path) -> None:
+        """Add the committed metric history to a checkpoint's staging directory."""
+        with destination.open("wb") as output:
+            if self.source_log_path is not None:
+                with self.source_log_path.open("rb") as source:
+                    shutil.copyfileobj(source, output)
+            for record in self.log_cache:
+                output.write((json.dumps(record) + "\n").encode("utf-8"))
 
-    @only_on_rank(0)
-    def _flush(self):
-        if not self.log_cache:
+    def checkpoint_saved(self, path: Path, published: bool) -> None:
+        if not published:
+            if self.log_cache:
+                raise RuntimeError(
+                    f"Checkpoint {path} already exists but has unsaved metrics"
+                )
             return
-        self.log_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.log_path, "a") as f:
-            f.writelines(json.dumps(log) + "\n" for log in self.log_cache)
-            f.flush()
-            os.fsync(f.fileno())
+        self.source_log_path = path / "metric.jsonl"
         self.log_cache.clear()
 
     def before_optimizer_step(self, context):
@@ -269,27 +226,9 @@ class MetricCallback(TrainCallback):
             record["consumed_samples"] = context.consumed_samples
         self.log_cache.extend(self.pending_records)
         self.pending_records.clear()
-        checkpoint_due = (
-            context.optimizer_step - self.last_checkpoint_flush_step
-            >= self.checkpoint_interval
-        )
-        if (
-            context.optimizer_step - self.last_log_flush_step >= self.flush_interval
-            or checkpoint_due
-        ):
-            self._flush()
-            self.last_log_flush_step = context.optimizer_step
-        if checkpoint_due:
-            self.last_checkpoint_flush_step = context.optimizer_step
-
-    def on_epoch_end(self, context):
-        self._append("epoch", context)
 
     def on_train_end(self, context):
         self.pending_records.clear()
-        self._flush()
-        self.last_log_flush_step = context.optimizer_step
 
     def on_shutdown(self, context):
         self.pending_records.clear()
-        self._flush()

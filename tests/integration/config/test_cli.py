@@ -82,7 +82,6 @@ def test_type_inference_from_config_fields():
     @apply_specs(
         [
             OptSpec("n_epoch", "G"),
-            OptSpec("log_flush_interval", "G"),
             OptSpec("rollout_max_policy_lag", "G"),
             OptSpec("pin_memory", "G"),
             OptSpec("metrics", "G"),
@@ -95,8 +94,6 @@ def test_type_inference_from_config_fields():
     params = {p.name: p for p in cmd.params}
     assert params["n_epoch"].default == 1
     assert params["n_epoch"].type.name == "integer"
-    assert params["log_flush_interval"].default == 100
-    assert params["log_flush_interval"].type.name == "integer"
     assert params["rollout_max_policy_lag"].default is None
     assert params["rollout_max_policy_lag"].type.name == "integer"
     assert params["pin_memory"].secondary_opts == ["--no-pin_memory"]
