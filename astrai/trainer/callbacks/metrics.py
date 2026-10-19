@@ -169,10 +169,13 @@ class MetricCallback(TrainCallback):
         self.last_log_flush_step = context.optimizer_step
         self.last_checkpoint_flush_step = context.optimizer_step
         if self.val_step > 0:
-            self._next_val_step = (
-                1
-                + ((context.optimizer_step + self.val_step - 1) // self.val_step)
-                * self.val_step
+            next_slot = (
+                (context.optimizer_step + self.val_step - 1) // self.val_step
+            ) * self.val_step
+            # Async rollout observes the pre-update step; offline training
+            # advances the counter before calling before_optimizer_step.
+            self._next_val_step = next_slot + (
+                0 if context.async_rollout is not None else 1
             )
         # A resumed run replays the steps the crashed one logged after its last
         # checkpoint; drop those records so the log holds one pass per step.

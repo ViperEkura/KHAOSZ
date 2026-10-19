@@ -1,6 +1,8 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from astrai.trainer.callbacks import MetricCallback
 
 
@@ -14,7 +16,7 @@ def _callback(tmp_path, flush_interval=2, checkpoint_interval=3, val_step=0):
     )
 
 
-def _context(step=0, samples=0, checkpoint=None):
+def _context(step=0, samples=0, checkpoint=None, async_rollout=None):
     return SimpleNamespace(
         checkpoint=checkpoint,
         optimizer_step=step,
@@ -25,6 +27,7 @@ def _context(step=0, samples=0, checkpoint=None):
         val_dataloader=None,
         grad_snr_tracker=None,
         dp_size=1,
+        async_rollout=async_rollout,
     )
 
 
@@ -84,3 +87,13 @@ def test_validation_cadence_uses_global_step_after_resume(tmp_path):
     callback.on_train_begin(_context(step=11, samples=22, checkpoint=object()))
 
     assert callback._next_val_step == 21
+
+
+@pytest.mark.parametrize(("step", "expected"), [(0, 0), (1, 10), (11, 20)])
+def test_async_validation_cadence_uses_pre_update_step(tmp_path, step, expected):
+    callback = _callback(tmp_path, val_step=10)
+    callback.on_train_begin(
+        _context(step=step, checkpoint=object(), async_rollout=object())
+    )
+
+    assert callback._next_val_step == expected
