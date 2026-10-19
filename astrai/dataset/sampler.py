@@ -84,6 +84,12 @@ class RDSampler(Sampler[int]):
         self._indices = None
         self.iter = self.iter % self.num_samples_per_replica
 
+    def set_epoch(self, epoch: int) -> None:
+        """Start the next epoch without loading batches the trainer discarded."""
+        self.epoch = epoch
+        self.iter = 0
+        self._indices = None
+
     @property
     def _remaining(self):
         remaining = self.num_samples_per_replica - self.iter

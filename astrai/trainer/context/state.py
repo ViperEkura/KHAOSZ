@@ -64,8 +64,8 @@ class TrainContext:
     #: mode, so a checkpoint's step number never has to be derived from the
     #: data cursor (a batch that is replayed yields several steps).
     optimizer_steps_completed: int = field(default=0)
-    #: Samples read since the previous optimizer commit, including a short
-    #: final batch. A checkpoint is only written after these samples commit.
+    #: Samples read since the previous optimizer commit. An incomplete
+    #: epoch-tail window is discarded and never enters this count.
     pending_samples: int = field(default=0)
     #: A stop request that every rank has agreed on, so leaving the loop cannot
     #: strand a peer inside a collective.

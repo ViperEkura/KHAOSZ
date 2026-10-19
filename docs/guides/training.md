@@ -393,12 +393,11 @@ resume. To start a new stage on new data, omit `--resume`.
 
 Everything a checkpoint records describes the same point in training:
 
-- the data cursor advances only when an optimizer step lands, so it covers
-  exactly the steps whose results the saved weights and optimizer moments
-  contain, and `--resume` starts at the first batch that was *not* trained on —
-  a window that was only half read is read again;
+- the data cursor advances on optimizer commits and when an incomplete
+  epoch-tail window is discarded; `--resume` starts after that cursor, while
+  a window interrupted before a commit is read again;
 - `meta.json` reports the optimizer step those weights belong to; the cursor
-  records the exact committed sample count, including a short epoch-tail step;
+  also accounts for any discarded epoch-tail samples;
 - the RNG states, the data order and the scheduler position are saved with them.
 
 `Trainer` seeds every generator from `random_seed` before building the context, so
@@ -409,8 +408,8 @@ the single-process one — and a resumed run creates one extra iterator.
 
 Signals are taken after an optimizer commit: a request that arrives inside an
 accumulation window finishes that window first (at most `grad_accum_steps - 1` more
-batches). At epoch end, a shorter window is committed using its actual batch count.
-The emergency checkpoint then contains the committed cursor and matching RNG state.
+batches). At epoch end, a shorter window is discarded without an optimizer
+update. The checkpoint records the advanced data cursor and matching RNG state.
 
 Stopping is cooperative across ranks: a rank that receives a signal forwards it to
 the launcher, the launcher signals every rank, and each step ends with a one-element

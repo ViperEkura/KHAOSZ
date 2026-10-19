@@ -61,10 +61,12 @@ class CheckpointCallback(TrainCallback):
         self.interval = interval
         self.save_extra_fn = save_extra_fn or CheckpointCallback.save_extra
         self.last_ckpt_step = None
+        self.last_ckpt_cursor = None
         self._saved = False
 
     def on_train_begin(self, context: TrainContext):
         self.last_ckpt_step = context.optimizer_step
+        self.last_ckpt_cursor = context.consumed_samples
 
     def _save_checkpoint(self, context: TrainContext):
         with context.executor.checkpoint_context(context.model) as state_dict:
@@ -77,8 +79,8 @@ class CheckpointCallback(TrainCallback):
                 context.checkpoint = Checkpoint(
                     state_dict=state_dict,
                     epoch=context.epoch,
-                    # The cursor only advances when a step lands, so it already
-                    # describes the last committed step these weights contain.
+                    # The cursor includes committed batches and any discarded
+                    # epoch tail; the step identifies the saved model weights.
                     consumed_samples=context.consumed_samples,
                     config=context.model_config,
                     extra=extra,
@@ -87,6 +89,7 @@ class CheckpointCallback(TrainCallback):
                 context.checkpoint.save(save_path)
                 _copy_tokenizer_files(context.param_path, save_path)
         self.last_ckpt_step = context.optimizer_step
+        self.last_ckpt_cursor = context.consumed_samples
         self._saved = True
 
     @staticmethod
@@ -116,10 +119,14 @@ class CheckpointCallback(TrainCallback):
     def _save_pending(self, context: TrainContext):
         """Persist the current step unless that step is already on disk.
 
-        The step counter advances only when a step commits, so "the same step"
-        is exactly "nothing new was applied since the last save".
+        A discarded epoch tail advances the data cursor without changing the
+        optimizer step, so both values determine whether a save is needed.
         """
-        if self._saved and context.optimizer_step == self.last_ckpt_step:
+        if (
+            self._saved
+            and context.optimizer_step == self.last_ckpt_step
+            and context.consumed_samples == self.last_ckpt_cursor
+        ):
             return
         self._save_checkpoint(context)
 
@@ -130,7 +137,10 @@ class CheckpointCallback(TrainCallback):
         self._save_pending(context)
 
     def on_train_end(self, context: TrainContext):
-        if context.optimizer_step != self.last_ckpt_step:
+        if (
+            context.optimizer_step != self.last_ckpt_step
+            or context.consumed_samples != self.last_ckpt_cursor
+        ):
             self._save_checkpoint(context)
 
     @staticmethod

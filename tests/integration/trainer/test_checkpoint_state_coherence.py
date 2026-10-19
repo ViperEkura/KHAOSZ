@@ -53,7 +53,13 @@ class _StopAfterFirstEpoch(TrainCallback):
 
 def _checkpoints(directory):
     paths = list(directory.glob("epoch_*_step_*"))
-    return sorted(paths, key=lambda p: int(p.name.rsplit("_", 1)[1]))
+    return sorted(
+        paths,
+        key=lambda p: (
+            int(p.name.split("_")[1]),
+            int(p.name.rsplit("_", 1)[1]),
+        ),
+    )
 
 
 def _final_state(directory):
@@ -179,10 +185,10 @@ def test_loader_iterator_leaves_global_rng_untouched(train_config_factory, tmp_p
 
 
 @pytest.mark.parametrize("length", [9, 10])
-def test_short_epoch_tail_commits_before_shutdown_and_resumes(
+def test_short_epoch_tail_is_discarded_and_resumes_at_next_epoch(
     train_config_factory, tmp_path, length
 ):
-    """An incomplete accumulation window is committed at the epoch boundary."""
+    """An incomplete accumulation window is skipped at the epoch boundary."""
     baseline_dir = tmp_path / "baseline_tail"
     split_dir = tmp_path / "split_tail"
 
@@ -202,13 +208,14 @@ def test_short_epoch_tail_commits_before_shutdown_and_resumes(
     _train(config_for(split_dir), callbacks=[_StopAfterFirstEpoch()])
     first = _checkpoints(split_dir)[-1]
     checkpoint = Checkpoint.load(str(first))
-    assert checkpoint.meta["optimizer_step"] == 3
+    assert checkpoint.meta["optimizer_step"] == 2
     assert checkpoint.consumed_samples == length
+    assert first.name == "epoch_1_step_2"
 
     _train(config_for(split_dir), param_path=str(first), resume=True)
     baseline = Checkpoint.load(str(_checkpoints(baseline_dir)[-1]))
     resumed = Checkpoint.load(str(_checkpoints(split_dir)[-1]))
-    assert baseline.meta["optimizer_step"] == resumed.meta["optimizer_step"] == 6
+    assert baseline.meta["optimizer_step"] == resumed.meta["optimizer_step"] == 4
     assert baseline.consumed_samples == resumed.consumed_samples == 2 * length
     for key in baseline.state_dict:
         torch.testing.assert_close(
@@ -217,6 +224,57 @@ def test_short_epoch_tail_commits_before_shutdown_and_resumes(
     assert torch.equal(
         baseline.extra["rng_state"]["torch"], resumed.extra["rng_state"]["torch"]
     )
+
+
+def test_discarded_tail_is_not_loaded(train_config_factory, tmp_path):
+    dataset = RandomTokenDataset(length=9, max_length=8, vocab_size=100, stop_after=9)
+    config = train_config_factory(
+        dataset,
+        str(tmp_path),
+        device="cpu",
+        n_epoch=1,
+        batch_per_device=2,
+        grad_accum_steps=2,
+        ckpt_interval=1000,
+    )
+    _train(config)
+    checkpoint = Checkpoint.load(str(_checkpoints(tmp_path)[-1]))
+    assert checkpoint.meta["optimizer_step"] == 2
+    assert checkpoint.consumed_samples == 9
+
+
+def test_resume_from_checkpoint_before_discarded_tail(train_config_factory, tmp_path):
+    baseline_dir = tmp_path / "baseline"
+    stopped_dir = tmp_path / "stopped"
+    resumed_dir = tmp_path / "resumed"
+
+    def config_for(directory):
+        return train_config_factory(
+            RandomTokenDataset(length=9, max_length=8, vocab_size=100),
+            str(directory),
+            device="cpu",
+            n_epoch=2,
+            batch_per_device=2,
+            grad_accum_steps=2,
+            ckpt_interval=1,
+            random_seed=1234,
+        )
+
+    _train(config_for(baseline_dir))
+    _train(config_for(stopped_dir), callbacks=[_StopAfterFirstEpoch()])
+    before_tail = stopped_dir / "epoch_0_step_2"
+    assert before_tail.is_dir()
+    assert Checkpoint.load(str(before_tail)).consumed_samples == 8
+
+    _train(config_for(resumed_dir), param_path=str(before_tail), resume=True)
+    baseline = Checkpoint.load(str(_checkpoints(baseline_dir)[-1]))
+    resumed = Checkpoint.load(str(_checkpoints(resumed_dir)[-1]))
+    assert baseline.meta["optimizer_step"] == resumed.meta["optimizer_step"] == 4
+    assert baseline.consumed_samples == resumed.consumed_samples == 18
+    for key in baseline.state_dict:
+        torch.testing.assert_close(
+            baseline.state_dict[key], resumed.state_dict[key], rtol=0, atol=0
+        )
 
 
 def test_negative_cursor_is_refused(train_config_factory, tmp_path):

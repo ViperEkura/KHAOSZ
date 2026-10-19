@@ -206,8 +206,8 @@ class Trainer:
             batches = context.async_rollout.iter_rounds(
                 batches, lambda: context.stop_requested
             )
-        # A stop waits for the next commit. The final batch forces a short
-        # window commit when the epoch has too few batches to fill one.
+        # A stop waits for the next commit. A partial accumulation window at
+        # the epoch boundary is discarded without an optimizer update.
         if not context.stop_agreed:
             self._agree_stop(context)
         if context.async_rollout is None:
@@ -215,13 +215,18 @@ class Trainer:
             # advance the sampler well beyond the batches the loop consumed.
             remaining_samples = len(context.dataloader.sampler)
             total_batches = len(context.dataloader)
+            trainable_batches = (
+                total_batches // context.executor.grad_accum_steps
+            ) * context.executor.grad_accum_steps
         iterator = iter(batches)
         context.train_iterator = iterator
         # The session runs this before any checkpoint is written: a worker
         # killed by the stop signal would otherwise raise mid-save.
         context.on_shutdown("train_loader", partial(stop_loader_workers, iterator))
         batch_index = 0
-        while not self._should_stop(context):
+        while not self._should_stop(context) and (
+            context.async_rollout is not None or batch_index < trainable_batches
+        ):
             try:
                 batch = next(iterator)
             except StopIteration:
@@ -238,13 +243,35 @@ class Trainer:
                 self._train_batch(
                     context,
                     batch,
-                    force_sync=batch_index == total_batches - 1,
                     batch_samples=batch_samples,
                 )
             else:
                 self._train_batch(context, batch)
             batch_index += 1
+        dropped_samples = 0
+        if (
+            context.async_rollout is None
+            and batch_index == trainable_batches
+            and (batch_index > 0 or not context.stop_agreed)
+        ):
+            # Close prefetched workers before advancing the sampler. No
+            # remaining tail batch is passed through the model.
+            stop_loader_workers(iterator)
+            context.dataloader.sampler.set_epoch(epoch + 1)
+            dropped_samples = (
+                max(
+                    0,
+                    remaining_samples
+                    - trainable_batches * context.config.batch_per_device,
+                )
+                * context.dp_size
+            )
+            context.consumed_samples += dropped_samples
         self._call_callbacks("on_epoch_end", context)
+        if dropped_samples:
+            # Keep the same optimizer step, but publish a distinct checkpoint
+            # for the advanced data cursor if shutdown happens at this boundary.
+            context.epoch = epoch + 1
 
     def _trainer_loop(self, param_path: Optional[str] = None, resume: bool = False):
         # Seed before the context is built so initialisation and data drawing start
