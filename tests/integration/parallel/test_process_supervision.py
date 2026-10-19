@@ -32,7 +32,7 @@ class _Flag:
         self.stopped = True
 
 
-def _loop_rank(pid_dir):
+def _loop_rank(pid_dir, shutdown_delay=0.0):
     """Rank body: publish the pid, then exchange a reduce until told to stop.
 
     The loop leaves only on the *agreed* flag: a rank that drops out on a
@@ -47,6 +47,9 @@ def _loop_rank(pid_dir):
         dist.all_reduce(torch.ones(64))
         if agree_stop(flag.stopped, device):
             break
+    if shutdown_delay:
+        time.sleep(shutdown_delay)
+        Path(pid_dir, f"rank{dist.get_rank()}.done").write_text("done")
 
 
 def _wait_for(path: Path, timeout: float = 60.0) -> int:
@@ -118,6 +121,26 @@ def test_rank_signal_stops_every_rank(tmp_path):
     assert not any(
         _alive(int((tmp_path / f"rank{rank}.pid").read_text())) for rank in (0, 1)
     ), "a rank outlived the interrupted run"
+
+
+def test_graceful_stop_waits_for_slow_rank_shutdown(tmp_path, monkeypatch):
+    from astrai.parallel import setup as setup_module
+
+    monkeypatch.setattr(setup_module, "SHUTDOWN_GRACE_SECONDS", 0.1)
+    killer = _signal_rank(tmp_path, 1, signal.SIGTERM)
+    with pytest.raises(SystemExit) as info:
+        spawn_parallel_fn(
+            _loop_rank,
+            world_size=2,
+            backend="gloo",
+            device_type="cpu",
+            pid_dir=str(tmp_path),
+            shutdown_delay=0.5,
+        )
+    killer.join(timeout=5)
+
+    assert info.value.code == 128 + signal.SIGTERM
+    assert all((tmp_path / f"rank{rank}.done").exists() for rank in (0, 1))
 
 
 def test_ranks_exit_with_the_launcher(tmp_path):

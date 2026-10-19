@@ -292,10 +292,10 @@ class LocalStrategy(LaunchStrategy):
                 original_handlers[sig] = prev
 
         try:
-            # A short join timeout keeps parent_stop observable: a rank stuck in
-            # a collective never reports a sentinel, and the launcher must still
-            # reach its own cleanup.
-            while not parent_stop.is_set():
+            # Keep joining after a stop signal: a rank may need more than the
+            # failure-cleanup grace period to finish its step and checkpoint.
+            # A failed rank still makes join raise and enters bounded cleanup.
+            while True:
                 if ctx.join(timeout=1.0, grace_period=SHUTDOWN_GRACE_SECONDS):
                     break
         except BaseException:

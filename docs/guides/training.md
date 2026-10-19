@@ -51,32 +51,36 @@ to a fused CUDA kernel when available.
 
 ## Training Loop
 
-Two-level loop: **epoch** → **batch**. Optimizer step fires every `grad_accum_steps` batches.
+Two-level loop: **epoch** → **batch**. The outline below shows offline training:
+an optimizer step fires every `grad_accum_steps` batches, or on the last batch
+of an epoch if fewer remain. Online strategies may publish several updates per batch.
 
 ```
 on_train_begin
   model.train()
   on_epoch_begin
     for batch in dataloader:
-      with executor.accumulate(model):
+      with executor.accumulate(model, force_sync=is_epoch_tail):
+        context.pending_samples += samples_in_batch_across_dp_ranks
         on_batch_begin
         loss_output = strategy(batch)
         context.loss = loss_output["loss"].item()
         context.metrics = loss_output["metrics"]
         stand_loss = loss_output["loss"] / executor.grad_accum_steps
         executor.backward(stand_loss)
-        on_batch_end
-
         if executor.sync_gradients:
+          if executor.window_steps < executor.grad_accum_steps:
+            scale_gradients(grad_accum_steps / window_steps)
           context.optimizer_steps_completed += 1
-          if new_data:                       # first commit of this batch
-            context.consumed_samples += samples_per_step
+          context.consumed_samples += context.pending_samples
           before_optimizer_step
           strategy.optimizer_step(optimizer)
           optimizer.zero_grad()
           if scheduler:
             scheduler.step()
+          context.pending_samples = 0
           after_optimizer_step
+        on_batch_end
     on_epoch_end
 on_train_end
 ```
@@ -393,8 +397,8 @@ Everything a checkpoint records describes the same point in training:
   exactly the steps whose results the saved weights and optimizer moments
   contain, and `--resume` starts at the first batch that was *not* trained on —
   a window that was only half read is read again;
-- `meta.json` reports the optimizer step those weights belong to; a cursor that
-  sits off that boundary (an older checkpoint) is refused, not rounded;
+- `meta.json` reports the optimizer step those weights belong to; the cursor
+  records the exact committed sample count, including a short epoch-tail step;
 - the RNG states, the data order and the scheduler position are saved with them.
 
 `Trainer` seeds every generator from `random_seed` before building the context, so
@@ -403,10 +407,10 @@ seed. The DataLoader gets its own epoch-seeded generator, because PyTorch draws 
 worker base seed from the global generator on every iterator creation — including
 the single-process one — and a resumed run creates one extra iterator.
 
-Signals are taken on optimizer-step boundaries: a request that arrives inside an
+Signals are taken after an optimizer commit: a request that arrives inside an
 accumulation window finishes that window first (at most `grad_accum_steps - 1` more
-batches), so an emergency checkpoint has the same shape as an interval one — aligned
-cursor, matching RNG — and no sample is re-read.
+batches). At epoch end, a shorter window is committed using its actual batch count.
+The emergency checkpoint then contains the committed cursor and matching RNG state.
 
 Stopping is cooperative across ranks: a rank that receives a signal forwards it to
 the launcher, the launcher signals every rank, and each step ends with a one-element
@@ -419,9 +423,11 @@ resumes from the last interval checkpoint. Rank processes are tied to the launch
 with `PR_SET_PDEATHSIG`, so killing the launcher leaves no GPU workers running
 unsupervised.
 
-`process_group_timeout` bounds how long a stalled collective may block, so it is also the
-worst case for how long a stop or a dead rank goes unnoticed; leave it unset to keep
-the backend default (10 minutes for NCCL).
+`process_group_timeout` bounds how long a stalled collective may block; leave it
+unset to keep the backend default (10 minutes for NCCL). After a normal stop signal,
+the local launcher waits for every rank to finish its current update and checkpoint,
+even if that takes longer than the 30-second failure-cleanup grace period. A rank
+blocked outside a collective may still require an external forced stop.
 
 The DataLoader is dropped before anything is written. Its workers usually take the
 same signal that stopped training, and PyTorch turns a dead worker into a
