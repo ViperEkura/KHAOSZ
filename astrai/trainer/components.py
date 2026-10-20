@@ -12,7 +12,13 @@ from torch.utils.data import DataLoader, Dataset, random_split
 
 from astrai.config.model_config import ConfigFactory
 from astrai.config.train_config import ComponentSpec, TrainConfig
-from astrai.dataset import DatasetFactory, RDSampler, dpo_collate_fn, grpo_collate_fn
+from astrai.dataset import (
+    DatasetFactory,
+    GlobalBatchSampler,
+    RDSampler,
+    dpo_collate_fn,
+    grpo_collate_fn,
+)
 from astrai.model.automodel import ModelFactory
 from astrai.optimization.optimizer import OptimizerFactory
 from astrai.optimization.protocols import OptimizerProtocol
@@ -24,6 +30,7 @@ from astrai.parallel.executor import (
 )
 from astrai.parallel.setup import follow_parent
 from astrai.parallel.topology import ParallelTopology
+from astrai.trainer.strategy import StrategyFactory
 
 logger = logging.getLogger(__name__)
 
@@ -107,13 +114,22 @@ def build_scheduler_component(
     def ceil_div(a, b):
         return (a + b - 1) // b
 
-    samples_per_replica = ceil_div(dataset_len, cfg.dp_size)
-    if cfg.epoch_tail_policy == "drop" and cfg.rollout_mode != "async_round":
-        batches_per_replica = samples_per_replica // cfg.batch_per_device
-        steps_per_epoch = batches_per_replica // cfg.grad_accum_steps
-    else:
+    if cfg.rollout_mode == "async_round":
+        samples_per_replica = ceil_div(dataset_len, cfg.dp_size)
         batches_per_replica = ceil_div(samples_per_replica, cfg.batch_per_device)
         steps_per_epoch = ceil_div(batches_per_replica, cfg.grad_accum_steps)
+    else:
+        global_batch = cfg.dp_size * cfg.batch_per_device * cfg.grad_accum_steps
+        full_windows, tail = divmod(dataset_len, global_batch)
+        flush_tail = tail > 0 and cfg.epoch_tail_policy == "flush"
+        if StrategyFactory.capabilities(cfg.strategy).online:
+            group_size = cfg.rl_minibatch_prompts or global_batch
+            steps_per_epoch = cfg.rl_update_epochs * (
+                full_windows * ceil_div(global_batch, group_size)
+                + (ceil_div(tail, group_size) if flush_tail else 0)
+            )
+        else:
+            steps_per_epoch = full_windows + int(flush_tail)
     total_steps = steps_per_epoch * cfg.n_epoch
     warmup_steps = min(int(warmup_ratio * total_steps), total_steps)
     remaining = total_steps - warmup_steps
@@ -266,23 +282,36 @@ def build_dataloader(
     epoch: int,
     start_iter: int,
     shuffle: bool = True,
+    global_cursor: bool = False,
 ) -> DataLoader:
-    sampler = RDSampler(
-        dataset,
-        start_epoch=epoch,
-        start_iter=start_iter,
-        seed=config.random_seed,
-        shuffle=shuffle,
-        process_group=topology.dp_group,
-    )
     kwargs = dict(
         dataset=dataset,
-        batch_size=config.batch_per_device,
-        sampler=sampler,
         num_workers=config.num_workers,
         pin_memory=config.pin_memory,
         collate_fn=resolve_collate(spec),
     )
+    if global_cursor:
+        kwargs["batch_sampler"] = GlobalBatchSampler(
+            dataset,
+            dp_size=topology.dp_size,
+            dp_rank=topology.dp_rank,
+            batch_size=config.batch_per_device,
+            accumulation_steps=config.grad_accum_steps,
+            seed=config.random_seed,
+            tail_policy=config.epoch_tail_policy,
+            epoch=epoch,
+            start_offset=start_iter,
+        )
+    else:
+        kwargs["batch_size"] = config.batch_per_device
+        kwargs["sampler"] = RDSampler(
+            dataset,
+            start_epoch=epoch,
+            start_iter=start_iter,
+            seed=config.random_seed,
+            shuffle=shuffle,
+            process_group=topology.dp_group,
+        )
     # Use a dedicated generator for the worker seeds: PyTorch draws them from the
     # global RNG on every iterator creation, and a resumed run creates one more
     # iterator, which would shift every later dropout mask and dataset draw.

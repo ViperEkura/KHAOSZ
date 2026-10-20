@@ -4,7 +4,7 @@ from astrai.dataset.dataset import (
     dpo_collate_fn,
     grpo_collate_fn,
 )
-from astrai.dataset.sampler import RDSampler
+from astrai.dataset.sampler import GlobalBatchSampler, RDSampler
 from astrai.dataset.storage import (
     JsonlStore,
     MmapStore,
@@ -34,4 +34,5 @@ __all__ = [
     "save_bin",
     "load_bin",
     "RDSampler",
+    "GlobalBatchSampler",
 ]

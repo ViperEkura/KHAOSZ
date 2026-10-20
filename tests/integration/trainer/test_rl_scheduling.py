@@ -1,6 +1,7 @@
 """RL scheduling (minibatch × update epochs), chunked-grad logprobs,
 reference-restore contract, and rollout finish-reason plumbing."""
 
+import json
 import os
 import shutil
 from contextlib import nullcontext
@@ -12,7 +13,9 @@ from torch import nn
 from torch.utils.data import Dataset
 
 from astrai.config import ComponentSpec, TrainConfig
+from astrai.parallel.setup import find_free_port
 from astrai.serialization import Checkpoint
+from astrai.trainer.callbacks import TrainCallback
 from astrai.trainer.context import TrainContext, TrainContextBuilder
 from astrai.trainer.rollout import BaseRewardModel, RolloutResult
 from astrai.trainer.strategy import (
@@ -475,6 +478,20 @@ class InstructionDataset(Dataset):
         return dict(self._SAMPLES[idx])
 
 
+class InstructionDatasetEight(InstructionDataset):
+    _SAMPLES = InstructionDataset._SAMPLES * 2
+
+
+class InstructionDatasetFive(InstructionDataset):
+    _SAMPLES = InstructionDataset._SAMPLES + [InstructionDataset._SAMPLES[0]]
+
+
+class _StopAtFour(TrainCallback):
+    def after_optimizer_step(self, context):
+        if context.optimizer_step == 4:
+            context.request_stop()
+
+
 class LengthRewardModel(BaseRewardModel):
     def score(self, prompts, responses):
         b = len(prompts)
@@ -582,3 +599,138 @@ def test_online_minibatch_round_publication_and_reference_resume(base_test_env):
         allow_reference_reanchor=True,
     )
     Trainer(reanchor_config).train(param_path=stripped_dir, resume=True)
+
+
+@pytest.mark.integration
+def test_online_accumulation_commits_complete_rollout_windows(base_test_env):
+    """Replay updates publish separately; the data cursor moves once per window."""
+    test_dir = base_test_env["test_dir"]
+    tokenizer = base_test_env["tokenizer"]
+    tokenizer.set_chat_template(CHAT_TEMPLATE)
+    tokenizer.save_pretrained(test_dir)
+
+    config = _online_config(
+        base_test_env,
+        batch_per_device=1,
+        grad_accum_steps=2,
+        rl_update_epochs=2,
+        rl_minibatch_prompts=1,
+    )
+    Trainer(config).train(param_path=test_dir)
+    checkpoint = Checkpoint.load(os.path.join(test_dir, "ckpt", "epoch_0_step_8"))
+    assert checkpoint.meta["policy_version"] == 8
+    assert checkpoint.meta["optimizer_step"] == 8
+    assert checkpoint.meta["consumed_samples"] == 4
+    assert checkpoint.meta["epoch_sample_offset"] == 4
+    with open(
+        os.path.join(test_dir, "ckpt", "epoch_0_step_8", "metric.jsonl"),
+        encoding="utf-8",
+    ) as file:
+        steps = [
+            record["step"]
+            for record in map(json.loads, file)
+            if record["type"] == "step"
+        ]
+    assert steps == list(range(1, 9))
+
+
+@pytest.mark.integration
+def test_online_ddp_accumulation_keeps_policy_versions_aligned(base_test_env):
+    """All ranks publish the same replay updates, including empty group slots."""
+    test_dir = base_test_env["test_dir"]
+    tokenizer = base_test_env["tokenizer"]
+    tokenizer.set_chat_template(CHAT_TEMPLATE)
+    tokenizer.save_pretrained(test_dir)
+
+    config = _online_config(
+        base_test_env,
+        dp_size=2,
+        dp_mode="ddp",
+        backend="gloo",
+        master_port=find_free_port(),
+        batch_per_device=1,
+        grad_accum_steps=2,
+        rl_update_epochs=2,
+        rl_minibatch_prompts=2,
+    )
+    Trainer(config).train(param_path=test_dir)
+    checkpoint = Checkpoint.load(os.path.join(test_dir, "ckpt", "epoch_0_step_4"))
+    assert checkpoint.meta["policy_version"] == 4
+    assert checkpoint.meta["optimizer_step"] == 4
+    assert checkpoint.meta["consumed_samples"] == 4
+
+
+@pytest.mark.integration
+def test_online_rollout_window_resumes_after_dp_resize(base_test_env):
+    test_dir = base_test_env["test_dir"]
+    tokenizer = base_test_env["tokenizer"]
+    tokenizer.set_chat_template(CHAT_TEMPLATE)
+    tokenizer.save_pretrained(test_dir)
+    dataset = ComponentSpec(
+        type="tests.integration.trainer.test_rl_scheduling:InstructionDatasetEight",
+        params={
+            "collate": "tests.integration.trainer.test_rl_scheduling:instruction_collate_fn"
+        },
+    )
+    old = _online_config(
+        base_test_env,
+        dataset=dataset,
+        batch_per_device=2,
+        grad_accum_steps=2,
+        rl_update_epochs=2,
+        rl_minibatch_prompts=2,
+    )
+    Trainer(old, callbacks=[_StopAtFour()]).train(param_path=test_dir)
+    first = os.path.join(test_dir, "ckpt", "epoch_0_step_4")
+    saved = Checkpoint.load(first)
+    assert saved.consumed_samples == 4
+    assert saved.meta["policy_version"] == 4
+
+    new = _online_config(
+        base_test_env,
+        dataset=dataset,
+        dp_size=2,
+        dp_mode="ddp",
+        backend="gloo",
+        master_port=find_free_port(),
+        batch_per_device=1,
+        grad_accum_steps=2,
+        rl_update_epochs=2,
+        rl_minibatch_prompts=2,
+    )
+    Trainer(new).train(param_path=first, resume=True)
+    final = Checkpoint.load(os.path.join(test_dir, "ckpt", "epoch_0_step_8"))
+    assert final.meta["policy_version"] == 8
+    assert final.meta["optimizer_step"] == 8
+    assert final.consumed_samples == 8
+
+
+@pytest.mark.integration
+def test_online_ddp_flushes_tail_with_empty_rank(base_test_env):
+    test_dir = base_test_env["test_dir"]
+    tokenizer = base_test_env["tokenizer"]
+    tokenizer.set_chat_template(CHAT_TEMPLATE)
+    tokenizer.save_pretrained(test_dir)
+    dataset = ComponentSpec(
+        type="tests.integration.trainer.test_rl_scheduling:InstructionDatasetFive",
+        params={
+            "collate": "tests.integration.trainer.test_rl_scheduling:instruction_collate_fn"
+        },
+    )
+    config = _online_config(
+        base_test_env,
+        dataset=dataset,
+        dp_size=2,
+        dp_mode="ddp",
+        backend="gloo",
+        master_port=find_free_port(),
+        batch_per_device=1,
+        grad_accum_steps=2,
+        epoch_tail_policy="flush",
+        rl_minibatch_prompts=2,
+    )
+    Trainer(config).train(param_path=test_dir)
+    checkpoint = Checkpoint.load(os.path.join(test_dir, "ckpt", "epoch_0_step_3"))
+    assert checkpoint.meta["policy_version"] == 3
+    assert checkpoint.consumed_samples == 5
+    assert checkpoint.meta["epoch_sample_offset"] == 5

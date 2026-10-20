@@ -5,6 +5,7 @@ from functools import partial
 from typing import Dict, Optional, Self, Tuple
 
 import torch
+import torch.distributed as dist
 from torch import nn
 
 from astrai.config.train_config import TrainConfig, _TrainRuntimeDependencies
@@ -106,6 +107,17 @@ class TrainContextBuilder:
         context = self._create_context(preloaded_state, executor)
         try:
             self._create_datasets(context)
+            if (
+                context.global_cursor
+                and self._resume
+                and context.checkpoint is not None
+            ):
+                saved_len = context.checkpoint.meta["dataset_len"]
+                if context.dataset_len != saved_len:
+                    raise ValueError(
+                        f"Cannot resume: dataset length changed from {saved_len} "
+                        f"to {context.dataset_len}"
+                    )
             self._prepare_model(context, executor, preloaded_state)
             self._restore_optimizer_state(context, preloaded_state)
             self._create_dataloaders(context, context.dataset, context.val_dataset)
@@ -163,6 +175,8 @@ class TrainContextBuilder:
             executor=executor,
             epoch=state.epoch,
             consumed_samples=state.consumed_samples,
+            epoch_sample_offset=state.epoch_sample_offset,
+            global_cursor=state.global_cursor,
             optimizer_steps_completed=state.optimizer_steps_completed,
             checkpoint=state.checkpoint,
             param_path=self._param_path,
@@ -228,8 +242,16 @@ class TrainContextBuilder:
     def _create_dataloaders(
         self, context: TrainContext, train_dataset, val_dataset
     ) -> None:
-        sampler_offset = context.consumed_samples // context.dp_size
-        if self._resume and sampler_offset > 0:
+        if self.config.rollout_mode == "async_round" or (
+            not self._resume and self.config.start_samples > 0
+        ):
+            context.global_cursor = False
+        sampler_offset = (
+            context.epoch_sample_offset
+            if context.global_cursor
+            else context.consumed_samples // context.dp_size
+        )
+        if not context.global_cursor and self._resume and sampler_offset > 0:
             samples_per_replica = self._topology.samples_per_replica(len(train_dataset))
             if samples_per_replica > 0:
                 context.epoch = sampler_offset // samples_per_replica
@@ -240,6 +262,7 @@ class TrainContextBuilder:
             self._topology,
             context.epoch,
             sampler_offset,
+            global_cursor=context.global_cursor,
         )
         if val_dataset is not None:
             context.val_dataloader = build_dataloader(
@@ -431,6 +454,15 @@ class TrainContextBuilder:
         if checkpoint is not None:
             load_component_extra(checkpoint.extra, "value_model", critic, cfg)
         critic = critic.to(device)
+        if context.dp_size > 1 and dist.is_initialized():
+            # The value head is freshly initialized on each rank. Start every
+            # replica from rank zero's head before reducing its gradients.
+            source = (
+                context.topology.cp_rank * context.topology.tp_size
+                + context.topology.tp_rank
+            )
+            for tensor in critic.state_dict().values():
+                dist.broadcast(tensor, src=source, group=context.topology.dp_group)
         critic.train()
 
         optimizer_factory = (

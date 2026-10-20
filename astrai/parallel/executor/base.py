@@ -179,6 +179,17 @@ class BaseExecutor:
         else:
             yield
 
+    @contextmanager
+    def accumulate_explicit(self, model: nn.Module, sync: bool):
+        """Use an explicit collective boundary for a global data window."""
+        self.gradient_state._sync_gradients = sync
+        self.gradient_state._window_steps = 0 if sync else 1
+        if sync:
+            yield
+        else:
+            with self._no_sync(model):
+                yield
+
     def backward(self, loss: torch.Tensor):
         loss.backward()
 

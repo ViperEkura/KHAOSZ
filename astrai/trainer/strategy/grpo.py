@@ -287,6 +287,7 @@ class GRPOStrategy(BaseStrategy):
             metrics,
             aux_loss,
             policy_output.get("router_stats"),
+            normalizer=float(self._response_count(masks)),
         )
 
     def supports_online(self) -> bool:

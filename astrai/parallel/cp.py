@@ -266,4 +266,8 @@ class CPStrategy:
             forward = self.inner.forward_tokens(batch)
             tokens = self.inner.reduce_loss(forward, batch)
         mean, scaled = self.cp.mean_loss(tokens.loss_sum, tokens.token_count)
-        return self.inner.token_loss_output(scaled, mean, forward)
+        count = tokens.token_count.detach().float().clone()
+        dist.all_reduce(count, op=dist.ReduceOp.SUM, group=self.cp.topology.cp_group)
+        output = self.inner.token_loss_output(scaled, mean, forward)
+        output["normalizer"] = float(count.item())
+        return output

@@ -49,6 +49,12 @@ class TrainContext:
     executor: BaseExecutor = field(default=None)
     epoch: int = field(default=0)
     consumed_samples: int = field(default=0)
+    #: Offset in the unpadded global epoch permutation at the last commit.
+    epoch_sample_offset: int = field(default=0)
+    #: Legacy checkpoints keep their original padded per-rank sampler.
+    global_cursor: bool = field(default=False)
+    #: A partially committed multi-update window must never be published.
+    checkpoint_safe: bool = field(default=True)
     loss: float = field(default=0.0)
     metrics: Dict[str, float] = field(default_factory=dict)
     grad_norm: Optional[float] = field(default=None)

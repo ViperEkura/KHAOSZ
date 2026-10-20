@@ -41,6 +41,8 @@ class PreloadedState:
     state_dict: Optional[Dict] = None
     epoch: int = 0
     consumed_samples: int = 0
+    epoch_sample_offset: int = 0
+    global_cursor: bool = True
     optimizer_steps_completed: int = 0
     checkpoint: Optional[Checkpoint] = None
     component_states: Dict = field(default_factory=dict)
@@ -150,6 +152,86 @@ class ResumeLoader:
                 f"load_state_dict.{missing[0]}=False to accept a fresh one"
             )
         state.epoch = checkpoint.epoch
+        meta = checkpoint.meta
+        if meta.get("resume_contract_version") not in (None, 1):
+            raise ValueError(
+                f"Unsupported resume contract version "
+                f"{meta['resume_contract_version']!r}"
+            )
+        if meta.get("resume_contract_version") == 1:
+            for key, current in (
+                ("random_seed", self.config.random_seed),
+                ("cp_size", self.config.cp_size),
+                ("tp_size", self.config.tp_size),
+                ("rollout_mode", self.config.rollout_mode),
+                ("strategy", self.config.strategy),
+                ("rl_update_epochs", self.config.rl_update_epochs),
+                ("rl_minibatch_prompts", self.config.rl_minibatch_prompts),
+            ):
+                if meta.get(key) != current:
+                    raise ValueError(
+                        f"Cannot resume: {key} changed from {meta.get(key)!r} "
+                        f"to {current!r}"
+                    )
+            saved_dp = meta["dp_size"]
+            if (
+                isinstance(saved_dp, bool)
+                or not isinstance(saved_dp, int)
+                or saved_dp < 1
+            ):
+                raise ValueError("Checkpoint has an invalid dp_size")
+            old_batch = saved_dp * meta["batch_per_device"] * meta["grad_accum_steps"]
+            new_batch = samples_per_step(self.config, self.topology.dp_size)
+            if old_batch != new_batch:
+                raise ValueError(
+                    f"Cannot resume: global effective batch changed from "
+                    f"{old_batch} to {new_batch}"
+                )
+            if saved_dp != self.topology.dp_size and (
+                meta.get("dp_mode") == "fsdp" or self.config.dp_mode == "fsdp"
+            ):
+                raise ValueError("FSDP optimizer state cannot resume across DP sizes")
+            if saved_dp != self.topology.dp_size and (
+                (saved_dp > 1 and meta.get("dp_mode") != "ddp")
+                or (self.topology.dp_size > 1 and self.config.dp_mode != "ddp")
+            ):
+                raise ValueError(
+                    "DP resize requires DDP or single-device optimizer state"
+                )
+            state.global_cursor = True
+            offset = meta.get("epoch_sample_offset")
+            length = meta.get("dataset_len")
+            if (
+                isinstance(offset, bool)
+                or not isinstance(offset, int)
+                or isinstance(length, bool)
+                or not isinstance(length, int)
+                or length < 1
+                or offset < 0
+                or offset > length
+                or (offset != length and offset % old_batch)
+            ):
+                raise ValueError("Checkpoint has an invalid global epoch cursor")
+            state.epoch_sample_offset = offset
+            cursor = checkpoint.consumed_samples
+            if (
+                isinstance(cursor, bool)
+                or not isinstance(cursor, int)
+                or cursor < offset
+            ):
+                raise ValueError(
+                    f"Checkpoint cursor {cursor!r} must be a non-negative sample "
+                    "count at least as large as the epoch offset"
+                )
+            state.consumed_samples = cursor
+            state.checkpoint = checkpoint
+            return
+        if meta.get("dp_size", self.topology.dp_size) != self.topology.dp_size:
+            raise ValueError("Legacy checkpoint cannot resume with a different DP size")
+        for key in ("batch_per_device", "grad_accum_steps"):
+            if key in meta and meta[key] != getattr(self.config, key):
+                raise ValueError(f"Legacy checkpoint cannot change {key}")
+        state.global_cursor = False
         # An epoch-tail update may consume fewer samples than a nominal step.
         # The exact committed count is the sampler cursor, independent of the
         # optimizer step count; all data-parallel ranks share this count.

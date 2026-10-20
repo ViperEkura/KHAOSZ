@@ -30,7 +30,25 @@ class ProgressBarCallback(TrainCallback):
 
     @only_on_rank(0)
     def on_epoch_begin(self, context: TrainContext):
-        if context.async_rollout is None and context.config.epoch_tail_policy == "drop":
+        if context.global_cursor:
+            config = context.config
+            global_batch = context.samples_per_step
+            full, tail = divmod(
+                context.dataset_len - context.epoch_sample_offset, global_batch
+            )
+            flush_tail = tail > 0 and config.epoch_tail_policy == "flush"
+            if context.strategy.policy_version is not None:
+                group_size = config.rl_minibatch_prompts or global_batch
+                full_groups = (global_batch + group_size - 1) // group_size
+                tail_groups = (tail + group_size - 1) // group_size if flush_tail else 0
+                total_steps = config.rl_update_epochs * (
+                    full * full_groups + tail_groups
+                )
+            else:
+                total_steps = full + int(flush_tail)
+        elif (
+            context.async_rollout is None and context.config.epoch_tail_policy == "drop"
+        ):
             full_batches = (
                 len(context.dataloader.sampler) // context.config.batch_per_device
             )
