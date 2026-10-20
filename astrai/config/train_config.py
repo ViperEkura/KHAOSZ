@@ -9,7 +9,7 @@ from dataclasses import (
     dataclass as plain_dataclass,
 )
 from math import isfinite
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any, Callable, Dict, List, Literal, Optional, Type
 
 from pydantic import ConfigDict, field_validator, model_validator
 from pydantic.dataclasses import dataclass
@@ -114,6 +114,7 @@ class TrainConfig(BaseConfig):
         n_epoch (int): Number of epochs for training. Defaults to 1.
         batch_per_device (int): Batch size per device. Defaults to 4.
         grad_accum_steps (int): Number of iterations between optimizer steps. Defaults to 1.
+        epoch_tail_policy (Literal["drop", "flush"]): Drop an incomplete epoch-end optimizer window, or commit it using the batches actually available. Async rollout updates by round and does not use this policy. Defaults to "drop".
         max_grad_norm (Optional[float]): Maximum gradient norm. None disables clipping. Defaults to 1.0.
         gradient_checkpointing_modules (List[type]): Module types to enable activation checkpointing for. Defaults to [].
         compile_mode (Optional[str]): torch.compile mode: 'default', 'reduce-overhead', 'max-autotune', or None. Defaults to None.
@@ -190,6 +191,7 @@ class TrainConfig(BaseConfig):
     n_epoch: int = 1
     batch_per_device: int = 4
     grad_accum_steps: int = 1
+    epoch_tail_policy: Literal["drop", "flush"] = "drop"
     max_grad_norm: Optional[float] = 1.0
     gradient_checkpointing_modules: List[Type] = field(default_factory=list)
     compile_mode: Optional[str] = None

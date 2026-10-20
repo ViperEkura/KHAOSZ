@@ -9,10 +9,11 @@ import json
 import pytest
 import torch
 
+from astrai.config import ComponentSpec
 from astrai.parallel.topology import ParallelTopology
 from astrai.serialization import Checkpoint
 from astrai.trainer.callbacks import TrainCallback
-from astrai.trainer.components import build_dataloader
+from astrai.trainer.components import build_dataloader, build_scheduler_component
 from astrai.trainer.trainer import Trainer
 from tests.support.rollout import RandomTokenDataset
 
@@ -266,6 +267,117 @@ def test_discarded_tail_is_not_loaded(train_config_factory, tmp_path):
     checkpoint = Checkpoint.load(str(_checkpoints(tmp_path)[-1]))
     assert checkpoint.meta["optimizer_step"] == 2
     assert checkpoint.consumed_samples == 9
+
+
+@pytest.mark.parametrize(
+    "policy, length, expected_steps",
+    [
+        ("drop", 7, 1),
+        ("flush", 7, 2),
+        ("drop", 9, 2),
+        ("flush", 9, 3),
+    ],
+)
+def test_epoch_tail_policy_counts_full_and_short_batches(
+    train_config_factory, tmp_path, policy, length, expected_steps
+):
+    config = train_config_factory(
+        RandomTokenDataset(length=length, max_length=8, vocab_size=100),
+        str(tmp_path / policy),
+        device="cpu",
+        batch_per_device=2,
+        grad_accum_steps=2,
+        ckpt_interval=1000,
+        epoch_tail_policy=policy,
+    )
+    # DataLoader still exposes the partial last batch. The trainer chooses
+    # whether it contributes to an optimizer update.
+    loader = build_dataloader(
+        RandomTokenDataset(length=length, max_length=8, vocab_size=100),
+        config.dataset,
+        config,
+        ParallelTopology(1),
+        epoch=0,
+        start_iter=0,
+    )
+    assert loader.drop_last is False
+    assert len(loader) == (length + 1) // 2
+
+    optimizer = torch.optim.SGD(torch.nn.Linear(1, 1).parameters(), lr=0.1)
+    schedule = build_scheduler_component(
+        ComponentSpec(
+            type="cosine",
+            params={"warmup_steps": 0, "lr_decay_steps": "$total_steps"},
+        ),
+        optimizer,
+        length,
+        config,
+    )
+    assert schedule.total_steps == expected_steps
+
+    _train(config)
+    checkpoint = Checkpoint.load(str(_checkpoints(tmp_path / policy)[-1]))
+    assert checkpoint.meta["optimizer_step"] == expected_steps
+    assert checkpoint.meta["epoch_tail_policy"] == policy
+    assert checkpoint.consumed_samples == length
+
+
+def test_flushed_tail_resume_matches_uninterrupted_run(train_config_factory, tmp_path):
+    def config_for(directory):
+        return train_config_factory(
+            RandomTokenDataset(length=7, max_length=8, vocab_size=100),
+            str(directory),
+            device="cpu",
+            n_epoch=2,
+            batch_per_device=2,
+            grad_accum_steps=2,
+            ckpt_interval=1000,
+            random_seed=1234,
+            epoch_tail_policy="flush",
+        )
+
+    baseline_dir = tmp_path / "baseline_flush"
+    split_dir = tmp_path / "split_flush"
+    _train(config_for(baseline_dir))
+    _train(config_for(split_dir), callbacks=[_StopAfterFirstEpoch()])
+    first = _checkpoints(split_dir)[-1]
+    first_checkpoint = Checkpoint.load(str(first))
+    assert first_checkpoint.meta["optimizer_step"] == 2
+    assert first_checkpoint.consumed_samples == 7
+
+    _train(config_for(split_dir), param_path=str(first), resume=True)
+    baseline = Checkpoint.load(str(_checkpoints(baseline_dir)[-1]))
+    resumed = Checkpoint.load(str(_checkpoints(split_dir)[-1]))
+    assert baseline.meta["optimizer_step"] == resumed.meta["optimizer_step"] == 4
+    assert baseline.consumed_samples == resumed.consumed_samples == 14
+    for key in baseline.state_dict:
+        torch.testing.assert_close(
+            baseline.state_dict[key], resumed.state_dict[key], rtol=0, atol=0
+        )
+
+
+def test_resume_refuses_epoch_tail_policy_change(train_config_factory, tmp_path):
+    dataset = RandomTokenDataset(length=7, max_length=8, vocab_size=100)
+    config = train_config_factory(
+        dataset,
+        str(tmp_path),
+        device="cpu",
+        batch_per_device=2,
+        grad_accum_steps=2,
+        epoch_tail_policy="flush",
+    )
+    _train(config)
+    checkpoint = _checkpoints(tmp_path)[-1]
+    changed = train_config_factory(
+        dataset,
+        str(tmp_path),
+        device="cpu",
+        batch_per_device=2,
+        grad_accum_steps=2,
+        epoch_tail_policy="drop",
+    )
+    with pytest.raises(ValueError, match="epoch_tail_policy"):
+        _train(changed, param_path=str(checkpoint), resume=True)
 
 
 def test_resume_from_checkpoint_before_discarded_tail(train_config_factory, tmp_path):

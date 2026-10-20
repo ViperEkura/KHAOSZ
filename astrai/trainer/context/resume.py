@@ -135,6 +135,13 @@ class ResumeLoader:
         self, state: PreloadedState, checkpoint: Checkpoint, options: Dict
     ) -> None:
         """Adopt the checkpoint's epoch and data cursor, refusing stale layouts."""
+        saved_tail_policy = checkpoint.meta.get("epoch_tail_policy", "drop")
+        if saved_tail_policy != self.config.epoch_tail_policy:
+            raise ValueError(
+                "Cannot resume with epoch_tail_policy="
+                f"{self.config.epoch_tail_policy!r}; checkpoint uses "
+                f"{saved_tail_policy!r}"
+            )
         missing = missing_resumable_extras(checkpoint.extra, options)
         if missing:
             raise ValueError(

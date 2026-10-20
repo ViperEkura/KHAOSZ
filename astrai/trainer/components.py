@@ -108,8 +108,13 @@ def build_scheduler_component(
         return (a + b - 1) // b
 
     samples_per_replica = ceil_div(dataset_len, cfg.dp_size)
-    batches_per_replica = ceil_div(samples_per_replica, cfg.batch_per_device)
-    total_steps = (batches_per_replica // cfg.grad_accum_steps) * cfg.n_epoch
+    if cfg.epoch_tail_policy == "drop" and cfg.rollout_mode != "async_round":
+        batches_per_replica = samples_per_replica // cfg.batch_per_device
+        steps_per_epoch = batches_per_replica // cfg.grad_accum_steps
+    else:
+        batches_per_replica = ceil_div(samples_per_replica, cfg.batch_per_device)
+        steps_per_epoch = ceil_div(batches_per_replica, cfg.grad_accum_steps)
+    total_steps = steps_per_epoch * cfg.n_epoch
     warmup_steps = min(int(warmup_ratio * total_steps), total_steps)
     remaining = total_steps - warmup_steps
     values = {
