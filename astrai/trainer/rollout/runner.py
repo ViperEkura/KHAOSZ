@@ -131,19 +131,7 @@ class RolloutRunner:
 
     def _score(self, raw: RawRollout) -> RolloutResult:
         rewards = _score_rewards(self.reward_model, raw)
-        device = raw.prompts.device
-        return RolloutResult(
-            prompts=raw.prompts,
-            prompt_mask=raw.prompt_mask,
-            responses=raw.responses,
-            response_mask=raw.response_mask,
-            rewards=rewards.to(device=device),
-            logprobs_old=raw.logprobs_old,
-            policy_version=raw.policy_version,
-            prompt_texts=raw.prompt_texts,
-            response_texts=raw.response_texts,
-            finish_reasons=raw.finish_reasons,
-        )
+        return RolloutResult.from_raw(raw, rewards.to(device=raw.prompts.device))
 
     def _validate_policy_version(
         self, result: RawRollout, *, live_version: Optional[int] = None

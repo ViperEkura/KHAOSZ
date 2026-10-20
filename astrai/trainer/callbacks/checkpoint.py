@@ -73,6 +73,8 @@ class CheckpointCallback(TrainCallback):
         self.last_ckpt_cursor = context.consumed_samples
 
     def _save_checkpoint(self, context: TrainContext):
+        if not context.checkpoint_safe:
+            return
         with context.executor.checkpoint_context(context.model) as state_dict:
             if state_dict is not None:
                 save_path = os.path.join(
@@ -118,10 +120,23 @@ class CheckpointCallback(TrainCallback):
             "cp_size": cfg.cp_size,
             "batch_per_device": cfg.batch_per_device,
             "grad_accum_steps": cfg.grad_accum_steps,
+            "epoch_tail_policy": cfg.epoch_tail_policy,
             # The resume check compares these against the configured types.
             "optimizer": {"type": cfg.optimizer.type},
             "scheduler": {"type": cfg.scheduler.type},
         }
+        if context.global_cursor:
+            meta.update(
+                resume_contract_version=1,
+                dataset_len=context.dataset_len,
+                epoch_sample_offset=context.epoch_sample_offset,
+                random_seed=cfg.random_seed,
+                tp_size=cfg.tp_size,
+                dp_mode=cfg.dp_mode,
+                rollout_mode=cfg.rollout_mode,
+                rl_update_epochs=cfg.rl_update_epochs,
+                rl_minibatch_prompts=cfg.rl_minibatch_prompts,
+            )
         policy_version = context.strategy.policy_version
         if policy_version is not None:
             meta["policy_version"] = policy_version

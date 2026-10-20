@@ -12,7 +12,13 @@ from torch.utils.data import DataLoader, Dataset, random_split
 
 from astrai.config.model_config import ConfigFactory
 from astrai.config.train_config import ComponentSpec, TrainConfig
-from astrai.dataset import DatasetFactory, RDSampler, dpo_collate_fn, grpo_collate_fn
+from astrai.dataset import (
+    DatasetFactory,
+    GlobalBatchSampler,
+    RDSampler,
+    dpo_collate_fn,
+    grpo_collate_fn,
+)
 from astrai.model.automodel import ModelFactory
 from astrai.optimization.optimizer import OptimizerFactory
 from astrai.optimization.protocols import OptimizerProtocol
@@ -24,6 +30,8 @@ from astrai.parallel.executor import (
 )
 from astrai.parallel.setup import follow_parent
 from astrai.parallel.topology import ParallelTopology
+from astrai.trainer.step_plan import ceil_div, global_epoch_steps, legacy_epoch_steps
+from astrai.trainer.strategy import StrategyFactory
 
 logger = logging.getLogger(__name__)
 
@@ -99,17 +107,40 @@ def load_optimizer_state_dict(optimizer: OptimizerProtocol, state_dict: Dict) ->
 
 
 def build_scheduler_component(
-    spec: ComponentSpec, optimizer, dataset_len: int, cfg: TrainConfig
+    spec: ComponentSpec,
+    optimizer,
+    dataset_len: int,
+    cfg: TrainConfig,
+    *,
+    global_cursor: bool = True,
 ):
     params = dict(spec.params)
     warmup_ratio = params.pop("warmup_ratio", 0.0)
+    online = StrategyFactory.capabilities(cfg.strategy).online
 
-    def ceil_div(a, b):
-        return (a + b - 1) // b
-
-    samples_per_replica = ceil_div(dataset_len, cfg.dp_size)
-    batches_per_replica = ceil_div(samples_per_replica, cfg.batch_per_device)
-    total_steps = (batches_per_replica // cfg.grad_accum_steps) * cfg.n_epoch
+    if cfg.rollout_mode == "async_round":
+        samples_per_replica = ceil_div(dataset_len, cfg.dp_size)
+        batches_per_replica = ceil_div(samples_per_replica, cfg.batch_per_device)
+        steps_per_epoch = ceil_div(batches_per_replica, cfg.grad_accum_steps)
+    elif not global_cursor and not online:
+        steps_per_epoch = legacy_epoch_steps(
+            ceil_div(dataset_len, cfg.dp_size),
+            cfg.batch_per_device,
+            cfg.grad_accum_steps,
+            cfg.epoch_tail_policy,
+        )
+    else:
+        global_batch = cfg.dp_size * cfg.batch_per_device * cfg.grad_accum_steps
+        steps_per_epoch = global_epoch_steps(
+            dataset_len,
+            0,
+            global_batch,
+            cfg.epoch_tail_policy,
+            online=online,
+            rl_update_epochs=cfg.rl_update_epochs,
+            rl_minibatch_prompts=cfg.rl_minibatch_prompts,
+        )
+    total_steps = steps_per_epoch * cfg.n_epoch
     warmup_steps = min(int(warmup_ratio * total_steps), total_steps)
     remaining = total_steps - warmup_steps
     values = {
@@ -261,23 +292,36 @@ def build_dataloader(
     epoch: int,
     start_iter: int,
     shuffle: bool = True,
+    global_cursor: bool = False,
 ) -> DataLoader:
-    sampler = RDSampler(
-        dataset,
-        start_epoch=epoch,
-        start_iter=start_iter,
-        seed=config.random_seed,
-        shuffle=shuffle,
-        process_group=topology.dp_group,
-    )
     kwargs = dict(
         dataset=dataset,
-        batch_size=config.batch_per_device,
-        sampler=sampler,
         num_workers=config.num_workers,
         pin_memory=config.pin_memory,
         collate_fn=resolve_collate(spec),
     )
+    if global_cursor:
+        kwargs["batch_sampler"] = GlobalBatchSampler(
+            dataset,
+            dp_size=topology.dp_size,
+            dp_rank=topology.dp_rank,
+            batch_size=config.batch_per_device,
+            accumulation_steps=config.grad_accum_steps,
+            seed=config.random_seed,
+            tail_policy=config.epoch_tail_policy,
+            epoch=epoch,
+            start_offset=start_iter,
+        )
+    else:
+        kwargs["batch_size"] = config.batch_per_device
+        kwargs["sampler"] = RDSampler(
+            dataset,
+            start_epoch=epoch,
+            start_iter=start_iter,
+            seed=config.random_seed,
+            shuffle=shuffle,
+            process_group=topology.dp_group,
+        )
     # Use a dedicated generator for the worker seeds: PyTorch draws them from the
     # global RNG on every iterator creation, and a resumed run creates one more
     # iterator, which would shift every later dropout mask and dataset draw.

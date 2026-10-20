@@ -1,5 +1,7 @@
 """Unit tests for Request and RequestManager."""
 
+from unittest.mock import Mock, call
+
 import pytest
 
 from astrai.inference import (
@@ -50,6 +52,62 @@ def test_task_manager_add_task():
     assert tid.startswith("req_")
     assert tm._total_requests == 1
     assert len(tm.waiting) == 1
+
+
+@pytest.mark.parametrize(
+    ("method", "request_ids"),
+    [
+        ("single", ["existing"]),
+        ("batch", ["new", "existing"]),
+        ("batch", ["new", "new"]),
+        ("tokenized", ["new", "existing"]),
+        ("tokenized", ["new", "new"]),
+    ],
+)
+def test_task_manager_duplicate_registration_is_atomic(method, request_ids):
+    metrics = Mock()
+    metrics.get_stats.return_value = {}
+    tm = RequestManager(tokenizer=_make_mock_tokenizer(), metrics=metrics)
+    tm.add_request("original", request_id="existing")
+    original = tm.get_request("existing")
+    metrics.reset_mock()
+    tm._request_event.clear()
+
+    with pytest.raises(ValueError, match="duplicate"):
+        if method == "single":
+            tm.add_request("duplicate", request_id=request_ids[0])
+        elif method == "batch":
+            tm.add_requests(
+                ["prompt"] * len(request_ids),
+                request_ids=request_ids,
+                prompts_ids=[[1]] * len(request_ids),
+            )
+        else:
+            tm.enqueue_tokenized_requests(
+                [Request(request_id, [1]) for request_id in request_ids]
+            )
+
+    assert list(tm.waiting) == [original]
+    assert tm._requests == {"existing": original}
+    assert tm.get_stats()["total_tasks"] == 1
+    assert not tm._request_event.is_set()
+    metrics.register.assert_not_called()
+
+
+def test_task_manager_batch_encodes_once_and_registers_each_request_once():
+    tokenizer = _make_mock_tokenizer()
+    tokenizer.encode.return_value = [[1, 2], [3, 4]]
+    metrics = Mock()
+    metrics.get_stats.return_value = {}
+    tm = RequestManager(tokenizer=tokenizer, metrics=metrics)
+
+    assert tm.add_requests(["first", "second"], request_ids=["a", "b"]) == ["a", "b"]
+
+    tokenizer.encode.assert_called_once_with(["first", "second"])
+    assert [request.request_id for request in tm.waiting] == ["a", "b"]
+    assert metrics.register.call_args_list == [call("a"), call("b")]
+    assert tm.get_stats()["total_tasks"] == 2
+    assert tm._request_event.is_set()
 
 
 def test_task_manager_long_prompt_truncated_not_stopped():

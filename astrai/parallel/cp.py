@@ -189,10 +189,12 @@ class CPState:
         ):
             yield
 
-    def mean_loss(self, loss_sum: Tensor, token_count: Tensor) -> Tuple[Tensor, Tensor]:
+    def mean_loss(
+        self, loss_sum: Tensor, token_count: Tensor
+    ) -> Tuple[Tensor, Tensor, Tensor]:
         """Global-mean loss and its cp-scaled training counterpart.
 
-        Returns ``(mean, scaled)``: ``mean`` is the true global mean (sum
+        Returns ``(mean, scaled, count)``: ``mean`` is the true global mean (sum
         over the whole cp group divided by the global token count — a plain
         value for logging/validation) and ``scaled = local_sum * cp_size /
         global_count`` is the tensor to backward.  Data-parallel gradient
@@ -210,7 +212,7 @@ class CPState:
         total, count = stats[0], stats[1].clamp(min=1.0)
         mean = (total / count).detach()
         scaled = loss_sum * (self.size / count)
-        return mean, scaled
+        return mean, scaled, stats[1]
 
 
 class CPStrategy:
@@ -265,5 +267,7 @@ class CPStrategy:
         with self.cp.shard(buffers, seq_dims):
             forward = self.inner.forward_tokens(batch)
             tokens = self.inner.reduce_loss(forward, batch)
-        mean, scaled = self.cp.mean_loss(tokens.loss_sum, tokens.token_count)
-        return self.inner.token_loss_output(scaled, mean, forward)
+        mean, scaled, count = self.cp.mean_loss(tokens.loss_sum, tokens.token_count)
+        output = self.inner.token_loss_output(scaled, mean, forward)
+        output["normalizer"] = float(count.item())
+        return output

@@ -106,6 +106,7 @@ class DPOStrategy(BaseStrategy):
             {"dpo_loss": dpo_loss},
             aux_loss,
             policy_output.get("router_stats"),
+            normalizer=float(chosen_ids.shape[0]),
         )
 
     def supports_online(self) -> bool:

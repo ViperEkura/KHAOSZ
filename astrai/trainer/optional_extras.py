@@ -3,8 +3,8 @@
 Two kinds of state ride along in a checkpoint, and they need different
 mechanics:
 
-* **Run-owned state** — the optimizer moments, the scheduler position, the fp8
-  delayed-scaling rings and the RNG states.  It is declared once in
+* **Run-owned state** — the optimizer moments, the scheduler position, and the
+  fp8 delayed-scaling rings.  It is declared once in
   :data:`EXTRAS` as ``(key, snapshot, restore)``; the checkpoint callback
   snapshots through it and the builder restores through it, so neither has to
   know which components exist.
@@ -20,11 +20,9 @@ Adding a component = one :class:`Extra` row (run-owned) or one
 """
 
 import logging
-import random
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, Literal, Optional, Tuple
 
-import numpy as np
 import torch
 
 from astrai.extension.policy.quantization import autocast
@@ -40,35 +38,6 @@ def _fp8_snapshot(_context: Any) -> Optional[Dict]:
 
 def _fp8_restore(_context: Any, sd: Dict) -> None:
     autocast.fp8_load_state_dict(sd)
-
-
-def _rng_snapshot(_context: Any) -> Dict:
-    """Snapshot every RNG the training loop draws from.
-
-    Covers python's ``random``, torch CPU and (when initialized) CUDA
-    generators, and numpy.  Without this, a resumed run's
-    dropout masks, init draws, and rollout sampling diverge from the
-    uninterrupted run from the very first step.
-    """
-    state: Dict[str, Any] = {
-        "python": random.getstate(),
-        "torch": torch.get_rng_state(),
-    }
-    if torch.cuda.is_available():
-        state["torch_cuda"] = torch.cuda.get_rng_state_all()
-    state["numpy"] = np.random.get_state()
-    return state
-
-
-def _rng_restore(_context: Any, state: Dict) -> None:
-    random.setstate(state["python"])
-    torch.set_rng_state(state["torch"])
-    if "torch_cuda" in state and torch.cuda.is_available():
-        # Tolerate a device-count change across the resume: restore what
-        # fits rather than failing the whole load.
-        torch.cuda.set_rng_state_all(state["torch_cuda"][: torch.cuda.device_count()])
-    if "numpy" in state:
-        np.random.set_state(state["numpy"])
 
 
 def _optimizer_snapshot(context: Any) -> Optional[Dict]:
@@ -143,7 +112,6 @@ EXTRAS: Tuple[Extra, ...] = (
         purpose="the LR schedule position",
     ),
     Extra(key="fp8_state", snapshot=_fp8_snapshot, restore=_fp8_restore),
-    Extra(key="rng_state", snapshot=_rng_snapshot, restore=_rng_restore),
 )
 
 EXTRA_KEYS: Tuple[str, ...] = tuple(entry.key for entry in EXTRAS)

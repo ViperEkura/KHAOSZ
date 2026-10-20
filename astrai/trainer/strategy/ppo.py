@@ -255,4 +255,5 @@ class PPOStrategy(BaseStrategy):
             },
             policy_output["aux_loss"],
             policy_output.get("router_stats"),
+            normalizer=float(token_masks.sum().item()),
         )

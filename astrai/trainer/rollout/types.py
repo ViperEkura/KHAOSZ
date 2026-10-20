@@ -1,7 +1,7 @@
 """Data contracts and configuration for online training rollouts."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import List, Optional, TypeVar
 
 from torch import Tensor
@@ -67,6 +67,14 @@ class RolloutResult(RawRollout):
     rewards: Tensor
     advantages: Optional[Tensor] = None
     returns: Optional[Tensor] = None
+
+    @classmethod
+    def from_raw(cls, raw: RawRollout, rewards: Tensor) -> "RolloutResult":
+        """Attach rewards while sharing the raw rollout's tensors and metadata."""
+        return cls(
+            **{entry.name: getattr(raw, entry.name) for entry in fields(RawRollout)},
+            rewards=rewards,
+        )
 
 
 class BaseRewardModel(ABC):

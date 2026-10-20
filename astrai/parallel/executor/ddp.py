@@ -58,10 +58,11 @@ class DDPExecutor(BaseExecutor):
             logger.warning("DDP backend selected but world_size=1, model not wrapped")
             return model
         local_rank = int(os.environ.get("LOCAL_RANK", get_rank()))
+        cpu_model = next(model.parameters()).device.type == "cpu"
         model = DDP(
             model,
-            device_ids=[local_rank],
-            output_device=local_rank,
+            device_ids=None if cpu_model else [local_rank],
+            output_device=None if cpu_model else local_rank,
             **self._ddp_kwargs,
         )
         logger.info("Model wrapped with DDP (world_size=%d)", get_world_size())

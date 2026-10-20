@@ -457,18 +457,7 @@ class AsyncRoundCoordinator:
         rewards = _score_rewards(self.reward_model, raw).to(device="cpu")
         self.generated_tokens += int(raw.response_mask.sum().item())
         self.generation_seconds += max(durations)
-        return RolloutResult(
-            prompts=raw.prompts,
-            prompt_mask=raw.prompt_mask,
-            responses=raw.responses,
-            response_mask=raw.response_mask,
-            rewards=rewards,
-            logprobs_old=raw.logprobs_old,
-            policy_version=raw.policy_version,
-            prompt_texts=raw.prompt_texts,
-            response_texts=raw.response_texts,
-            finish_reasons=raw.finish_reasons,
-        )
+        return RolloutResult.from_raw(raw, rewards)
 
     def close(self, force: bool = False) -> None:
         if self._closed:

@@ -9,6 +9,8 @@ from astrai.optimization.scheduler.base import BaseScheduler, SchedulerFactory
 class SGDRScheduler(BaseScheduler):
     """SGDR (Stochastic Gradient Descent with Warm Restarts) scheduler."""
 
+    _required_state_keys = ("warmup_steps", "cycle_length", "min_rate", "t_mult")
+
     def __init__(
         self,
         optimizer,
@@ -55,24 +57,3 @@ class SGDRScheduler(BaseScheduler):
         learning_rate_factor = self.min_rate + (1 - self.min_rate) * cosine_factor
 
         return [base_lr * learning_rate_factor for base_lr in self.base_lrs]
-
-    def state_dict(self):
-        """Returns the state of the scheduler as a dict."""
-        state = super().state_dict()
-        state.update(
-            {
-                "warmup_steps": self.warmup_steps,
-                "cycle_length": self.cycle_length,
-                "min_rate": self.min_rate,
-                "t_mult": self.t_mult,
-            }
-        )
-        return state
-
-    def load_state_dict(self, state_dict):
-        """Loads the scheduler's state."""
-        self.warmup_steps = state_dict.pop("warmup_steps")
-        self.cycle_length = state_dict.pop("cycle_length")
-        self.min_rate = state_dict.pop("min_rate")
-        self.t_mult = state_dict.pop("t_mult")
-        super().load_state_dict(state_dict)

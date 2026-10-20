@@ -7,9 +7,11 @@ from torch.utils.data import Dataset
 from astrai.config import ComponentSpec, TrainConfig
 from astrai.factory import BaseFactory
 from astrai.trainer import components as dataset_component
+from astrai.trainer.components import build_scheduler_component
 from astrai.trainer.context import TrainContext, TrainContextBuilder
 from astrai.trainer.session import TrainSession
 from astrai.trainer.strategy import BaseStrategy, StrategyFactory
+from astrai.trainer.trainer import Trainer
 
 
 class NoCopyDataset(Dataset):
@@ -51,13 +53,27 @@ def _config(**overrides):
 
 
 def test_checkpoint_snapshot_does_not_copy_runtime_objects():
-    snapshot = _config().to_dict()
+    class RuntimeFactory:
+        def __call__(self):
+            raise AssertionError("Snapshot must not invoke runtime factories")
+
+        def __deepcopy__(self, memo):
+            raise AssertionError("Snapshot must not copy runtime factories")
+
+    snapshot = _config(
+        reward_model_fn=RuntimeFactory(),
+        critic_model_fn=RuntimeFactory(),
+        critic_optimizer_fn=RuntimeFactory(),
+    ).to_dict()
     assert snapshot["strategy"] == "seq"
     assert snapshot["batch_per_device"] == 4
     assert snapshot["dataset"]["type"].endswith(":NoCopyDataset")
     assert snapshot["dataset"]["params"] == {}
     assert "model_fn" not in snapshot
     assert "optimizer_fn" not in snapshot
+    assert "reward_model_fn" not in snapshot
+    assert "critic_model_fn" not in snapshot
+    assert "critic_optimizer_fn" not in snapshot
 
 
 def test_component_specs_resolve_without_trainer_branches():
@@ -78,10 +94,29 @@ def test_component_specs_resolve_without_trainer_branches():
 
     assert isinstance(model, torch.nn.Linear)
     assert optimizer.param_groups[0]["params"][0] is model.weight
-    assert scheduler.step_size == 3
+    assert scheduler.step_size == 2
     assert config.to_dict()["scheduler"]["params"]["step_size"] == "$total_steps"
     assert isinstance(config.dataset, ComponentSpec)
     assert TrainContext(config=config).dataset is None
+
+
+def test_legacy_scheduler_counts_padded_rank_windows():
+    config = _config(
+        dp_size=2,
+        batch_per_device=2,
+        grad_accum_steps=2,
+        epoch_tail_policy="drop",
+    )
+    optimizer = torch.optim.SGD(torch.nn.Linear(1, 1).parameters(), lr=0.1)
+    spec = ComponentSpec(
+        type="torch.optim.lr_scheduler:StepLR",
+        params={"step_size": "$total_steps", "gamma": 0.5},
+    )
+    # The old sampler pads 7 samples to 4 per rank: one complete update.
+    legacy = build_scheduler_component(spec, optimizer, 7, config, global_cursor=False)
+    global_cursor = build_scheduler_component(spec, optimizer, 7, config)
+    assert legacy.step_size == 1
+    assert global_cursor.step_size == 0
 
 
 def test_builder_creates_and_splits_context_dataset():
@@ -136,7 +171,11 @@ def test_scheduler_uses_dataset_owned_by_context(monkeypatch):
     builder = TrainContextBuilder(config)
     monkeypatch.setattr(builder_module, "get_current_device", lambda: "cpu")
     monkeypatch.setattr(
-        builder, "_instantiate_scheduler", lambda optimizer, length: seen.append(length)
+        builder,
+        "_instantiate_scheduler",
+        lambda optimizer, length, *, global_cursor: seen.append(
+            (length, global_cursor)
+        ),
     )
 
     class Executor:
@@ -144,7 +183,49 @@ def test_scheduler_uses_dataset_owned_by_context(monkeypatch):
             return None, None, scheduler_fn(object())
 
     builder._prepare_model(context, Executor(), SimpleNamespace(state_dict=None))
-    assert seen == [context.dataset_len]
+    assert seen == [(context.dataset_len, context.global_cursor)]
+
+
+def test_global_window_uses_offline_strategy_update_hook():
+    class CustomStrategy:
+        policy_version = None
+
+        def training_updates(self, batch):
+            assert batch == "batch"
+            yield iter(
+                (
+                    {
+                        "loss": torch.tensor(2.0),
+                        "metrics": {"task": 2.0},
+                        "normalizer": 4,
+                    },
+                    {
+                        "loss": torch.tensor(3.0),
+                        "metrics": {"task": 3.0},
+                        "normalizer": 4,
+                    },
+                )
+            )
+
+        def compute_loss_output(self, batch):
+            raise AssertionError("training_updates must be called")
+
+    output = Trainer._window_loss_output(CustomStrategy(), "batch", 4)
+    assert output["loss"].item() == 5.0
+    assert output["metrics"] == {"task": 5.0}
+    assert output["normalizer"] == 4.0
+
+
+def test_global_window_rejects_unplanned_strategy_commits():
+    class CustomStrategy:
+        policy_version = None
+
+        def training_updates(self, batch):
+            for _ in range(2):
+                yield iter(({"loss": torch.tensor(1.0), "metrics": {}},))
+
+    with pytest.raises(RuntimeError, match="one update per microbatch"):
+        Trainer._window_loss_output(CustomStrategy(), "batch", 2)
 
 
 def test_registered_custom_strategy_and_unknown_options():

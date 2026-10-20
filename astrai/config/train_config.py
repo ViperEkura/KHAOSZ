@@ -9,7 +9,7 @@ from dataclasses import (
     dataclass as plain_dataclass,
 )
 from math import isfinite
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any, Callable, Dict, List, Literal, Optional, Type
 
 from pydantic import ConfigDict, field_validator, model_validator
 from pydantic.dataclasses import dataclass
@@ -72,30 +72,6 @@ class _TrainRuntimeDependencies:
         )
 
 
-@plain_dataclass(frozen=True)
-class _CheckpointSettingsSnapshot:
-    values: Dict[str, Any]
-
-    @classmethod
-    def capture(cls, config: "TrainConfig") -> "_CheckpointSettingsSnapshot":
-        runtime_names = {item.name for item in fields(_TrainRuntimeDependencies)}
-        values = {}
-        for item in fields(config):
-            value = getattr(config, item.name)
-            if item.name in runtime_names and value is not None:
-                continue
-            if is_dataclass(value):
-                value = asdict(value)
-            elif isinstance(value, tuple):
-                value = list(value)
-            try:
-                json.dumps(value)
-            except (TypeError, ValueError):
-                continue
-            values[item.name] = value
-        return cls(values)
-
-
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True, extra="forbid"))
 class TrainConfig(BaseConfig):
     """Training configuration.
@@ -114,6 +90,7 @@ class TrainConfig(BaseConfig):
         n_epoch (int): Number of epochs for training. Defaults to 1.
         batch_per_device (int): Batch size per device. Defaults to 4.
         grad_accum_steps (int): Number of iterations between optimizer steps. Defaults to 1.
+        epoch_tail_policy (Literal["drop", "flush"]): Drop an incomplete epoch-end optimizer window, or commit it using the batches actually available. Async rollout updates by round and does not use this policy. Defaults to "drop".
         max_grad_norm (Optional[float]): Maximum gradient norm. None disables clipping. Defaults to 1.0.
         gradient_checkpointing_modules (List[type]): Module types to enable activation checkpointing for. Defaults to [].
         compile_mode (Optional[str]): torch.compile mode: 'default', 'reduce-overhead', 'max-autotune', or None. Defaults to None.
@@ -162,8 +139,8 @@ class TrainConfig(BaseConfig):
         rollout_weight_timeout_s (float): NCCL and weight ACK deadline. Defaults to 600.
         async_train_microbatch_prompts (int): Prompts per learner backward pass in async_round; all microbatches accumulate into one optimizer step. Defaults to 1.
         rollout_val_device (Optional[str]): Device for a dedicated validation rollout backend. None shares the training backend; setting it builds a separate replica so validation generation never touches the training scheduler's KV pool. Defaults to None.
-        rl_update_epochs (int): Learner passes over one collected online rollout round (classic PPO-style multiple epochs per batch). Each pass recomputes the loss against the round's fixed rewards/logprobs_old and takes its own optimizer steps. Values >1 trade on-policy freshness for sample efficiency; watch ``clip_fraction`` for stale-ratio blowup. Requires ``grad_accum_steps=1`` online. Defaults to 1.
-        rl_minibatch_prompts (Optional[int]): Prompts per learner update within one rollout round; None updates on the whole round at once. Slicing always keeps prompt groups intact, and PPO's rollout-pinned advantages are shared views, so targets never shift between updates. Each minibatch update is a full optimizer step (and a weight publication). Defaults to None.
+        rl_update_epochs (int): Learner passes over one collected online rollout window. Each pass recomputes the loss against the window's fixed rewards/logprobs_old and takes its own optimizer steps. Values >1 trade on-policy freshness for sample efficiency; watch ``clip_fraction`` for stale-ratio blowup. Defaults to 1.
+        rl_minibatch_prompts (Optional[int]): Global prompts per learner update within one rollout window; None updates on the whole window at once. Slicing keeps prompt groups intact, and PPO's rollout-pinned advantages are shared views. Each minibatch update is a full optimizer step and weight publication. Defaults to None.
         gradient_chunked_logprobs (bool): Compute training-path log-probs through the checkpointed chunked lm_head instead of materializing the full ``[N, S, V]`` logits (gradients identical up to GEMM tiling noise; peak memory drops by the logits tensor). Off keeps the historical full-tensor path. Defaults to False.
         save_reference_model (bool): Persist the frozen reference model as a ``reference_model`` checkpoint extra whenever the strategy has one (DPO/GRPO/PPO KL anchor). Resuming without it would silently re-anchor the KL target to the resumed actor. Adds one extra weight copy per checkpoint. Defaults to True.
         allow_reference_reanchor (bool): Escape hatch for resuming a reference-model strategy from a checkpoint saved without ``reference_model``: False (default) fails the resume explicitly, True proceeds with the reference re-anchored to the resumed actor and logs a warning. Defaults to False.
@@ -190,6 +167,7 @@ class TrainConfig(BaseConfig):
     n_epoch: int = 1
     batch_per_device: int = 4
     grad_accum_steps: int = 1
+    epoch_tail_policy: Literal["drop", "flush"] = "drop"
     max_grad_norm: Optional[float] = 1.0
     gradient_checkpointing_modules: List[Type] = field(default_factory=list)
     compile_mode: Optional[str] = None
@@ -255,7 +233,22 @@ class TrainConfig(BaseConfig):
 
     def to_dict(self) -> Dict[str, Any]:
         """Capture checkpoint settings without copying runtime dependencies."""
-        return _CheckpointSettingsSnapshot.capture(self).values
+        runtime_names = {item.name for item in fields(_TrainRuntimeDependencies)}
+        values = {}
+        for item in fields(self):
+            value = getattr(self, item.name)
+            if item.name in runtime_names and value is not None:
+                continue
+            if is_dataclass(value):
+                value = asdict(value)
+            elif isinstance(value, tuple):
+                value = list(value)
+            try:
+                json.dumps(value)
+            except (TypeError, ValueError):
+                continue
+            values[item.name] = value
+        return values
 
     @field_validator("strategy")
     def _validate_strategy(cls, v: str) -> str:

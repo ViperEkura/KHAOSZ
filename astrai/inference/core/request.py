@@ -228,7 +228,7 @@ class RequestManager:
             rep_window=rep_window,
         )
 
-        self._register_request(request)
+        self.enqueue_tokenized_requests([request])
         return request_id
 
     def add_requests(
@@ -301,20 +301,7 @@ class RequestManager:
             requests.append(request)
             request_ids_out.append(request_id)
 
-        # Validate and install the whole batch in one critical section. A
-        # duplicate later in the batch must not leave an unowned prefix queued.
-        with self._lock:
-            if len(set(request_ids_out)) != len(request_ids_out):
-                raise ValueError("duplicate request ids in batch")
-            if any(rid in self._requests for rid in request_ids_out):
-                raise ValueError("duplicate live request id in batch")
-            for request in requests:
-                self.waiting.append(request)
-                self._requests[request.request_id] = request
-                self._total_requests += 1
-                if self._metrics is not None:
-                    self._metrics.register(request.request_id)
-        self._request_event.set()
+        self.enqueue_tokenized_requests(requests)
         return request_ids_out
 
     def enqueue_tokenized_requests(self, requests: List[Request]) -> None:
@@ -322,6 +309,8 @@ class RequestManager:
         if not requests:
             return
         ids = [request.request_id for request in requests]
+        # Validate before installing any request: a duplicate later in the
+        # batch must not leave an unowned prefix queued.
         with self._lock:
             if len(set(ids)) != len(ids) or any(
                 request_id in self._requests for request_id in ids
@@ -333,19 +322,6 @@ class RequestManager:
                 self._total_requests += 1
                 if self._metrics is not None:
                     self._metrics.register(request.request_id)
-        self._request_event.set()
-
-    def _register_request(self, request: "Request") -> None:
-        with self._lock:
-            if request.request_id in self._requests:
-                raise ValueError(f"duplicate live request id: {request.request_id}")
-            self.waiting.append(request)
-            self._requests[request.request_id] = request
-            self._total_requests += 1
-
-        if self._metrics is not None:
-            self._metrics.register(request.request_id)
-
         self._request_event.set()
 
     def cancel_request(self, request_id: str) -> Tuple[List[Request], bool]:

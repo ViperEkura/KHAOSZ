@@ -33,6 +33,33 @@ from tests.support.dataset import (
 )
 
 
+@pytest.mark.parametrize("single_file", [False, True])
+def test_jsonl_records_preserve_order_and_defer_processing(
+    tmp_path, caplog, single_file
+):
+    (tmp_path / "b.jsonl").write_text('{"value": 2}\n', encoding="utf-8")
+    first = tmp_path / "a.jsonl"
+    first.write_text('\n{"value": 1}\ninvalid JSON\n', encoding="utf-8")
+    processed = []
+
+    def processor(record):
+        processed.append(record["value"])
+        return {"value": torch.tensor([record["value"]])}
+
+    store = JsonlStore()
+    store.load(str(first if single_file else tmp_path), processor=processor)
+    assert processed == []
+    assert "Failed to parse JSON line" in caplog.text
+    expected = [1] if single_file else [1, 2]
+    assert len(store) == len(expected)
+    first.write_text('{"value": 99}\n', encoding="utf-8")
+    assert [
+        store.fetch_record(i, "value").item() for i in range(len(store))
+    ] == expected
+    assert processed == expected
+    assert store.keys == ["value"]
+
+
 def test_unloaded_sample_window_raises():
     """Store.sample_window before load raises RuntimeError."""
     store = MmapStore(window_size=64, stride=64)

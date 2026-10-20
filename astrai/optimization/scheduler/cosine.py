@@ -10,6 +10,8 @@ from astrai.optimization.scheduler.base import BaseScheduler, SchedulerFactory
 class CosineScheduler(BaseScheduler):
     """Cosine decay scheduler with warmup, implemented as PyTorch LRScheduler."""
 
+    _required_state_keys = ("warmup_steps", "lr_decay_steps", "min_rate", "total_steps")
+
     def __init__(
         self,
         optimizer,
@@ -40,22 +42,3 @@ class CosineScheduler(BaseScheduler):
         cosine_decay = 0.5 * (1.0 + math.cos(math.pi * decay_progress))
         decay_factor = max(self.min_rate, cosine_decay)
         return [base_lr * decay_factor for base_lr in self.base_lrs]
-
-    def state_dict(self):
-        state = super().state_dict()
-        state.update(
-            {
-                "warmup_steps": self.warmup_steps,
-                "lr_decay_steps": self.lr_decay_steps,
-                "min_rate": self.min_rate,
-                "total_steps": self.total_steps,
-            }
-        )
-        return state
-
-    def load_state_dict(self, state_dict):
-        self.warmup_steps = state_dict.pop("warmup_steps")
-        self.lr_decay_steps = state_dict.pop("lr_decay_steps")
-        self.min_rate = state_dict.pop("min_rate")
-        self.total_steps = state_dict.pop("total_steps")
-        super().load_state_dict(state_dict)
