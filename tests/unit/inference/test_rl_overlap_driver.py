@@ -7,7 +7,6 @@ import torch
 
 from astrai.inference.core.request import Request, RequestStatus
 from astrai.inference.worker.pending import PendingExecution
-from astrai.trainer.backend import run_batch
 from tests.support.inference import make_cpu_model, make_cpu_scheduler
 
 
@@ -44,7 +43,7 @@ def _record_execution(monkeypatch, engine, calls, token_for=None):
 
 @pytest.mark.parametrize("overlap", [False, True])
 @pytest.mark.parametrize("return_logprobs", [False, True])
-def test_run_batch_uses_shared_pipeline_and_drains(
+def test_generate_uses_shared_pipeline_and_drains(
     monkeypatch, overlap, return_logprobs
 ):
     engine = make_cpu_scheduler(make_cpu_model(), enable_overlap=overlap)
@@ -59,8 +58,7 @@ def test_run_batch_uses_shared_pipeline_and_drains(
         return result
 
     monkeypatch.setattr(engine, "tick", observe_tick)
-    outputs = run_batch(
-        engine,
+    outputs = engine.generate(
         [[1, 2]],
         max_tokens=6,
         return_logprobs=return_logprobs,
@@ -68,10 +66,11 @@ def test_run_batch_uses_shared_pipeline_and_drains(
 
     assert depths and max(depths) == int(overlap)
     assert all(plan.return_logprobs == return_logprobs for plan in plans)
-    tokens = outputs[0][0] if return_logprobs else outputs[0]
+    tokens = outputs[0].token_ids
     assert tokens == [10, 12, 13, 14, 15, 16]
-    if return_logprobs:
-        assert outputs[0][1] == [-0.25] * len(tokens)
+    assert outputs[0].logprobs == ([-0.25] * len(tokens) if return_logprobs else [])
+    assert outputs[0].finish_reason == "length"
+    assert outputs[0].error_reason is None
     submit_next = calls.index(("submit", 3))
     commit_prior = calls.index(("commit", 2))
     assert (submit_next < commit_prior) == overlap
@@ -117,7 +116,7 @@ def test_overlap_replan_preserves_logprobs_when_kv_extension_shrinks_batch(
     )
     requests = [Request(rid, [1, 2], max_tokens=6) for rid in ("a", "b")]
 
-    engine.execute_requests(requests, return_logprobs=True)
+    engine._execute_requests(requests, return_logprobs=True)
 
     assert [plan.step_id for plan in scheduled[:4]] == [1, 2, 3, 4]
     assert [plan.step_id for plan in submitted[:3]] == [1, 2, 4]
@@ -172,7 +171,7 @@ def test_pending_eos_wins_over_next_decode_kv_failure(monkeypatch, overlap, all_
 
     monkeypatch.setattr(engine.scheduler.kv_manager, "free_slots", record_free)
     requests = [Request(rid, [1, 2], max_tokens=6) for rid in ("a", "b")]
-    engine.execute_requests(requests, return_logprobs=True)
+    engine._execute_requests(requests, return_logprobs=True)
 
     assert set(failures) == (eos_ids if overlap else set())
     for request in requests:
@@ -204,7 +203,7 @@ def test_rollout_rejects_waiting_batch_when_capacity_cannot_make_progress(
     monkeypatch.setattr(engine.scheduler.kv_manager, "alloc_slots", lambda *_: False)
     requests = [Request("waiting", [1, 2], max_tokens=6)]
 
-    engine.execute_requests(requests)
+    engine._execute_requests(requests)
 
     assert requests[0].status == RequestStatus.ABORTED
     assert requests[0].finish_reason == "rejected"
@@ -238,7 +237,7 @@ def test_rollout_failed_submit_fences_before_releasing_pending_kv(monkeypatch):
     request = Request("failed", [1, 2], max_tokens=6)
 
     with pytest.raises(RuntimeError, match="forward failed"):
-        engine.execute_requests([request], return_logprobs=True)
+        engine._execute_requests([request], return_logprobs=True)
 
     assert calls.index(("fence", None)) < calls.index(("free", "failed"))
     assert request.status == RequestStatus.ABORTED

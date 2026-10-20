@@ -18,7 +18,6 @@ from astrai.inference.worker.pending import (
     PendingExecution,
 )
 from astrai.model.autoregressive_lm import AutoRegressiveLM
-from astrai.trainer.backend import run_batch
 from tests.support.models import make_rollout_config
 from tests.support.scheduler import (
     _make_contract_scheduler,
@@ -57,7 +56,7 @@ def test_submit_decode_returns_pending_without_touching_tasks(device):
     scheduler, _tok, _model = _make_real_scheduler(device)
     try:
         prompts = [[10, 20, 30, 40]]
-        run_batch(scheduler, prompts, max_tokens=2, temperature=0.7)
+        scheduler.generate(prompts, max_tokens=2, temperature=0.7)
         requests = [
             Request(
                 request_id=f"probe_{uuid.uuid4().hex[:8]}",
@@ -172,7 +171,7 @@ def test_overlap_loop_matches_synchronous_tokens(device):
     the KV cap with half their tokens and interleaved-token detext.
     Token-count gates cannot see this on small configs (the requests still
     finish); only the full sequence comparison against the synchronous
-    run_batch reference catches it.
+    generate reference catches it.
     """
     cfg = make_rollout_config(max_position_embeddings=64)
     model = AutoRegressiveLM(cfg).to(device=device, dtype=torch.bfloat16).eval()
@@ -194,14 +193,17 @@ def test_overlap_loop_matches_synchronous_tokens(device):
         # random model may sample a stop id (FakeTokenizer: eos=2) mid-stream,
         # so accept an early stop-token termination on either side of the
         # comparison; what must match is the committed token stream itself.
-        reference = run_batch(
-            scheduler,
+        reference = scheduler.generate(
             [[ord(c) for c in p] for p in prompts],
             max_tokens=12,
             temperature=0,
         )
         stop_ids = set(scheduler.scheduler.stop_ids)
-        assert all(len(ids) == 12 or (ids and ids[-1] in stop_ids) for ids in reference)
+        assert all(
+            len(result.token_ids) == 12
+            or (result.token_ids and result.token_ids[-1] in stop_ids)
+            for result in reference
+        )
 
         # Collect the committed token stream through the event sink before
         # release_finished discards the finished requests.
@@ -242,9 +244,9 @@ def test_overlap_loop_matches_synchronous_tokens(device):
 
         by_task = {tid: stream.get(tid, []) for tid in request_ids}
         for i, tid in enumerate(request_ids):
-            assert by_task[tid] == list(reference[i]), (
+            assert by_task[tid] == reference[i].token_ids, (
                 f"request {i} overlap stream {by_task[tid]} != reference "
-                f"{list(reference[i])}"
+                f"{reference[i].token_ids}"
             )
         assert scheduler.model_runner.peek_pending() is None
     finally:
@@ -286,7 +288,6 @@ def test_rollout_overlap_matches_sync_with_queued_prefill_and_shrinking_batch(
         rep_window=3,
         seeds=[11, 22, 33],
         return_logprobs=True,
-        return_details=True,
     )
     submissions = []
     submit = core.submit
@@ -298,10 +299,10 @@ def test_rollout_overlap_matches_sync_with_queued_prefill_and_shrinking_batch(
         return submit(plan)
 
     try:
-        reference = run_batch(core, prompts, **kwargs)
+        reference = core.generate(prompts, **kwargs)
         core.enable_overlap = True
         monkeypatch.setattr(core, "submit", record_submit)
-        actual = run_batch(core, prompts, **kwargs)
+        actual = core.generate(prompts, **kwargs)
 
         assert [len(result.token_ids) for result in actual] == [7, 5, 7]
         for prompt, expected, result in zip(prompts, reference, actual):
@@ -355,7 +356,10 @@ def test_rollout_overlap_matches_sync_with_queued_prefill_and_shrinking_batch(
 
         core.apply_weight_update(1, update)
         assert core.policy_version == 1
-        assert len(run_batch(core, [prompts[0]], max_tokens=2, temperature=0)[0]) == 2
+        assert (
+            len(core.generate([prompts[0]], max_tokens=2, temperature=0)[0].token_ids)
+            == 2
+        )
         assert not core._pending
         assert core.get_stats()["kv_cache_tasks"] == 0
     finally:

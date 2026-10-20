@@ -5,6 +5,7 @@ import pytest
 import torch
 from torch import nn
 
+from astrai.inference.core.request import GenerationResult
 from astrai.inference.core.versioning import PolicyVersionGuard
 from astrai.model.autoregressive_lm import AutoRegressiveLM
 from astrai.trainer.backend import ColocatedBackend, P2PCopyPublisher, ReplicaBackend
@@ -14,9 +15,7 @@ from tests.support.tokenizers import FakeTokenizer
 
 @pytest.mark.parametrize("training", [False, True])
 @pytest.mark.parametrize("fail", [False, True])
-def test_colocated_mode_changes_stay_inside_policy_snapshot(
-    training, fail, monkeypatch
-):
+def test_colocated_mode_changes_stay_inside_policy_snapshot(training, fail):
     state = {"locked": False}
     calls = []
 
@@ -41,24 +40,25 @@ def test_colocated_mode_changes_stay_inside_policy_snapshot(
         finally:
             state["locked"] = False
 
-    def fake_run_batch(_core, prompts, **kwargs):
+    expected = [GenerationResult([4, 5, 6], [], "length")]
+
+    def generate(prompts, **kwargs):
         assert state["locked"]
         assert model.training is False
         assert prompts == [[1, 2]]
         assert kwargs == {"max_tokens": 3}
         if fail:
             raise RuntimeError("generation failed")
-        return [[4, 5, 6]]
+        return expected
 
-    monkeypatch.setattr("astrai.trainer.backend.run_batch", fake_run_batch)
     backend = ColocatedBackend(
-        SimpleNamespace(model=model, with_policy_snapshot=snapshot)
+        SimpleNamespace(model=model, with_policy_snapshot=snapshot, generate=generate)
     )
     if fail:
         with pytest.raises(RuntimeError, match="generation failed"):
             backend.generate([[1, 2]], max_tokens=3)
     else:
-        assert backend.generate([[1, 2]], max_tokens=3) == [[4, 5, 6]]
+        assert backend.generate([[1, 2]], max_tokens=3) is expected
     assert calls == [False, training]
     assert model.training is training
     assert not state["locked"]
@@ -155,7 +155,9 @@ def test_replica_can_publish_weights_after_rollout_drains(overlap):
             seeds=[11, 22, 33],
             return_logprobs=True,
         )
-        assert all(len(tokens) == len(logprobs) == 4 for tokens, logprobs in results)
+        assert all(
+            len(result.token_ids) == len(result.logprobs) == 4 for result in results
+        )
         assert not core._pending
         assert core.model_runner.peek_pending() is None
         assert not core.scheduler.has_outstanding()
@@ -165,7 +167,10 @@ def test_replica_can_publish_weights_after_rollout_drains(overlap):
         P2PCopyPublisher(backend).publish(1, source)
         assert backend.policy_version == 1
         assert torch.equal(target.lm_head.weight, source.lm_head.weight)
-        assert len(backend.generate([[3, 4]], max_tokens=2, temperature=0)[0]) == 2
+        assert (
+            len(backend.generate([[3, 4]], max_tokens=2, temperature=0)[0].token_ids)
+            == 2
+        )
         assert not core.scheduler.has_requests()
         assert core.get_stats()["kv_cache_tasks"] == 0
     finally:

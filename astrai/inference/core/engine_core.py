@@ -18,8 +18,9 @@ from astrai.inference.core.cache.pool import BlockPool
 from astrai.inference.core.events import (
     FINISH_ABORTED,
     FINISH_CANCELLED,
+    FINISH_STOP_TOKEN,
 )
-from astrai.inference.core.request import Request, RequestStatus
+from astrai.inference.core.request import GenerationResult, Request, RequestStatus
 from astrai.inference.core.scheduler import Scheduler
 from astrai.inference.core.versioning import PolicyVersionGuard
 from astrai.inference.worker.model_runner import GPUModelRunner
@@ -445,7 +446,91 @@ class EngineCore:
         return True
 
     @_synchronous
-    def execute_requests(
+    def generate(
+        self,
+        prompt_ids_list: List[List[int]],
+        *,
+        max_tokens: Optional[int] = None,
+        temperature: float = 1.0,
+        top_p: float = 1.0,
+        top_k: int = 50,
+        frequency_penalty: float = 0.0,
+        rep_window: int = 64,
+        return_logprobs: bool = False,
+        seeds: Optional[List[int]] = None,
+    ) -> List[GenerationResult]:
+        """Generate tokenized prompts, returning terminal results in input order.
+
+        Invalid prompts retain a rejected result slot. ``return_logprobs``
+        controls computation only; the result type is always the same.
+        All submitted execution drains before the policy boundary is released.
+        """
+        if seeds is not None and (
+            len(seeds) != len(prompt_ids_list)
+            or any(
+                isinstance(seed, bool)
+                or not isinstance(seed, int)
+                or not 0 <= seed < 2**63
+                for seed in seeds
+            )
+        ):
+            raise ValueError("seeds must contain one integer in [0, 2**63) per request")
+        requests, errors = [], []
+        for index, ids in enumerate(prompt_ids_list):
+            error = None
+            if not ids:
+                error = "prompt_empty"
+            elif len(ids) >= self.max_seq_len:
+                error = "prompt_too_long"
+            limit = (
+                self.max_seq_len - len(ids)
+                if max_tokens is None
+                else min(max_tokens, self.max_seq_len - len(ids))
+            )
+            if error is None and limit <= 0:
+                error = "max_tokens_non_positive"
+            request = None
+            if error is None:
+                request = Request(
+                    f"batch_{uuid.uuid4().hex}",
+                    ids,
+                    limit,
+                    temperature,
+                    top_p,
+                    top_k,
+                    frequency_penalty,
+                    rep_window,
+                    seed=None if seeds is None else seeds[index],
+                )
+            requests.append(request)
+            errors.append(error)
+        self._execute_requests(
+            [request for request in requests if request is not None],
+            return_logprobs=return_logprobs,
+        )
+        results = []
+        for request, error in zip(requests, errors):
+            if request is None:
+                results.append(GenerationResult([], [], "rejected", error))
+            else:
+                reason = (
+                    "rejected"
+                    if request.error_reason
+                    else "stop"
+                    if request.finish_reason == FINISH_STOP_TOKEN
+                    else "length"
+                )
+                results.append(
+                    GenerationResult(
+                        list(request.output_ids),
+                        list(request.output_logprobs),
+                        reason,
+                        request.error_reason,
+                    )
+                )
+        return results
+
+    def _execute_requests(
         self, requests: List[Request], return_logprobs: bool = False
     ) -> None:
         """Drive tokenized requests with the serving loop's execution pipeline."""
