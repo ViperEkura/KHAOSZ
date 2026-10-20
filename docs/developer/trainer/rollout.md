@@ -47,9 +47,18 @@ lists.
 
 AsyncRoundCoordinator distributes prompts, merges results in input order and
 checks request, round and policy identities. Worker processes keep their own
-KV cache and CUDA Graph. The Pipe carries control and CPU results; a separate
-NCCL group transports CUDA model weights. For startup, overlap, failure and
-resume details, see [async_round.md](async_round.md).
+KV cache and CUDA Graph. Its training iterator collects and validates the
+current raw round, submits at most one following round, then scores the current
+rewards and yields the result to the learner. This allows generation to overlap
+reward scoring and learning. Calling `collect_round()` directly still collects
+and scores only the requested round.
+
+The Pipe carries control and CPU results; a separate NCCL group transports CUDA
+model weights. A stop suppresses further prefetch when observed, and a reward
+or iteration failure closes any active prefetch. Delayed collection accepts
+already ready generation replies even if reward scoring or learning outlasted
+the generation deadline; startup and weight ACK deadlines remain separate.
+For lifecycle, timeout and resume details, see [async_round.md](async_round.md).
 
 ## Decode overlap
 
