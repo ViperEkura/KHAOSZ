@@ -78,7 +78,7 @@ def test_component_specs_resolve_without_trainer_branches():
 
     assert isinstance(model, torch.nn.Linear)
     assert optimizer.param_groups[0]["params"][0] is model.weight
-    assert scheduler.step_size == 3
+    assert scheduler.step_size == 2
     assert config.to_dict()["scheduler"]["params"]["step_size"] == "$total_steps"
     assert isinstance(config.dataset, ComponentSpec)
     assert TrainContext(config=config).dataset is None

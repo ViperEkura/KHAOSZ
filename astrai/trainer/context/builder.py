@@ -108,8 +108,8 @@ class TrainContextBuilder:
         try:
             self._create_datasets(context)
             if (
-                context.global_cursor
-                and self._resume
+                self._resume
+                and context.global_cursor
                 and context.checkpoint is not None
             ):
                 saved_len = context.checkpoint.meta["dataset_len"]
