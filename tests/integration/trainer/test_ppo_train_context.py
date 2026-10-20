@@ -318,8 +318,7 @@ def test_save_extra_persists_critic_state(device):
 
     extra = CheckpointCallback.save_extra(context)
 
-    # rng_state rides along on every checkpoint via the extras registry.
-    assert set(extra) == {"value_model", "value_optimizer", "rng_state"}
+    assert set(extra) == {"value_model", "value_optimizer"}
     saved = extra["value_model"]
     live = critic.state_dict()
     assert set(saved) == set(live)

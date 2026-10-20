@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 def seed_everything(seed: int, rank: int = 0) -> None:
-    """Seed the global generators; resume restores the checkpoint's RNG states."""
+    """Seed each rank's generators when starting or resuming a run."""
     seed = seed + rank
     random.seed(seed)
     np.random.seed(seed)
@@ -275,7 +275,7 @@ class Trainer:
 
     def _trainer_loop(self, param_path: Optional[str] = None, resume: bool = False):
         # Seed before the context is built so initialisation and data drawing start
-        # from a defined state; a resume overwrites this with the saved states.
+        # from a defined state. The sampler has its own epoch-seeded generator.
         seed_everything(self.train_config.random_seed, get_rank())
         with TrainSession(
             lambda: (

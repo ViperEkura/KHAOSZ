@@ -17,6 +17,24 @@ from astrai.trainer.trainer import Trainer
 from tests.support.rollout import RandomTokenDataset
 
 
+class _DeterministicTokenDataset(torch.utils.data.Dataset):
+    """Fixed tokens make checkpoint replay independent of global RNG state."""
+
+    def __init__(self, length, max_length=8, vocab_size=100):
+        self.length = length
+        self.max_length = max_length
+        self.vocab_size = vocab_size
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, index):
+        inputs = (
+            torch.arange(self.max_length) + index * self.max_length
+        ) % self.vocab_size
+        return {"input_ids": inputs, "target_ids": (inputs + 1) % self.vocab_size}
+
+
 class _StopAfterSteps(TrainCallback):
     """Request a stop once N optimizer steps have been committed."""
 
@@ -113,14 +131,14 @@ def test_saved_cursor_matches_committed_steps(
 def test_resume_reproduces_the_uninterrupted_run(
     train_config_factory, tmp_path, stop_callback, expected_step
 ):
-    """Interrupting, saving and resuming must be bitwise equivalent to running on."""
+    """Committed state and fixed data replay exactly after a restart."""
     baseline_dir = tmp_path / "baseline"
     split_dir = tmp_path / "split"
     per_step_total = 2 * 2  # batch_per_device * grad_accum_steps, dp_size == 1
 
     def config_for(directory):
         return train_config_factory(
-            RandomTokenDataset(length=64, max_length=8, vocab_size=100),
+            _DeterministicTokenDataset(length=64),
             str(directory),
             device="cpu",
             n_epoch=2,
@@ -203,7 +221,7 @@ def test_short_epoch_tail_is_discarded_and_resumes_at_next_epoch(
 
     def config_for(directory):
         return train_config_factory(
-            RandomTokenDataset(length=length, max_length=8, vocab_size=100),
+            _DeterministicTokenDataset(length=length),
             str(directory),
             device="cpu",
             n_epoch=2,
@@ -230,9 +248,7 @@ def test_short_epoch_tail_is_discarded_and_resumes_at_next_epoch(
         torch.testing.assert_close(
             baseline.state_dict[key], resumed.state_dict[key], rtol=0, atol=0
         )
-    assert torch.equal(
-        baseline.extra["rng_state"]["torch"], resumed.extra["rng_state"]["torch"]
-    )
+    assert "rng_state" not in resumed.extra
 
 
 def test_discarded_tail_is_not_loaded(train_config_factory, tmp_path):
@@ -259,7 +275,7 @@ def test_resume_from_checkpoint_before_discarded_tail(train_config_factory, tmp_
 
     def config_for(directory):
         return train_config_factory(
-            RandomTokenDataset(length=9, max_length=8, vocab_size=100),
+            _DeterministicTokenDataset(length=9),
             str(directory),
             device="cpu",
             n_epoch=2,

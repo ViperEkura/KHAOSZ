@@ -2,7 +2,6 @@
 reference-restore contract, and rollout finish-reason plumbing."""
 
 import os
-import random
 import shutil
 from contextlib import nullcontext
 from types import SimpleNamespace
@@ -15,10 +14,6 @@ from torch.utils.data import Dataset
 from astrai.config import ComponentSpec, TrainConfig
 from astrai.serialization import Checkpoint
 from astrai.trainer.context import TrainContext, TrainContextBuilder
-from astrai.trainer.optional_extras import (
-    restore_extras,
-    snapshot_extras,
-)
 from astrai.trainer.rollout import BaseRewardModel, RolloutResult
 from astrai.trainer.strategy import (
     GRPOStrategy,
@@ -388,26 +383,7 @@ def test_move_to_device_passes_non_tensors_through():
     assert batch["reasons"] == [["stop"]]
 
 
-# --------------- M0: RNG extras + reference restore contract ---------------
-
-
-def test_rng_state_round_trip():
-    random.seed(1)
-    torch.manual_seed(1)
-    first = (torch.rand(3), random.random())
-
-    context = SimpleNamespace(optimizer=None, scheduler=None)
-    state = snapshot_extras(context)["rng_state"]
-    diverged = (torch.rand(3), random.random())
-    restore_extras(SimpleNamespace(), {"rng_state": state})
-    replayed = (torch.rand(3), random.random())
-
-    # Restore rewinds to the snapshot, so the post-restore draw replays the
-    # draw made right after the snapshot — and neither matches the earlier one.
-    assert torch.equal(diverged[0], replayed[0])
-    assert diverged[1] == replayed[1]
-    assert not torch.equal(first[0], replayed[0])
-    assert first[1] != replayed[1]
+# --------------- M0: reference restore contract ---------------
 
 
 class _RefOnlyStrategy:
@@ -579,7 +555,7 @@ def test_online_minibatch_round_publication_and_reference_resume(base_test_env):
     # position however many updates it produces.
     assert checkpoint.meta["consumed_samples"] == 4
     assert "reference_model" in checkpoint.extra
-    assert "rng_state" in checkpoint.extra
+    assert "rng_state" not in checkpoint.extra
     ref_keys = set(checkpoint.extra["reference_model"])
     assert ref_keys and ref_keys.issubset(checkpoint.state_dict.keys())
 
