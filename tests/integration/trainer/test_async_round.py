@@ -665,9 +665,33 @@ def test_iter_rounds_stop_after_yield_leaves_prefetch_for_owner_to_close():
         assert not pool._closed
         assert pool._round_id == pool._sample_cursor == 2
     finally:
-        pool.close(force=True)
+        pool.close()
     assert pool._active_round is None
     assert all(not process.is_alive() for process in pool._processes)
+
+
+@pytest.mark.parametrize("pending", [False, True], ids=["idle", "pending-generation"])
+def test_default_close_orders_worker_and_weight_channel_cleanup(monkeypatch, pending):
+    _, pool = _coordinator(devices=["hang"])
+    channel_closes = []
+
+    def close_channel(force=False):
+        channel_closes.append(force)
+        if pending:
+            assert force, "busy workers cannot cooperate in weight-channel shutdown"
+            assert all(not process.is_alive() for process in pool._processes)
+
+    monkeypatch.setattr(pool.weights, "close", close_channel)
+    try:
+        if pending:
+            pool.submit_round({"instruction": ["0"]})
+        pool.close()
+        assert channel_closes == [pending]
+        assert all(not process.is_alive() for process in pool._processes)
+        pool.close()
+        assert channel_closes == [pending], "closing twice must not repeat cleanup"
+    finally:
+        pool.close(force=True)
 
 
 def test_closing_round_iterator_closes_prefetched_workers():

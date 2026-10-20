@@ -55,10 +55,12 @@ and scores only the requested round.
 
 The Pipe carries control and CPU results; a separate NCCL group transports CUDA
 model weights. A stop suppresses further prefetch when observed, and a reward
-or iteration failure closes any active prefetch. Delayed collection accepts
-already ready generation replies even if reward scoring or learning outlasted
-the generation deadline; startup and weight ACK deadlines remain separate.
-For lifecycle, timeout and resume details, see [async_round.md](async_round.md).
+or iteration failure closes any active prefetch. Session shutdown terminates
+workers and aborts the channel when a round remains uncollected; otherwise it
+uses STOP and coordinated NCCL shutdown. Delayed collection accepts already
+ready generation replies even if reward scoring or learning outlasted the
+generation deadline; startup and weight ACK deadlines remain separate. For
+lifecycle, timeout and resume details, see [async_round.md](async_round.md).
 
 ## Decode overlap
 

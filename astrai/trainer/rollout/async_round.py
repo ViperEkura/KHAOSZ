@@ -497,6 +497,9 @@ class AsyncRoundCoordinator:
         if self._closed:
             return
         self._closed = True
+        # A worker sending an uncollected result may never read STOP or
+        # join NCCL shutdown. Abandon lookahead without waiting for peers.
+        force = force or self._active_round is not None
         self._active_round = None
         weights_closed = False
         try:

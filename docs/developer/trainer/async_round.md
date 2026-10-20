@@ -65,9 +65,11 @@ The iterator checks for a stop before starting and before fetching a following
 batch. A current round already being collected can finish scoring and training;
 an already submitted prefetch is discarded during shutdown. Within the training
 iterator, reward failure, iteration failure or explicitly closing it aborts the
-channel and terminates remaining workers, including an active prefetch. Normal session
-shutdown sends STOP and enters NCCL shutdown on the learner before joining
-workers.
+channel and terminates remaining workers, including an active prefetch. Session
+shutdown also terminates workers and aborts the channel if a prefetched round
+has not been collected: a worker sending a large result may be unable to read
+STOP until the learner drains that result. When no round is pending, shutdown
+sends STOP and enters NCCL shutdown on the learner before joining workers.
 
 ### Capacity and extension boundary
 
