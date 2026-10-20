@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 from astrai.parallel import only_on_rank
 from astrai.trainer.callbacks.base import CallbackFactory, TrainCallback
+from astrai.trainer.step_plan import global_epoch_steps, legacy_epoch_steps
 
 if TYPE_CHECKING:
     from astrai.trainer.context import TrainContext
@@ -32,27 +33,22 @@ class ProgressBarCallback(TrainCallback):
     def on_epoch_begin(self, context: TrainContext):
         if context.global_cursor:
             config = context.config
-            global_batch = context.samples_per_step
-            full, tail = divmod(
-                context.dataset_len - context.epoch_sample_offset, global_batch
+            total_steps = global_epoch_steps(
+                context.dataset_len,
+                context.epoch_sample_offset,
+                context.samples_per_step,
+                config.epoch_tail_policy,
+                online=context.strategy.policy_version is not None,
+                rl_update_epochs=config.rl_update_epochs,
+                rl_minibatch_prompts=config.rl_minibatch_prompts,
             )
-            flush_tail = tail > 0 and config.epoch_tail_policy == "flush"
-            if context.strategy.policy_version is not None:
-                group_size = config.rl_minibatch_prompts or global_batch
-                full_groups = (global_batch + group_size - 1) // group_size
-                tail_groups = (tail + group_size - 1) // group_size if flush_tail else 0
-                total_steps = config.rl_update_epochs * (
-                    full * full_groups + tail_groups
-                )
-            else:
-                total_steps = full + int(flush_tail)
-        elif (
-            context.async_rollout is None and context.config.epoch_tail_policy == "drop"
-        ):
-            full_batches = (
-                len(context.dataloader.sampler) // context.config.batch_per_device
+        elif context.async_rollout is None and context.strategy.policy_version is None:
+            total_steps = legacy_epoch_steps(
+                len(context.dataloader.sampler),
+                context.config.batch_per_device,
+                context.executor.grad_accum_steps,
+                context.config.epoch_tail_policy,
             )
-            total_steps = full_batches // context.executor.grad_accum_steps
         else:
             total_steps = (
                 len(context.dataloader) + context.executor.grad_accum_steps - 1

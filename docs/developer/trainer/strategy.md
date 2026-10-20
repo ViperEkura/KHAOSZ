@@ -26,6 +26,14 @@ training_updates() express microbatch or update shape while Trainer retains
 commit ownership. ops.py also supplies chunked log-probability calculation
 for the memory-sensitive path.
 
+For offline training with the global cursor, one data microbatch must yield one
+`training_updates()` group. That group may contain several loss outputs if they
+share the same `normalizer`; their losses are added before the global target
+count is applied. The trainer rejects additional groups because it owns the
+optimizer-window boundary. Synchronous online training collects the rollout
+window first and schedules learner updates in the trainer, then calls
+`compute_loss_output()` on each prepared chunk.
+
 ## Registry and capabilities
 
 StrategyFactory stores a StrategyCapabilities declaration for each registered

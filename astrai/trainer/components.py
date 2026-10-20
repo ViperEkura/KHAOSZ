@@ -30,6 +30,7 @@ from astrai.parallel.executor import (
 )
 from astrai.parallel.setup import follow_parent
 from astrai.parallel.topology import ParallelTopology
+from astrai.trainer.step_plan import ceil_div, global_epoch_steps, legacy_epoch_steps
 from astrai.trainer.strategy import StrategyFactory
 
 logger = logging.getLogger(__name__)
@@ -106,30 +107,39 @@ def load_optimizer_state_dict(optimizer: OptimizerProtocol, state_dict: Dict) ->
 
 
 def build_scheduler_component(
-    spec: ComponentSpec, optimizer, dataset_len: int, cfg: TrainConfig
+    spec: ComponentSpec,
+    optimizer,
+    dataset_len: int,
+    cfg: TrainConfig,
+    *,
+    global_cursor: bool = True,
 ):
     params = dict(spec.params)
     warmup_ratio = params.pop("warmup_ratio", 0.0)
-
-    def ceil_div(a, b):
-        return (a + b - 1) // b
+    online = StrategyFactory.capabilities(cfg.strategy).online
 
     if cfg.rollout_mode == "async_round":
         samples_per_replica = ceil_div(dataset_len, cfg.dp_size)
         batches_per_replica = ceil_div(samples_per_replica, cfg.batch_per_device)
         steps_per_epoch = ceil_div(batches_per_replica, cfg.grad_accum_steps)
+    elif not global_cursor and not online:
+        steps_per_epoch = legacy_epoch_steps(
+            ceil_div(dataset_len, cfg.dp_size),
+            cfg.batch_per_device,
+            cfg.grad_accum_steps,
+            cfg.epoch_tail_policy,
+        )
     else:
         global_batch = cfg.dp_size * cfg.batch_per_device * cfg.grad_accum_steps
-        full_windows, tail = divmod(dataset_len, global_batch)
-        flush_tail = tail > 0 and cfg.epoch_tail_policy == "flush"
-        if StrategyFactory.capabilities(cfg.strategy).online:
-            group_size = cfg.rl_minibatch_prompts or global_batch
-            steps_per_epoch = cfg.rl_update_epochs * (
-                full_windows * ceil_div(global_batch, group_size)
-                + (ceil_div(tail, group_size) if flush_tail else 0)
-            )
-        else:
-            steps_per_epoch = full_windows + int(flush_tail)
+        steps_per_epoch = global_epoch_steps(
+            dataset_len,
+            0,
+            global_batch,
+            cfg.epoch_tail_policy,
+            online=online,
+            rl_update_epochs=cfg.rl_update_epochs,
+            rl_minibatch_prompts=cfg.rl_minibatch_prompts,
+        )
     total_steps = steps_per_epoch * cfg.n_epoch
     warmup_steps = min(int(warmup_ratio * total_steps), total_steps)
     remaining = total_steps - warmup_steps

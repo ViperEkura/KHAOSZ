@@ -77,8 +77,11 @@ class Trainer:
             self._commit_online_update(context, batch, new_data)
         else:
             self._commit_offline_update(context, new_data)
+        self._after_commit(context, agree_stop=context.async_rollout is None)
+
+    def _after_commit(self, context: TrainContext, *, agree_stop: bool) -> None:
         self._call_callbacks("after_optimizer_step", context)
-        if context.async_rollout is None:
+        if agree_stop:
             self._agree_stop(context)
 
     def _commit_offline_update(self, context: TrainContext, new_data: bool) -> None:
@@ -200,6 +203,41 @@ class Trainer:
             context.stop_agreed = True
         return context.stop_agreed
 
+    @staticmethod
+    def _window_loss_output(strategy, batch, real_count: int):
+        """Use the offline strategy hook without letting it add hidden commits."""
+        if strategy.policy_version is not None:
+            # Online batches have already been collected and prepared for the
+            # current learner update by _train_global_epoch.
+            return strategy.compute_loss_output(batch)
+        updates = iter(strategy.training_updates(batch))
+        try:
+            outputs = list(next(updates))
+        except StopIteration as error:
+            raise RuntimeError("global window strategy produced no update") from error
+        if next(updates, None) is not None:
+            raise RuntimeError(
+                "global window strategy must yield one update per microbatch"
+            )
+        if not outputs:
+            raise RuntimeError("global window strategy update has no loss")
+        count = float(outputs[0].get("normalizer", real_count))
+        if any(
+            float(output.get("normalizer", real_count)) != count for output in outputs
+        ):
+            raise RuntimeError(
+                "losses in one global window update must share a normalizer"
+            )
+        metrics = {}
+        for output in outputs:
+            for name, value in output["metrics"].items():
+                metrics[name] = metrics.get(name, 0.0) + float(value)
+        return {
+            "loss": sum(output["loss"] for output in outputs),
+            "metrics": metrics,
+            "normalizer": count,
+        }
+
     def _run_global_update(
         self,
         context: TrainContext,
@@ -217,7 +255,7 @@ class Trainer:
                 context.model, sync=index + 1 == len(chunks)
             ):
                 self._call_callbacks("on_batch_begin", context)
-                output = context.strategy.compute_loss_output(batch)
+                output = self._window_loss_output(context.strategy, batch, real_count)
                 count = (
                     float(output.get("normalizer", real_count)) if real_count else 0.0
                 )
@@ -262,9 +300,7 @@ class Trainer:
         if final_update:
             context.epoch_sample_offset = window_end
             context.checkpoint_safe = True
-        self._call_callbacks("after_optimizer_step", context)
-        if final_update:
-            self._agree_stop(context)
+        self._after_commit(context, agree_stop=final_update)
 
     def _train_global_epoch(self, context: TrainContext, epoch: int) -> None:
         if context.epoch < epoch and context.epoch_sample_offset == context.dataset_len:
