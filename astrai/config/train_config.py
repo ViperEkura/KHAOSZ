@@ -120,6 +120,7 @@ class TrainConfig(BaseConfig):
         neftune_alpha (float): NEFTune noise alpha, 0=disabled, typical: 5.0. Defaults to 0.0.
         moe_aux_loss_coef (float): Weight applied to the MoE load-balancing loss. Defaults to 0.01.
         rollout_interval (int): Number of optimizer steps between online rollouts. Defaults to 512.
+        rollout_enable_overlap (bool): Pipeline CPU result handling with the next GPU decode step within each rollout backend, including validation and async_round workers. Generation finishes before weights can change. Defaults to True.
         rollout_max_policy_lag (Optional[int]): Maximum accepted gap between rollout and live policy versions. None derives ``rollout_interval - 1`` for sync and normalizes to 1 for async_round. Defaults to None.
         rollout_temperature (float): Sampling temperature for online rollout. Defaults to 0.7.
         rollout_top_k (int): Top-k filtering for online rollout, 0=disable. Defaults to 0.
@@ -204,6 +205,7 @@ class TrainConfig(BaseConfig):
     moe_aux_loss_coef: float = 0.01
 
     rollout_interval: int = 512
+    rollout_enable_overlap: bool = True
     rollout_max_policy_lag: Optional[int] = None
     rollout_temperature: float = 0.7
     rollout_top_k: int = 0

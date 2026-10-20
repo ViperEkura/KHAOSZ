@@ -489,11 +489,12 @@ def test_run_batch_details_report_allocation_failure(device):
 
 def test_run_batch_details_report_extension_failure_and_cleanup(device):
     scheduler, _tok, _model = _make_real_scheduler(device)
+    _tok.stop_ids = []
     try:
         with patch.object(
-            scheduler,
-            "execute_synchronously",
-            side_effect=lambda requests, **_kwargs: ([], list(requests)),
+            scheduler.scheduler.kv_manager,
+            "extend_slots_batch",
+            side_effect=lambda ids, _positions: [False] * len(ids),
         ):
             result = run_batch(
                 scheduler, [[10, 20]], max_tokens=2, return_details=True

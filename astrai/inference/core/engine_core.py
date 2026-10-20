@@ -284,7 +284,7 @@ class EngineCore:
             )
         return True
 
-    def tick(self):
+    def tick(self, *, return_logprobs=False):
         scheduler = self.scheduler
         self._release_finished()
         scheduler.admit_requests(safe_to_release=not self._shutdown_failed)
@@ -301,7 +301,12 @@ class EngineCore:
             self._release_finished()
             return False
         old_count = len(self._pending)
-        plan = scheduler.schedule(active, self.policy_version)
+        plan = scheduler.schedule(
+            active,
+            self.policy_version,
+            return_logprobs=return_logprobs,
+            defer_kv_failures=bool(old_count and overlap),
+        )
         if (
             old_count
             and overlap
@@ -309,11 +314,15 @@ class EngineCore:
         ):
             # KV extension may shrink a previously steady batch. Its host
             # input snapshots are then stale and the D2D relay cannot match.
+            # Commit pending tokens before declaring extension failures:
+            # a pending EOS may already have completed a failed request.
             scheduler.rollback_schedule(plan)
             self.drain()
             self._release_finished()
             active = scheduler.active_requests()
-            plan = scheduler.schedule(active, self.policy_version)
+            plan = scheduler.schedule(
+                active, self.policy_version, return_logprobs=return_logprobs
+            )
             overlap = False
         self.submit(plan)
         if (
@@ -439,27 +448,19 @@ class EngineCore:
     def execute_requests(
         self, requests: List[Request], return_logprobs: bool = False
     ) -> None:
-        """Drive tokenized requests through admission and execution to terminal."""
+        """Drive tokenized requests with the serving loop's execution pipeline."""
         self.scheduler.refresh_stop_ids()
         self.scheduler.enqueue_tokenized_requests(requests)
         try:
             with use_op_selection(self.op_selection):
                 while any(not request.terminal_emitted for request in requests):
-                    self.scheduler.admit_requests()
-                    active = self.scheduler.active_requests()
-                    if not active:
+                    if not self.tick(return_logprobs=return_logprobs):
                         self.scheduler.reject_waiting_for_capacity()
                         break
-                    _, aborted = self.execute_synchronously(
-                        active, return_logprobs=return_logprobs
-                    )
-                    for request in aborted:
-                        self.scheduler.finish(
-                            request,
-                            FINISH_ABORTED,
-                            error_reason="kv_cache_extension_failed",
-                        )
-                    self._release_finished()
+        except BaseException:
+            self.fence()
+            self._discard_pending()
+            raise
         finally:
             self.drain()
             for request in requests:

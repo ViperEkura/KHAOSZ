@@ -95,6 +95,7 @@ class AsyncRoundCoordinator:
         random_seed: int = 3407,
         sample_cursor: int = 0,
         learner_rank: Optional[int] = None,
+        enable_overlap: bool = True,
     ):
         try:
             pickle.dumps(model_fn)
@@ -178,6 +179,7 @@ class AsyncRoundCoordinator:
                     nccl_timeout_s=self._nccl_timeout_s,
                     layout=self.weights.layout,
                     max_prompts_per_worker=max_prompts_per_worker,
+                    enable_overlap=enable_overlap,
                 )
                 process = self._ctx.Process(
                     target=self._worker_target,

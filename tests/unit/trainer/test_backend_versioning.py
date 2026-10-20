@@ -1,3 +1,4 @@
+from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
@@ -5,7 +6,10 @@ import torch
 from torch import nn
 
 from astrai.inference.core.versioning import PolicyVersionGuard
-from astrai.trainer.backend import ColocatedBackend, P2PCopyPublisher
+from astrai.model.autoregressive_lm import AutoRegressiveLM
+from astrai.trainer.backend import ColocatedBackend, P2PCopyPublisher, ReplicaBackend
+from tests.support.models import make_rollout_config
+from tests.support.tokenizers import FakeTokenizer
 
 
 @pytest.mark.parametrize("training", [False, True])
@@ -117,3 +121,52 @@ def test_publisher_can_run_inside_same_backends_optimizer_commit():
     guard.apply_weight_update(None, lambda version: publisher.publish(version, source))
     assert guard.policy_version == 1
     assert torch.equal(target.weight, source.weight)
+
+
+@pytest.mark.parametrize("overlap", [None, False], ids=["default-overlap", "sync"])
+def test_replica_can_publish_weights_after_rollout_drains(overlap):
+    """Both rollout modes retire generation before accepting fresh weights."""
+    source = AutoRegressiveLM(
+        make_rollout_config(
+            vocab_size=32, max_position_embeddings=16, num_hidden_layers=1
+        )
+    ).to(device="cpu", dtype=torch.float32)
+    target = deepcopy(source).requires_grad_(False)
+    tokenizer = FakeTokenizer()
+    tokenizer.stop_ids = []
+    kwargs = {} if overlap is None else {"enable_overlap": overlap}
+    backend = ReplicaBackend(
+        model=target,
+        tokenizer=tokenizer,
+        device="cpu",
+        max_batch_size=2,
+        max_seq_len=16,
+        enable_cuda_graph=False,
+        **kwargs,
+    )
+    core = backend.engine_core
+    try:
+        assert core.enable_overlap is (True if overlap is None else overlap)
+        results = backend.generate(
+            [[3, 4], [5, 6, 7], [8, 9]],
+            max_tokens=4,
+            temperature=0.7,
+            top_k=0,
+            seeds=[11, 22, 33],
+            return_logprobs=True,
+        )
+        assert all(len(tokens) == len(logprobs) == 4 for tokens, logprobs in results)
+        assert not core._pending
+        assert core.model_runner.peek_pending() is None
+        assert not core.scheduler.has_outstanding()
+        assert core.get_stats()["kv_cache_tasks"] == 0
+        with torch.no_grad():
+            source.lm_head.weight.add_(0.1)
+        P2PCopyPublisher(backend).publish(1, source)
+        assert backend.policy_version == 1
+        assert torch.equal(target.lm_head.weight, source.lm_head.weight)
+        assert len(backend.generate([[3, 4]], max_tokens=2, temperature=0)[0]) == 2
+        assert not core.scheduler.has_requests()
+        assert core.get_stats()["kv_cache_tasks"] == 0
+    finally:
+        core.stop()
