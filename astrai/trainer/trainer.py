@@ -206,8 +206,8 @@ class Trainer:
             batches = context.async_rollout.iter_rounds(
                 batches, lambda: context.stop_requested
             )
-        # A stop waits for the next commit. A partial accumulation window at
-        # the epoch boundary is discarded without an optimizer update.
+        # A stop waits for the next commit. The epoch tail follows the
+        # configured policy only when the epoch ends naturally.
         if not context.stop_agreed:
             self._agree_stop(context)
         if context.async_rollout is None:
@@ -215,9 +215,13 @@ class Trainer:
             # advance the sampler well beyond the batches the loop consumed.
             remaining_samples = len(context.dataloader.sampler)
             total_batches = len(context.dataloader)
-            trainable_batches = (
-                total_batches // context.executor.grad_accum_steps
-            ) * context.executor.grad_accum_steps
+            if context.config.epoch_tail_policy == "drop":
+                full_batches = remaining_samples // context.config.batch_per_device
+                trainable_batches = (
+                    full_batches // context.executor.grad_accum_steps
+                ) * context.executor.grad_accum_steps
+            else:
+                trainable_batches = total_batches
         iterator = iter(batches)
         context.train_iterator = iterator
         # The session runs this before any checkpoint is written: a worker
@@ -243,6 +247,10 @@ class Trainer:
                 self._train_batch(
                     context,
                     batch,
+                    force_sync=(
+                        context.config.epoch_tail_policy == "flush"
+                        and batch_index + 1 == trainable_batches
+                    ),
                     batch_samples=batch_samples,
                 )
             else:
@@ -254,8 +262,8 @@ class Trainer:
             and batch_index == trainable_batches
             and (batch_index > 0 or not context.stop_agreed)
         ):
-            # Close prefetched workers before advancing the sampler. No
-            # remaining tail batch is passed through the model.
+            # Close prefetched workers before advancing the sampler. Under
+            # "drop", no remaining tail batch is passed through the model.
             stop_loader_workers(iterator)
             context.dataloader.sampler.set_epoch(epoch + 1)
             dropped_samples = (

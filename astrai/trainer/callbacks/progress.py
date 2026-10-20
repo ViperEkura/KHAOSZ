@@ -30,8 +30,11 @@ class ProgressBarCallback(TrainCallback):
 
     @only_on_rank(0)
     def on_epoch_begin(self, context: TrainContext):
-        if context.async_rollout is None:
-            total_steps = len(context.dataloader) // context.executor.grad_accum_steps
+        if context.async_rollout is None and context.config.epoch_tail_policy == "drop":
+            full_batches = (
+                len(context.dataloader.sampler) // context.config.batch_per_device
+            )
+            total_steps = full_batches // context.executor.grad_accum_steps
         else:
             total_steps = (
                 len(context.dataloader) + context.executor.grad_accum_steps - 1

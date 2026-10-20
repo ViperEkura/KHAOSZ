@@ -118,6 +118,7 @@ class CheckpointCallback(TrainCallback):
             "cp_size": cfg.cp_size,
             "batch_per_device": cfg.batch_per_device,
             "grad_accum_steps": cfg.grad_accum_steps,
+            "epoch_tail_policy": cfg.epoch_tail_policy,
             # The resume check compares these against the configured types.
             "optimizer": {"type": cfg.optimizer.type},
             "scheduler": {"type": cfg.scheduler.type},
