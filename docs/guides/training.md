@@ -439,9 +439,12 @@ close the rollout, run `on_train_end`, then the final barrier. Every step is
 attempted even when an earlier one raised, so a failed save cannot also skip the
 rollout shutdown.
 
-`metric.jsonl` is a run log, not checkpoint state: it sits beside the step
-directories and is appended to, so the checkpoint directory keeps a single writer
-and a resume drops the records of the steps it is about to replay.
+Each published step directory contains `metric.jsonl` with the committed
+metric history through that checkpoint. The metric callback buffers records until
+the optimizer update succeeds; the checkpoint writer copies the previous history
+and new records into its staging directory before publishing the manifest. Resume
+continues from the selected checkpoint's log, so a newer, abandoned branch of
+metrics is never rewritten or mistaken for the resumed run.
 
 The equivalent CLI override takes JSON:
 `--load_state_dict '{"optimizer": false}'`.

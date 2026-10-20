@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from astrai.trainer import Trainer
@@ -10,7 +12,7 @@ def test_training_runs_with_various_batch_sizes(
     for batch_per_device in [1, 2, 4]:
         train_config = train_config_factory(
             dataset=random_dataset,
-            test_dir=base_test_env["test_dir"],
+            test_dir=str(Path(base_test_env["test_dir"]) / f"batch_{batch_per_device}"),
             device=base_test_env["device"],
             batch_per_device=batch_per_device,
         )

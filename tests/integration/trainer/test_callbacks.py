@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import torch
@@ -9,7 +10,10 @@ from astrai.trainer.callbacks import (
     GradientCheckpointingCallback,
     TrainCallback,
 )
-from astrai.trainer.callbacks.checkpoint import _copy_tokenizer_files
+from astrai.trainer.callbacks.checkpoint import (
+    CheckpointCallback,
+    _copy_tokenizer_files,
+)
 from astrai.trainer.trainer import Trainer
 from tests.support.checkpoint import load_checkpoint_meta
 from tests.support.rollout import RandomTokenDataset
@@ -200,8 +204,44 @@ def test_checkpoint_captures_completed_optimizer_step(
     assert checkpoint.extra["optimizer"]["state"]
     assert checkpoint.extra["scheduler"]["last_epoch"] == 1
     assert checkpoint.meta["optimizer_step"] == 1
-    # The run log lives beside the checkpoints, not inside a published step.
-    assert (Path(base_test_env["test_dir"]) / "metric.jsonl").is_file()
+    log_path = Path(base_test_env["test_dir"]) / "epoch_0_step_1" / "metric.jsonl"
+    assert [
+        record["step"] for record in map(json.loads, log_path.read_text().splitlines())
+    ] == [1]
+    assert (
+        "metric.jsonl"
+        in json.loads((log_path.parent / "manifest.json").read_text())["files"]
+    )
+    assert not (Path(base_test_env["test_dir"]) / "metric.jsonl").exists()
+
+
+def test_metrics_are_published_with_each_checkpoint(
+    base_test_env, train_config_factory, device
+):
+    config = train_config_factory(
+        dataset=RandomTokenDataset(length=4),
+        test_dir=base_test_env["test_dir"],
+        device=device,
+        batch_per_device=2,
+        ckpt_interval=1,
+    )
+
+    Trainer(config).train()
+
+    directory = Path(base_test_env["test_dir"])
+    for step in (1, 2):
+        checkpoint_dir = directory / f"epoch_0_step_{step}"
+        records = [
+            json.loads(line)
+            for line in (checkpoint_dir / "metric.jsonl").read_text().splitlines()
+        ]
+        assert [
+            record["step"] for record in records if record["type"] == "step"
+        ] == list(range(1, step + 1))
+        assert (
+            "metric.jsonl"
+            in json.loads((checkpoint_dir / "manifest.json").read_text())["files"]
+        )
 
 
 def test_checkpoint_snapshots_tokenizer_files(
@@ -226,6 +266,8 @@ def test_checkpoint_snapshots_tokenizer_files(
     ckpt_dir = Path(base_test_env["test_dir"]) / "epoch_0_step_1"
     assert (ckpt_dir / "tokenizer.json").is_file()
     assert (ckpt_dir / "tokenizer_config.json").is_file()
+    files = json.loads((ckpt_dir / "manifest.json").read_text())["files"]
+    assert {"tokenizer.json", "tokenizer_config.json"} <= set(files)
 
     # Resuming with param_path == checkpoint dir must not raise
     # (samefile guard).

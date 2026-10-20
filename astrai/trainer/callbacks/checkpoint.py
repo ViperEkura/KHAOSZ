@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Optional
 
 from astrai.serialization import Checkpoint
@@ -15,6 +16,7 @@ from astrai.trainer.optional_extras import (
 )
 
 if TYPE_CHECKING:
+    from astrai.trainer.callbacks.metrics import MetricCallback
     from astrai.trainer.context import TrainContext
 
 
@@ -56,10 +58,12 @@ class CheckpointCallback(TrainCallback):
         save_dir: str,
         interval: int,
         save_extra_fn: Optional[Callable[["TrainContext"], Dict]] = None,
+        metric_callback: Optional["MetricCallback"] = None,
     ):
         self.save_dir = save_dir
         self.interval = interval
         self.save_extra_fn = save_extra_fn or CheckpointCallback.save_extra
+        self.metric_callback = metric_callback
         self.last_ckpt_step = None
         self.last_ckpt_cursor = None
         self._saved = False
@@ -86,8 +90,19 @@ class CheckpointCallback(TrainCallback):
                     extra=extra,
                     meta=self._meta(context),
                 )
-                context.checkpoint.save(save_path)
-                _copy_tokenizer_files(context.param_path, save_path)
+
+                def prepare_staging(staging_path: Path) -> None:
+                    _copy_tokenizer_files(context.param_path, str(staging_path))
+                    if self.metric_callback is not None:
+                        self.metric_callback.write_snapshot(
+                            staging_path / "metric.jsonl"
+                        )
+
+                published = context.checkpoint.save(
+                    save_path, prepare_staging=prepare_staging
+                )
+                if self.metric_callback is not None:
+                    self.metric_callback.checkpoint_saved(Path(save_path), published)
         self.last_ckpt_step = context.optimizer_step
         self.last_ckpt_cursor = context.consumed_samples
         self._saved = True

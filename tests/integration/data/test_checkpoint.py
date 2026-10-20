@@ -107,6 +107,21 @@ def test_checkpoint_is_atomically_published_with_manifest(tmp_path, monkeypatch)
     assert Checkpoint.verify(target)["checksums"] == "absent"
 
 
+def test_staging_artifact_failure_never_publishes_checkpoint(tmp_path):
+    target = tmp_path / "epoch_0_step_1"
+    checkpoint = Checkpoint(state_dict={"weight": torch.ones(2)})
+
+    def fail_metric_snapshot(staging_path):
+        (staging_path / "metric.jsonl").write_text("partial\n")
+        raise RuntimeError("metric snapshot failed")
+
+    with pytest.raises(RuntimeError, match="metric snapshot failed"):
+        checkpoint.save(target, prepare_staging=fail_metric_snapshot)
+
+    assert not target.exists()
+    assert not list(tmp_path.glob(f".{target.name}.tmp-*"))
+
+
 def test_checkpoint_failure_never_publishes_partial_directory(tmp_path, monkeypatch):
     target = tmp_path / "epoch_0_step_1"
     checkpoint = Checkpoint(state_dict={"weight": torch.ones(2)})
