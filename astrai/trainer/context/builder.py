@@ -484,21 +484,12 @@ class TrainContextBuilder:
         return critic, critic_optimizer
 
     def _configure_rollout(self, context: TrainContext, strategy_kwargs: Dict) -> None:
-        model_factory = None
-        if isinstance(self.config, TrainConfig):
-            model_factory = partial(
-                build_model_component,
-                self.config.model,
-                self.config.model_dtype,
-                context.model_config,
-            )
         configure_rollout(
             context=context,
             config=self.config,
             param_path=self._param_path,
             strategy_kwargs=strategy_kwargs,
             create_ref_model=create_ref_model,
-            model_factory=model_factory,
             validate=self._validate_rollout_configuration,
             engine_core_cls=EngineCore,
             tokenizer_cls=AutoTokenizer,

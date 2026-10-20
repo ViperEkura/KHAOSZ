@@ -53,13 +53,27 @@ def _config(**overrides):
 
 
 def test_checkpoint_snapshot_does_not_copy_runtime_objects():
-    snapshot = _config().to_dict()
+    class RuntimeFactory:
+        def __call__(self):
+            raise AssertionError("Snapshot must not invoke runtime factories")
+
+        def __deepcopy__(self, memo):
+            raise AssertionError("Snapshot must not copy runtime factories")
+
+    snapshot = _config(
+        reward_model_fn=RuntimeFactory(),
+        critic_model_fn=RuntimeFactory(),
+        critic_optimizer_fn=RuntimeFactory(),
+    ).to_dict()
     assert snapshot["strategy"] == "seq"
     assert snapshot["batch_per_device"] == 4
     assert snapshot["dataset"]["type"].endswith(":NoCopyDataset")
     assert snapshot["dataset"]["params"] == {}
     assert "model_fn" not in snapshot
     assert "optimizer_fn" not in snapshot
+    assert "reward_model_fn" not in snapshot
+    assert "critic_model_fn" not in snapshot
+    assert "critic_optimizer_fn" not in snapshot
 
 
 def test_component_specs_resolve_without_trainer_branches():

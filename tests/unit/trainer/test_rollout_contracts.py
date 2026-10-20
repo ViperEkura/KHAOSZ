@@ -26,14 +26,17 @@ def test_raw_rollout_fields():
 
 
 def test_rollout_result_inherits_raw_rollout_fields():
-    r = RolloutResult(
+    raw = RawRollout(
         prompts=torch.zeros(2, 4, dtype=torch.long),
         prompt_mask=torch.ones(2, 4, dtype=torch.bool),
         responses=torch.zeros(2, 3, 5, dtype=torch.long),
         response_mask=torch.ones(2, 3, 5, dtype=torch.bool),
         logprobs_old=torch.zeros(2, 3, 5),
-        rewards=torch.zeros(2, 3),
+        policy_version=7,
+        prompt_texts=["first", "second"],
     )
+    rewards = torch.zeros(2, 3)
+    r = RolloutResult.from_raw(raw, rewards)
     assert r.rewards.shape == (2, 3)
     assert r.prompts.shape == (2, 4)
     assert r.responses.shape == (2, 3, 5)
@@ -41,6 +44,11 @@ def test_rollout_result_inherits_raw_rollout_fields():
     # RolloutResult must carry every RawRollout field.
     raw_fields = {f for f in RawRollout.__dataclass_fields__}
     assert raw_fields.issubset(set(RolloutResult.__dataclass_fields__))
+    for name in raw_fields:
+        assert getattr(r, name) is getattr(raw, name)
+    assert r.rewards is rewards
+    assert r.advantages is None
+    assert r.returns is None
 
 
 def test_base_reward_model_is_abstract():

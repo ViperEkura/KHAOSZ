@@ -72,30 +72,6 @@ class _TrainRuntimeDependencies:
         )
 
 
-@plain_dataclass(frozen=True)
-class _CheckpointSettingsSnapshot:
-    values: Dict[str, Any]
-
-    @classmethod
-    def capture(cls, config: "TrainConfig") -> "_CheckpointSettingsSnapshot":
-        runtime_names = {item.name for item in fields(_TrainRuntimeDependencies)}
-        values = {}
-        for item in fields(config):
-            value = getattr(config, item.name)
-            if item.name in runtime_names and value is not None:
-                continue
-            if is_dataclass(value):
-                value = asdict(value)
-            elif isinstance(value, tuple):
-                value = list(value)
-            try:
-                json.dumps(value)
-            except (TypeError, ValueError):
-                continue
-            values[item.name] = value
-        return cls(values)
-
-
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True, extra="forbid"))
 class TrainConfig(BaseConfig):
     """Training configuration.
@@ -257,7 +233,22 @@ class TrainConfig(BaseConfig):
 
     def to_dict(self) -> Dict[str, Any]:
         """Capture checkpoint settings without copying runtime dependencies."""
-        return _CheckpointSettingsSnapshot.capture(self).values
+        runtime_names = {item.name for item in fields(_TrainRuntimeDependencies)}
+        values = {}
+        for item in fields(self):
+            value = getattr(self, item.name)
+            if item.name in runtime_names and value is not None:
+                continue
+            if is_dataclass(value):
+                value = asdict(value)
+            elif isinstance(value, tuple):
+                value = list(value)
+            try:
+                json.dumps(value)
+            except (TypeError, ValueError):
+                continue
+            values[item.name] = value
+        return values
 
     @field_validator("strategy")
     def _validate_strategy(cls, v: str) -> str:

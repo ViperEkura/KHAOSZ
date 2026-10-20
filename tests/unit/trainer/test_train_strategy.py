@@ -1,4 +1,5 @@
 import math
+from copy import deepcopy
 
 import pytest
 import torch
@@ -79,43 +80,41 @@ def test_sgdr_scheduler_restarts_each_cycle():
     assert lrs[6] == pytest.approx(base_lr)  # restart: back to full lr
 
 
-def test_schedule_factory_state_persistence():
-    """Test scheduler state persistence (save/load)"""
-
+@pytest.mark.parametrize(
+    "name, params",
+    [
+        ("cosine", {"warmup_steps": 2, "lr_decay_steps": 8, "min_rate": 0.1}),
+        ("sgdr", {"warmup_steps": 2, "cycle_length": 4, "min_rate": 0.1, "t_mult": 2}),
+        (
+            "wsd",
+            {"warmup_steps": 2, "stable_steps": 4, "decay_steps": 4, "min_rate": 0.1},
+        ),
+    ],
+)
+def test_schedule_factory_state_persistence(name, params):
+    """Complete schedule state resumes without consuming the supplied dictionary."""
     model = torch.nn.Linear(10, 2)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
+    scheduler = SchedulerFactory.create(name, optimizer, **params)
+    _stepped_lrs(scheduler, optimizer, n_steps=5)
+    state_dict = deepcopy(scheduler.state_dict())
+    saved_state = deepcopy(state_dict)
+    assert all(state_dict[key] == value for key, value in params.items())
 
-    # Create scheduler directly with parameters
-    warmup_steps = 100
-    total_steps = 1000
-    min_rate = 0.1
-    lr_decay_steps = total_steps - warmup_steps
-    scheduler = SchedulerFactory.create(
-        "cosine",
-        optimizer,
-        warmup_steps=warmup_steps,
-        lr_decay_steps=lr_decay_steps,
-        min_rate=min_rate,
+    new_optimizer = torch.optim.AdamW(model.parameters(), lr=0.1)
+    resumed = SchedulerFactory.create(name, new_optimizer, **{key: 1 for key in params})
+    new_optimizer.load_state_dict(optimizer.state_dict())
+    for _ in range(2):
+        resumed.load_state_dict(state_dict)
+        assert state_dict == saved_state
+        assert resumed.state_dict() == saved_state
+
+    for key in list(params) + (["total_steps"] if name != "sgdr" else []):
+        incomplete = {k: v for k, v in saved_state.items() if k != key}
+        with pytest.raises(KeyError, match=key):
+            resumed.load_state_dict(incomplete)
+        assert resumed.state_dict() == saved_state
+
+    assert _stepped_lrs(resumed, new_optimizer, 8) == pytest.approx(
+        _stepped_lrs(scheduler, optimizer, 8)
     )
-
-    # Take a few steps
-    for _ in range(5):
-        optimizer.step()
-        scheduler.step()
-
-    # Save state
-    state_dict = scheduler.state_dict()
-
-    # Create new scheduler with same parameters
-    new_scheduler = SchedulerFactory.create(
-        "cosine",
-        optimizer,
-        warmup_steps=warmup_steps,
-        lr_decay_steps=lr_decay_steps,
-        min_rate=min_rate,
-    )
-    new_scheduler.load_state_dict(state_dict)
-
-    # Verify states match
-    assert scheduler.last_epoch == new_scheduler.last_epoch
-    assert scheduler.get_last_lr() == new_scheduler.get_last_lr()
