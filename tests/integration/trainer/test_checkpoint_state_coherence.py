@@ -70,6 +70,17 @@ class _StopAfterFirstEpoch(TrainCallback):
             context.request_stop()
 
 
+class _DeterministicTokenDataset(RandomTokenDataset):
+    """Make weight comparisons independent of optional RNG checkpoint state."""
+
+    def __getitem__(self, idx):
+        tokens = (torch.arange(self.max_length) + idx) % self.vocab_size
+        return {
+            "input_ids": tokens,
+            "target_ids": (tokens + 1) % self.vocab_size,
+        }
+
+
 def _checkpoints(directory):
     paths = list(directory.glob("epoch_*_step_*"))
     return sorted(
@@ -325,7 +336,7 @@ def test_epoch_tail_policy_counts_full_and_short_batches(
 def test_flushed_tail_resume_matches_uninterrupted_run(train_config_factory, tmp_path):
     def config_for(directory):
         return train_config_factory(
-            RandomTokenDataset(length=7, max_length=8, vocab_size=100),
+            _DeterministicTokenDataset(length=7, max_length=8, vocab_size=100),
             str(directory),
             device="cpu",
             n_epoch=2,
