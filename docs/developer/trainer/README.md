@@ -1,63 +1,66 @@
 # Trainer internals
 
-For configuration and usage, start with [Training](../../guides/training.md)
-and [Distributed training](../../guides/distributed.md). This page describes
-where the implementation lives and which module owns each responsibility.
-
-## Layout
+Trainer has four cooperating parts: a run loop, a constructed context,
+an objective strategy, and optional rollout. Callbacks observe lifecycle
+events and own persistence or presentation. This folder follows the same
+subsystem-level layout as the [inference internals](../inference/README.md).
 
 ```text
 astrai/trainer/
-  trainer.py             training loop and callback lifecycle
-  train_context.py       context, checkpoint/model setup, datasets and assembly
-  callbacks/
-    base.py              callback protocol and registry
-    checkpoint.py        checkpoint persistence
-    metrics.py           metric logging and validation
-    metric_util.py       metric accessors and gradient SNR tracking
-    optimization.py      gradient clipping and activation checkpointing
-    progress.py          progress bar
-  strategy/
-    base.py              common objective lifecycle and loss protocol
-    factory.py           strategy registry
-    ops.py               shared loss and tensor operations
-    supervised.py        sequence and SFT objectives
-    dpo.py               DPO objective
-    grpo.py              GRPO objective
-    ppo.py               PPO objective
-  rollout/
-    types.py             rollout results and sampling contracts
-    generator.py         inference-backed generation
-    runner.py            reward scoring, replay cache and evaluation
-    setup.py             rollout assembly
-  backend.py             colocated and replica rollout backends
-  schedule.py            learning-rate schedules
-  optional_extras.py     checkpointed component state registry
+  trainer.py, session.py, train_context.py   loop, lifetime, construction
+  components.py                            model, dataset, loader, optimizer, scheduler
+  strategy/                                  objectives and loss contracts
+  rollout/, backend.py                       generation and reward path
+  callbacks/, optional_extras.py             hooks and checkpoint extras
+  schedule.py                                 learning-rate policies
 ```
+
+The dependency direction is Trainer -> TrainSession -> TrainContextBuilder ->
+strategy and rollout. Rollout generation depends on a backend; objectives
+consume scored rollout results. Callbacks receive TrainContext after an event
+rather than owning the optimizer loop.
+
+## Documents
+
+| Document | Scope |
+| --- | --- |
+| [lifecycle.md](lifecycle.md) | Trainer, session, context, configuration and scheduler |
+| [strategy.md](strategy.md) | Strategy protocol, registration, capabilities and objectives |
+| [rollout.md](rollout.md) | Backend, generation, scoring, worker protocol and weight transport |
+| [async_round.md](async_round.md) | One-learner asynchronous GRPO execution and failure boundaries |
+| [callbacks.md](callbacks.md) | Hook order, checkpoint state, metrics and optimization hooks |
 
 ## Ownership
 
-- Trainer owns the epoch/batch loop and invokes callback lifecycle hooks.
-- TrainContextBuilder assembles model, optimizer, scheduler, datasets,
-  strategy, parallel topology and online rollout. Keep construction order here.
-- Each strategy owns its algorithm-specific loss and state. Shared objective
-  operations belong in strategy/ops.py.
-- Rollout modules own generation and reward evaluation. backend.py owns
-  where generation runs and how policy weights reach that backend.
-- Callbacks own checkpoint writing, progress display, metric logging and
-  validation. Metric helpers live alongside them in callbacks/metric_util.py.
+```mermaid
+classDiagram
+    direction LR
+    Trainer --> TrainSession : one run
+    TrainSession --> TrainContextBuilder : build
+    TrainContextBuilder --> DatasetFactory : open in rank
+    TrainContextBuilder --> TrainContext : datasets and loaders
+    TrainContextBuilder --> TrainContext : assemble
+    TrainContext --> BaseStrategy
+    TrainContext --> RolloutRunner
+    RolloutRunner --> RolloutGenerator
+    RolloutGenerator --> RolloutBackend
+    Trainer --> TrainCallback : dispatch loop hooks
+    TrainSession --> TrainCallback : startup and teardown
+```
 
-## Import surfaces
+TrainConfig carries one serializable ComponentSpec shape for model, dataset,
+optimizer and scheduler. TrainContextBuilder resolves each spec after rank
+launch; TrainContext keeps the constructed datasets and loaders.
+Trainer owns optimizer commits and counters. TrainContextBuilder owns creation
+and checkpoint restore; TrainSession owns startup and cleanup after construction.
+A strategy owns its objective, not the run lifecycle. A rollout backend owns
+where inference executes and how policy weights arrive.
 
-Use package exports for supported imports:
+The package exports Trainer, factories and protocols from astrai.trainer.
+Built-in callbacks, strategies and rollout contracts have their own package
+exports. StrategyFactory publishes capability declarations to TrainConfig
+when strategies register, so configuration validation has no trainer imports.
+Type-only callback imports use TYPE_CHECKING.
 
-- astrai.trainer: Trainer, strategy/scheduler factories, callback protocol
-  and registry.
-- astrai.trainer.callbacks: built-in callback classes.
-- astrai.trainer.strategy: built-in objectives and shared strategy API.
-- astrai.trainer.rollout: rollout types, generator, runner and evaluator.
-
-There is no astrai.trainer.train_callback compatibility module; import
-callbacks from astrai.trainer.callbacks. The implementation files may change
-as responsibilities evolve, so prefer these package-level imports unless
-working directly on an implementation.
+For configuration and usage, see the [training guide](../../guides/training.md)
+and [distributed training guide](../../guides/distributed.md).

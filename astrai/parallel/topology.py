@@ -19,7 +19,7 @@ byte-identical to the pre-topology single-dimension behavior.
 """
 
 import logging
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 import torch.distributed as dist
 from torch import Tensor
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 # Meshes cached per (world, dp, cp, tp, device) so repeated topology builds
 # in one process never duplicate process-group creation.
-_MESH_CACHE: dict[tuple[int, int, int, int, str], DeviceMesh] = {}
+_MESH_CACHE: Dict[Tuple[int, int, int, int, str], DeviceMesh] = {}
 
 
 class ParallelTopology:

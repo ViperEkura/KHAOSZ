@@ -1,5 +1,5 @@
 from dataclasses import asdict, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import ConfigDict, field_validator, model_validator
 from pydantic.dataclasses import dataclass
@@ -67,7 +67,7 @@ class MLAConfig:
 @dataclass(config=ConfigDict(extra="forbid"))
 class AttentionConfig:
     default_type: str = "gqa"
-    layers: Optional[list[str]] = None
+    layers: Optional[List[str]] = None
     num_heads: Optional[int] = None
     num_kv_heads: Optional[int] = None
     qk_norm: Optional[bool] = None
@@ -83,7 +83,7 @@ class AttentionConfig:
         return value
 
     @field_validator("layers")
-    def _validate_layers(cls, values: Optional[list[str]]) -> Optional[list[str]]:
+    def _validate_layers(cls, values: Optional[List[str]]) -> Optional[List[str]]:
         if values is not None and any(value not in ATTENTION_TYPES for value in values):
             raise ValueError("attention.layers contains an unsupported type")
         return values
@@ -105,7 +105,7 @@ class AttentionConfig:
     def type_for_layer(self, layer_id: int) -> str:
         return self.default_type if self.layers is None else self.layers[layer_id]
 
-    def module_kwargs(self) -> dict:
+    def module_kwargs(self) -> Dict:
         return {
             "n_heads": self.num_heads,
             "n_kv_heads": self.num_kv_heads,
@@ -206,7 +206,7 @@ class AutoRegressiveLMConfig(BaseModelConfig):
     tie_word_embeddings: Optional[bool] = None
     max_position_embeddings: Optional[int] = None
     rope_theta: Optional[float] = None
-    rope_scaling: Optional[dict] = None
+    rope_scaling: Optional[Dict] = None
     attention: AttentionConfig = field(default_factory=AttentionConfig)
     source_model_type: Optional[str] = None
     ffn_type: str = "mlp"
@@ -218,7 +218,7 @@ class AutoRegressiveLMConfig(BaseModelConfig):
     shared_expert_intermediate_size: Optional[int] = None
     norm_topk_prob: bool = True
     decoder_sparse_step: int = 1
-    mlp_only_layers: Optional[list[int]] = None
+    mlp_only_layers: Optional[List[int]] = None
     moe_aux_loss_coef: float = 0.01
 
     @model_validator(mode="before")
@@ -417,7 +417,7 @@ class EncoderConfig(BaseModelConfig):
     intermediate_size: Optional[int] = None
     max_position_embeddings: Optional[int] = None
     rope_theta: Optional[float] = None
-    rope_scaling: Optional[dict] = None
+    rope_scaling: Optional[Dict] = None
     attn_type: str = "gqa"
     num_attention_heads: Optional[int] = None
     num_key_value_heads: Optional[int] = None

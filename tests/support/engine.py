@@ -29,7 +29,7 @@ def _make_engine_mocks(decode=None):
 def _drive_events(engine, events_by_id):
     """Push output events through the engine's installed sink (mock schedulers
     emit nothing on their own; tests drive the event protocol directly)."""
-    sink = engine.scheduler._event_sink
+    sink = engine._tracker.sink
     flat = []
     for rid, events in events_by_id.items():
         flat.extend(events)
@@ -62,7 +62,7 @@ def event_engine(monkeypatch):
     monkeypatch.setattr(
         "astrai.inference.frontend.output_processor.StreamDecoder", _CharacterDecoder
     )
-    with patch("astrai.inference.frontend.engine.Scheduler"):
+    with patch("astrai.inference.frontend.engine.EngineCore"):
         engine = InferenceEngine(MagicMock(), FakeTokenizer(), max_seq_len=32)
     engine._core = MagicMock()
     engine._core.abort_request.side_effect = lambda rid: (

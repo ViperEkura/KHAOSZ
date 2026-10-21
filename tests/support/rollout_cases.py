@@ -4,7 +4,7 @@ import threading
 
 import torch
 
-from astrai.inference.core.scheduler import Scheduler
+from astrai.inference.core.engine_core import EngineCore
 from astrai.trainer.backend import ColocatedBackend
 from astrai.trainer.rollout import (
     BaseRewardModel,
@@ -41,7 +41,7 @@ class NonFiniteRewardModel(BaseRewardModel):
 
 
 def _make_scheduler(model, tokenizer, max_batch_size=8, max_len=128):
-    return Scheduler(
+    return EngineCore(
         model=model,
         tokenizer=tokenizer,
         max_batch_size=max_batch_size,

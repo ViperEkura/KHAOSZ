@@ -18,7 +18,6 @@ import tqdm
 from datasets import load_dataset
 
 from astrai.bench import (
-    deduplicate,
     generate_batch,
     load_jsonl,
     report,
@@ -124,9 +123,9 @@ def extract_completions(
 
 def generate_all(
     engine: InferenceEngine,
-    problems: Sequence[dict],
+    problems: Sequence[Dict],
     cfg: EvalConfig,
-) -> List[dict]:
+) -> List[Dict]:
     results = []
     for problem in tqdm.tqdm(problems, desc="Generating", unit="problem"):
         raw = generate_batch(
@@ -152,7 +151,7 @@ def generate_all(
     return results
 
 
-def he_codes(item: dict, test_timeout: float):
+def he_codes(item: Dict, test_timeout: float):
     """(request_id, [(full_code, timeout), ...]) — prompt + completion + test block."""
     codes = [
         (item["prompt"] + c + "\n" + item["test"], test_timeout)

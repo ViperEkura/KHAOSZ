@@ -1,6 +1,6 @@
 """Discover and lazily load compiled modules from extension.
 
-Each module is imported once; successful loads invalidate dispatch records.
+Each module is imported once; successful loads invalidate selection caches.
 """
 
 import glob
@@ -9,7 +9,7 @@ import logging
 import os
 from typing import Dict, List
 
-from astrai.extension.runtime import dispatch
+from astrai.extension.runtime.context import invalidate_selection_cache
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ def _try_load(name: str) -> object:
 
     Returns the module, or ``None`` if it is unavailable. Cached so each
     native extension is imported at most once per process; a successful first import
-    invalidates the dispatch record caches, whose availability predicates
+    invalidates selection caches, whose availability predicates
     consult ``is_available`` (the only availability change that can happen
     without a re-registration).
     """
@@ -45,8 +45,24 @@ def _try_load(name: str) -> object:
             _modules[name] = importlib.import_module(
                 f"._C_{name}", package="astrai.extension"
             )
-            _available[name] = True
-            dispatch.invalidate()
+            required = {
+                "rotary_emb": ("rotary_emb", "rotary_emb_backward"),
+                "swiglu": ("swiglu", "swiglu_backward"),
+            }.get(name, ())
+            missing = [
+                symbol for symbol in required if not hasattr(_modules[name], symbol)
+            ]
+            if missing:
+                logger.warning(
+                    "kernel '%s' has no %s symbol; marking unavailable",
+                    name,
+                    missing[0],
+                )
+                _modules[name] = None
+                _available[name] = False
+            else:
+                _available[name] = True
+                invalidate_selection_cache()
         except ImportError:
             logger.warning("kernel '%s' failed to import; marking unavailable", name)
             _modules[name] = None

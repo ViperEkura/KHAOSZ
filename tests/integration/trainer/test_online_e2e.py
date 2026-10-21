@@ -2,21 +2,20 @@
 
 import os
 from functools import partial
+from types import SimpleNamespace
 
 import pytest
 import torch
 from torch.utils.data import Dataset
 
-from astrai.config import TrainConfig
+from astrai.config import ComponentSpec, TrainConfig
 from astrai.serialization import Checkpoint
-from astrai.trainer import train_context
+from astrai.trainer.context import builder as train_context_builder
 from astrai.trainer.rollout import BaseRewardModel
-from astrai.trainer.schedule import SchedulerFactory
+from astrai.trainer.rollout.setup import configure_rollout
 from astrai.trainer.trainer import Trainer
 from tests.support.tokenizers import CHAT_TEMPLATE
 from tests.support.trainer import (
-    make_online_lr_scheduler,
-    make_online_model,
     make_online_optimizer,
     make_online_value_model,
 )
@@ -106,13 +105,15 @@ def test_online_rollout_end_to_end(
 ):
     """Run one epoch of online RL rollout with KV-cache-backed generation."""
     created_reference_models = []
-    create_ref_model = train_context.create_ref_model
+    create_ref_model = train_context_builder.create_ref_model
 
     def track_reference_model(*args, **kwargs):
         created_reference_models.append(strategy)
         return create_ref_model(*args, **kwargs)
 
-    monkeypatch.setattr(train_context, "create_ref_model", track_reference_model)
+    monkeypatch.setattr(
+        train_context_builder, "create_ref_model", track_reference_model
+    )
 
     test_dir = base_test_env["test_dir"]
     device = base_test_env["device"]
@@ -124,10 +125,21 @@ def test_online_rollout_end_to_end(
 
     config_kwargs = dict(
         strategy=strategy,
-        model_fn=partial(make_online_model, model_config),
-        dataset=InstructionDataset(),
-        optimizer_fn=make_online_optimizer,
-        scheduler_fn=make_online_lr_scheduler,
+        model=ComponentSpec(
+            type="autoregressive_lm", params={"config": model_config.to_dict()}
+        ),
+        model_dtype="float32",
+        dataset=ComponentSpec(
+            type="tests.integration.trainer.test_online_e2e:InstructionDataset",
+            params={
+                "collate": "tests.integration.trainer.test_online_e2e:instruction_collate_fn"
+            },
+        ),
+        optimizer=ComponentSpec(type="torch.optim:AdamW", params={"lr": 1e-4}),
+        scheduler=ComponentSpec(
+            type="cosine",
+            params={"warmup_steps": 1, "lr_decay_steps": 4, "min_rate": 0.05},
+        ),
         ckpt_dir=os.path.join(test_dir, "ckpt"),
         n_epoch=1,
         batch_per_device=2,
@@ -144,7 +156,6 @@ def test_online_rollout_end_to_end(
         rollout_top_p=1.0,
         rollout_max_tokens=4,
         reward_model_fn=LengthRewardModel,
-        collate_fn=instruction_collate_fn,
     )
     if with_critic:
         config_kwargs["critic_model_fn"] = partial(
@@ -172,11 +183,19 @@ def _minimal_online_config(**overrides):
     """A TrainConfig for online GRPO that only needs field overrides."""
     defaults = dict(
         strategy="online_grpo",
-        model_fn=lambda: torch.nn.Linear(2, 2),
-        dataset=InstructionDataset(),
-        optimizer_fn=lambda m: torch.optim.SGD(m.parameters(), lr=0.0),
-        scheduler_fn=lambda o: SchedulerFactory.create(
-            "cosine", o, warmup_steps=1, lr_decay_steps=4, min_rate=0.05
+        model=ComponentSpec(
+            type="torch.nn:Linear", params={"in_features": 2, "out_features": 2}
+        ),
+        dataset=ComponentSpec(
+            type="tests.integration.trainer.test_online_e2e:InstructionDataset",
+            params={
+                "collate": "tests.integration.trainer.test_online_e2e:instruction_collate_fn"
+            },
+        ),
+        optimizer=ComponentSpec(type="torch.optim:SGD", params={"lr": 0.0}),
+        scheduler=ComponentSpec(
+            type="cosine",
+            params={"warmup_steps": 1, "lr_decay_steps": 4, "min_rate": 0.05},
         ),
         reward_model_fn=LengthRewardModel,
     )
@@ -229,3 +248,68 @@ def test_rollout_val_overrides_drop_unset_fields():
         _minimal_online_config(rollout_val_top_p=0.0)
     with pytest.raises(ValueError, match="rollout_val_group_size"):
         _minimal_online_config(rollout_val_group_size=0)
+
+
+@pytest.mark.parametrize("worker_count", [1, 2, 3, 4])
+def test_async_round_accepts_distinct_worker_counts(worker_count):
+    devices = [f"cuda:{index}" for index in range(1, worker_count + 1)]
+    config = _minimal_online_config(
+        rollout_mode="async_round",
+        rollout_devices=devices,
+        rollout_interval=1,
+        rollout_max_policy_lag=1,
+    )
+    assert config.rollout_devices == devices
+
+
+@pytest.mark.parametrize(
+    "devices, message",
+    [
+        ([], "at least one rollout device"),
+        (["cuda:1", "cuda:01"], "distinct rollout_devices"),
+        (["cpu"], "indexed CUDA devices"),
+    ],
+)
+def test_async_round_rejects_invalid_worker_devices(devices, message):
+    with pytest.raises(ValueError, match=message):
+        _minimal_online_config(
+            rollout_mode="async_round",
+            rollout_devices=devices,
+            rollout_interval=1,
+            rollout_max_policy_lag=1,
+        )
+
+
+def test_async_round_rejects_moe_before_starting_workers():
+    config = _minimal_online_config(
+        rollout_mode="async_round",
+        rollout_devices=["cuda:1", "cuda:2", "cuda:3", "cuda:4"],
+        rollout_interval=1,
+        rollout_max_policy_lag=1,
+        device_type="cuda",
+        dp_mode="none",
+        grad_accum_steps=1,
+    )
+    model = torch.nn.Linear(2, 2)
+    inference_model = SimpleNamespace(
+        config=SimpleNamespace(ffn_type="moe", max_position_embeddings=8)
+    )
+    context = SimpleNamespace(
+        strategy=SimpleNamespace(supports_online=lambda: True),
+        executor=SimpleNamespace(model_for_inference=lambda _model: inference_model),
+        model=model,
+        checkpoint=None,
+        optimizer_step=0,
+    )
+    tokenizer_cls = SimpleNamespace(from_pretrained=lambda _path: object())
+    with pytest.raises(ValueError, match="dense models only"):
+        configure_rollout(
+            context,
+            config,
+            param_path="unused",
+            strategy_kwargs={"group_size": 2},
+            create_ref_model=lambda **_kwargs: None,
+            validate=lambda _executor: None,
+            engine_core_cls=object,
+            tokenizer_cls=tokenizer_cls,
+        )

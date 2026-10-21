@@ -22,7 +22,7 @@ inner-transposed views fold into the kernel layout at zero copy. ``bias``
 """
 
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional
 
 import torch
 
@@ -72,7 +72,7 @@ def set_table(rows: Rows) -> int:
     return int(get_module("gemm").configure(patch)["table"]["override_rows"])
 
 
-def set_planner(mode: str) -> dict:
+def set_planner(mode: str) -> Dict:
     """Pick the planner: ``table`` (rows only, the degraded ladder when no
     row matches), ``hybrid`` (rows, then the model, then the ladder — the
     shipped default), or ``model`` (analytical only). ``""`` restores the
@@ -82,12 +82,12 @@ def set_planner(mode: str) -> dict:
     return get_module("gemm").configure({"planner": mode})
 
 
-def set_log(enabled: bool = True) -> dict:
+def set_log(enabled: bool = True) -> Dict:
     """Toggle the read-only ``[gemm-plan]`` launch log on stderr."""
     return get_module("gemm").configure({"log": enabled})
 
 
-def set_staging(tma: bool | None = None, mx: bool | None = None) -> dict:
+def set_staging(tma: Optional[bool] = None, mx: Optional[bool] = None) -> Dict:
     """Toggle the staging A/B switches (both default to enabled)."""
     patch = {}
     if tma is not None:
@@ -97,7 +97,7 @@ def set_staging(tma: bool | None = None, mx: bool | None = None) -> dict:
     return get_module("gemm").configure(patch)
 
 
-def state() -> dict:
+def state() -> Dict:
     """The effective configuration (planner, log, table tiers, staging)."""
     return get_module("gemm").config_state()
 
@@ -111,7 +111,7 @@ def probe(
     trans_a: bool = False,
     trans_b: bool = True,
     batch: int = 1,
-) -> dict:
+) -> Dict:
     """The dispatch decision for one problem: ``source`` (override /
     injected / builtin / model / degraded) plus the recipe fields."""
     return get_module("gemm").plan_probe(
@@ -119,17 +119,17 @@ def probe(
     )
 
 
-def capabilities() -> dict:
+def capabilities() -> Dict:
     """Compiled GEMM implementations available on the current CUDA device."""
     return get_module("gemm").capabilities()
 
 
-def facts() -> dict:
+def facts() -> Dict:
     """The device facts the planner prices against (SMs, smem, L2, cc)."""
     return get_module("gemm").device_facts_info()
 
 
-def tile_vocabulary() -> list:
+def tile_vocabulary() -> List:
     """Every (crosswise, ba, bb, cta, k_stages, k_tile) recipe the ladders
     instantiate — the sweep candidate space."""
     return get_module("gemm").tile_vocabulary()

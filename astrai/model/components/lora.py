@@ -1,7 +1,7 @@
 import logging
 from dataclasses import asdict
 from pathlib import Path
-from typing import Optional, Set
+from typing import Dict, Optional, Set, Tuple
 
 import torch
 import torch.nn as nn
@@ -26,7 +26,7 @@ TARGET_MODULES_FFN = {"up", "gate", "down"}
 class LoRAConfig:
     r: int = 16
     alpha: int = 32
-    target_modules: tuple = ("q_proj", "v_proj")
+    target_modules: Tuple = ("q_proj", "v_proj")
 
 
 class LoRALinear(nn.Module):
@@ -63,7 +63,7 @@ class LoRALinear(nn.Module):
         del self.lora_B
 
 
-def _collect_lora_info(model: nn.Module) -> dict:
+def _collect_lora_info(model: nn.Module) -> Dict:
     names = {}
     for n, m in model.named_modules():
         if isinstance(m, Linear):

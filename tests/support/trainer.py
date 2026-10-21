@@ -1,9 +1,10 @@
 import torch
 
-from astrai.config import TrainConfig
+from astrai.config import ComponentSpec, TrainConfig
 from astrai.model.autoregressive_lm import AutoRegressiveLM
 from astrai.model.value import ValueModel
-from astrai.trainer.schedule import SchedulerFactory
+from astrai.optimization.scheduler import SchedulerFactory
+from tests.support.models import TINY_CONFIG
 
 
 def make_online_model(model_config):
@@ -19,14 +20,13 @@ def make_online_optimizer(m):
     return torch.optim.AdamW(m.parameters(), lr=1e-4)
 
 
-def make_online_lr_scheduler(optim):
+def make_online_lr_scheduler(optim, _dataset_len):
     return SchedulerFactory.create(
         "cosine", optim, warmup_steps=1, lr_decay_steps=4, min_rate=0.05
     )
 
 
 def create_train_config(
-    model_fn,
     dataset,
     test_dir: str,
     device: str,
@@ -41,20 +41,30 @@ def create_train_config(
 ):
     """Factory function to create common TrainConfig for tests."""
 
-    def optimizer_fn(m):
-        return torch.optim.AdamW(m.parameters(), lr=0.001)
-
-    def scheduler_fn(optim):
-        return SchedulerFactory.create(
-            "cosine", optim, warmup_steps=10, lr_decay_steps=10, min_rate=0.05
-        )
-
     return TrainConfig(
         strategy=strategy,
-        model_fn=model_fn,
-        dataset=dataset,
-        optimizer_fn=optimizer_fn,
-        scheduler_fn=scheduler_fn,
+        model=ComponentSpec(type="autoregressive_lm", params={"config": TINY_CONFIG}),
+        dataset=ComponentSpec(
+            type=f"{type(dataset).__module__}:{type(dataset).__qualname__}",
+            params={
+                **{
+                    key: getattr(dataset, key)
+                    for key in (
+                        "length",
+                        "max_length",
+                        "vocab_size",
+                        "with_loss_mask",
+                        "stop_after",
+                    )
+                    if hasattr(dataset, key)
+                }
+            },
+        ),
+        optimizer=ComponentSpec(type="torch.optim:AdamW", params={"lr": 0.001}),
+        scheduler=ComponentSpec(
+            type="cosine",
+            params={"warmup_steps": 10, "lr_decay_steps": 10, "min_rate": 0.05},
+        ),
         ckpt_dir=test_dir,
         n_epoch=n_epoch,
         batch_per_device=batch_per_device,

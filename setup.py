@@ -149,7 +149,7 @@ class _CMakeBuildExt(_build_ext):
         # Prevent editable install from reporting success when critical kernel shared objects are missing.
         lib_dir = src / "astrai" / "extension"
         required = (
-            ("attention", "rotary_emb", "cross_entropy", "gated_deltanet")
+            ("attention", "rotary_emb", "swiglu", "cross_entropy", "gated_deltanet")
             if arch
             else ()
         )

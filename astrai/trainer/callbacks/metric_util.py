@@ -1,11 +1,13 @@
 import math
-from typing import Dict
+from typing import Dict, Union
 
 import torch
 import torch.nn as nn
 
 
-def grad_norm(model: nn.Module, per_param: bool = False) -> float | Dict[str, float]:
+def grad_norm(
+    model: nn.Module, per_param: bool = False
+) -> Union[float, Dict[str, float]]:
     grads = [p.grad.detach() for p in model.parameters() if p.grad is not None]
     if not grads:
         return 0.0

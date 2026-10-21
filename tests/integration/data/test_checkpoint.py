@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import time
 
 import pytest
 import torch
@@ -90,7 +91,7 @@ def test_checkpoint_is_atomically_published_with_manifest(tmp_path, monkeypatch)
     assert target.is_dir()
     assert not list(tmp_path.glob(f".{target.name}.tmp-*"))
     manifest = json.loads((target / "manifest.json").read_text())
-    assert manifest["format_version"] == 1
+    assert manifest["format_version"] == 2
     assert manifest["optimizer_step"] == 9
     assert manifest["policy_version"] == 3
     assert manifest["tensors"] == ["weight"]
@@ -99,8 +100,26 @@ def test_checkpoint_is_atomically_published_with_manifest(tmp_path, monkeypatch)
         "meta.json",
         "model.safetensors",
     }
-    assert len(manifest["files"]["model.safetensors"]["sha256"]) == 64
+    # v2 publishes without hashing: the rename is the completeness guarantee.
+    assert manifest["files"]["model.safetensors"]["size"] > 0
+    assert "sha256" not in manifest["files"]["model.safetensors"]
     assert Checkpoint.load(target, verify_checksums=True).consumed_samples == 36
+    assert Checkpoint.verify(target)["checksums"] == "absent"
+
+
+def test_staging_artifact_failure_never_publishes_checkpoint(tmp_path):
+    target = tmp_path / "epoch_0_step_1"
+    checkpoint = Checkpoint(state_dict={"weight": torch.ones(2)})
+
+    def fail_metric_snapshot(staging_path):
+        (staging_path / "metric.jsonl").write_text("partial\n")
+        raise RuntimeError("metric snapshot failed")
+
+    with pytest.raises(RuntimeError, match="metric snapshot failed"):
+        checkpoint.save(target, prepare_staging=fail_metric_snapshot)
+
+    assert not target.exists()
+    assert not list(tmp_path.glob(f".{target.name}.tmp-*"))
 
 
 def test_checkpoint_failure_never_publishes_partial_directory(tmp_path, monkeypatch):
@@ -119,33 +138,40 @@ def test_checkpoint_failure_never_publishes_partial_directory(tmp_path, monkeypa
     assert not list(tmp_path.glob(f".{target.name}.tmp-*"))
 
 
-def test_checkpoint_republish_atomically_replaces_published_directory(tmp_path):
+def test_republishing_a_step_keeps_the_published_directory(tmp_path):
+    """Publication is write-once: the same step is never rewritten."""
     target = tmp_path / "epoch_0_step_1"
-    Checkpoint(state_dict={"weight": torch.ones(2)}).save(target)
+    assert Checkpoint(state_dict={"weight": torch.ones(2)}).save(target) is True
+    published = (target / "model.safetensors").stat().st_mtime_ns
+
     replacement = Checkpoint(
         state_dict={"weight": torch.zeros(3)},
         meta={"optimizer_step": 1},
         config={"hidden_size": 3},
     )
-    replacement.save(target)
+    assert replacement.save(target) is False
 
-    assert target.is_dir()
     assert not list(tmp_path.glob(f".{target.name}.tmp-*"))
-    assert not list(tmp_path.glob(f".{target.name}.retired-*"))
-    loaded = Checkpoint.load(target, verify_checksums=True)
-    torch.testing.assert_close(loaded.state_dict["weight"], torch.zeros(3))
+    loaded = Checkpoint.load(target)
+    torch.testing.assert_close(loaded.state_dict["weight"], torch.ones(2))
+    assert (target / "model.safetensors").stat().st_mtime_ns == published
 
 
-def test_checkpoint_checksum_verification_detects_same_size_corruption(tmp_path):
+def test_verify_detects_same_size_corruption_when_checksums_exist(tmp_path):
+    """A v1-style manifest still gets its hashes checked; v2 does not hash."""
     target = tmp_path / "epoch_0_step_1"
     Checkpoint(state_dict={"weight": torch.ones(2)}).save(target)
+    manifest = json.loads((target / "manifest.json").read_text())
+    for name, descriptor in manifest["files"].items():
+        descriptor["sha256"] = checkpoint_module._sha256(target / name)
+    (target / "manifest.json").write_text(json.dumps(manifest))
+
     meta_path = target / "meta.json"
     corrupted = meta_path.read_bytes()
-    replacement = b"X" if corrupted[0:1] != b"X" else b"Y"
-    meta_path.write_bytes(replacement + corrupted[1:])
+    meta_path.write_bytes((b"X" if corrupted[0:1] != b"X" else b"Y") + corrupted[1:])
 
     with pytest.raises(ValueError, match="checksum mismatch: meta.json"):
-        Checkpoint.load(target, verify_checksums=True)
+        Checkpoint.verify(target)
 
 
 def test_checkpoint_load_accepts_legacy_directory_without_manifest(tmp_path):
@@ -204,3 +230,42 @@ def simple_training():
 
 def test_multi_process():
     spawn_parallel_fn(simple_training, world_size=2, backend="gloo")
+
+
+def test_stale_staging_is_cleaned_before_the_next_save(tmp_path):
+    """A killed save leaves a staging dir; the next save must reclaim it."""
+    target = tmp_path / "epoch_0_step_9"
+    stale = tmp_path / ".epoch_0_step_9.tmp-abandoned"
+    stale.mkdir()
+    (stale / "model.safetensors").write_bytes(b"partial")
+    old = time.time() - 2 * checkpoint_module.STALE_STAGING_SECONDS
+    os.utime(stale, (old, old))
+
+    live = tmp_path / ".epoch_0_step_9.tmp-live"
+    live.mkdir()
+
+    model = torch.nn.Linear(4, 2)
+    Checkpoint(state_dict=model.state_dict(), epoch=0, consumed_samples=9).save(
+        str(target)
+    )
+
+    assert target.is_dir()
+    assert not stale.exists()
+    assert live.exists()
+
+
+def test_republish_keeps_files_the_save_does_not_produce(tmp_path):
+    """Re-writing the same step must not drop the files other writers left."""
+    target = tmp_path / "epoch_0_step_3"
+    torch.manual_seed(0)
+    model = torch.nn.Linear(4, 2)
+    checkpoint = Checkpoint(state_dict=model.state_dict(), epoch=0, consumed_samples=3)
+    checkpoint.save(str(target))
+
+    (target / "tokenizer.json").write_text('{"version": 1}')
+    (target / "notes.json").write_text('{"loss": 1.0}\n')
+
+    checkpoint.save(str(target))
+
+    assert json.loads((target / "tokenizer.json").read_text()) == {"version": 1}
+    assert (target / "notes.json").read_text().strip() == '{"loss": 1.0}'

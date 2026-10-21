@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional
 
 from jinja2 import Template
 
-type MessageType = Dict[str, Any]
+MessageType = Dict[str, Any]
 
 
 class ChatTemplate:
