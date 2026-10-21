@@ -10,11 +10,11 @@ from torch import nn
 from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.tensor import Replicate, Shard, distribute_tensor
 
-from astrai.optim import muon_adamw as module
-from astrai.optim.muon_adamw import _ShardedMuon
+from astrai.optimization.optimizer.muon import sharded_update as module
+from astrai.optimization.optimizer.muon.sharded_update import ShardedMuon
 
 
-def _worker(rank, world, rendezvous, output):
+def _worker(rank, world, rendezvous, output, batched=False):
     torch.set_num_threads(1)
     dist.init_process_group(
         "gloo",
@@ -34,6 +34,10 @@ def _worker(rank, world, rendezvous, output):
 
         module.newton_schulz = observed
         shapes = [(3, 7), (9, 4), (4, 9)]
+        if batched:
+            # Exercise a full chunk and a partial chunk of the same shape.
+            shapes += [(3, 7), (3, 7)]
+        batching = {"batch_ns_updates": True, "ns_batch_size": 2} if batched else {}
         for dtype in (torch.float32, torch.bfloat16):
             for nesterov in (True, False):
                 for mode in ("standard", "buffers", "auto"):
@@ -60,10 +64,11 @@ def _worker(rank, world, rendezvous, output):
                             adjust_lr_fn="match_rms_adamw",
                         )
                         wanted = torch.optim.Muon(expected, **options)
-                        got = _ShardedMuon(
+                        got = ShardedMuon(
                             actual,
                             reuse_ns_buffers=mode == "buffers",
                             use_ns_kernels=mode == "auto",
+                            **batching,
                             **options,
                         )
                         calls.clear()
@@ -95,10 +100,11 @@ def _worker(rank, world, rendezvous, output):
                             if step == 2:
                                 path = output + f"/state-rank-{rank}.pt"
                                 torch.save(got.state_dict(), path)
-                                resumed = _ShardedMuon(
+                                resumed = ShardedMuon(
                                     actual,
                                     reuse_ns_buffers=mode == "buffers",
                                     use_ns_kernels=mode == "auto",
+                                    **batching,
                                     **options,
                                 )
                                 resumed.load_state_dict(
@@ -107,11 +113,18 @@ def _worker(rank, world, rendezvous, output):
                                 got = resumed
                             wanted.zero_grad()
                             got.zero_grad()
-                        assert all(shape in shapes for shape, _ in calls)
+                        allowed_shapes = set(shapes)
+                        if batched:
+                            allowed_shapes.add((2, 3, 7))
+                        assert all(shape in allowed_shapes for shape, _ in calls)
                         if mode == "standard":
                             assert not calls
                         else:
-                            assert len(calls) == 15
+                            assert len(calls) == (20 if batched else 15)
+                            if batched:
+                                assert (
+                                    sum(shape == (2, 3, 7) for shape, _ in calls) == 5
+                                )
                             assert {backend for _, backend in calls} == {
                                 "auto" if mode == "auto" else "torch"
                             }
@@ -120,7 +133,7 @@ def _worker(rank, world, rendezvous, output):
         param.grad = distribute_tensor(torch.ones(2, 3, 4), mesh, [Shard(0)])
         before = param.full_tensor().clone()
         with pytest.raises(ValueError, match="2D"):
-            _ShardedMuon([param])
+            ShardedMuon([param])
         torch.testing.assert_close(param.full_tensor(), before, rtol=0, atol=0)
     finally:
         dist.destroy_process_group()
@@ -132,5 +145,14 @@ def test_sharded_muon_parameters_momentum_dispatch_and_resume(tmp_path, world):
         _worker,
         args=(world, "file://" + str(tmp_path / "rendezvous"), str(tmp_path)),
         nprocs=world,
+        join=True,
+    )
+
+
+def test_batched_sharded_muon_preserves_momentum_and_resume(tmp_path):
+    mp.spawn(
+        _worker,
+        args=(2, "file://" + str(tmp_path / "rendezvous"), str(tmp_path), True),
+        nprocs=2,
         join=True,
     )

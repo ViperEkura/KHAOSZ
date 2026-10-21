@@ -1,6 +1,6 @@
 #include <torch/extension.h>
 
-#include <api/gated_deltanet.h>
+#include <api/torch/gated_deltanet.h>
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("gated_deltanet_fwd", &astrai::gdn::gated_deltanet_fwd, py::arg("q"), py::arg("k"),

@@ -8,7 +8,7 @@
 
 #include <type_traits>
 
-#include <api/gemm_common.h>
+#include <api/native/gemm.h>
 #include <datatype/dequant.cuh>
 #include <memory/load_async.cuh>
 #include <memory/load_crosswise.cuh>
@@ -17,7 +17,7 @@
 #include <memory/tma.cuh>
 #include <mma/ldmatrix.cuh>
 #include <mma/mma.cuh>
-#include <policy.cuh>
+#include <policy/gemm.cuh>
 #include <utils/define.cuh>
 #include <utils/tensor.cuh>
 
@@ -45,7 +45,7 @@ template <typename Policy> struct GemmCollectiveMainloop {
     static_assert(!kUseTma || (!Smem::kDirectA && !Smem::kDirectB),
                   "TMA staging is congruous-only");
     /*
-     * The mma runs on the promoted MmaT (policy/traits.cuh); a lone int8/fp8 side
+     * The mma runs on the promoted MmaT (policy/gemm/traits.cuh); a lone int8/fp8 side
      * expands in-register between smem read and mma (kDequant* marks the
      * insert, dequant.cuh). AccT rides the mma cell: fp32, int32 for s8.
      */
@@ -86,8 +86,8 @@ template <typename Policy> struct GemmCollectiveMainloop {
      * kMt x kNt m16n8k{kMmaK} MMAs. Rings rotate kStages+1 buffers (see
      * GemmSmem) — one __syncthreads per k-tile.
      */
-    static constexpr int kMt = Traits::kMt;          // 16-row MMA tiles per warp
-    static constexpr int kNt = Traits::kNt;          // 8-col MMA tiles per warp
+    static constexpr int kMt = Traits::kMt;             // 16-row MMA tiles per warp
+    static constexpr int kNt = Traits::kNt;             // 8-col MMA tiles per warp
     static constexpr int kSegs = kTile / Traits::kMmaK; // mma-sized k segments
     static constexpr int kARing = Smem::kRingDepth;
     static constexpr int kBRing = Smem::kRingDepth;

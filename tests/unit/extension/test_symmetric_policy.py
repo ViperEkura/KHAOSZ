@@ -10,7 +10,7 @@ import torch
 from astrai.extension.backend.newton_schulz import select
 from astrai.extension.kernel import newton_schulz as kernel
 from astrai.extension.policy import newton_schulz as plan
-from astrai.extension.runtime.dispatch import op_backend
+from astrai.extension.runtime.context import op_backend
 
 backend = import_module("astrai.extension.backend.newton_schulz")
 

@@ -15,7 +15,7 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 import click
 import torch
@@ -111,7 +111,7 @@ def prefer_cudnn_sdpa(
     return with_cudnn
 
 
-def ragged_lens(batch: int, span: int) -> list[int]:
+def ragged_lens(batch: int, span: int) -> List[int]:
     """Deterministic mixed lengths spanning [span // 2, span]."""
     if batch == 1:
         return [span]
@@ -119,7 +119,7 @@ def ragged_lens(batch: int, span: int) -> list[int]:
     return [span - (batch - 1 - i) * step for i in range(batch)]
 
 
-def cumsum_indptr(lens: list[int]) -> torch.Tensor:
+def cumsum_indptr(lens: List[int]) -> torch.Tensor:
     return torch.tensor(
         [0, *torch.tensor(lens).cumsum(0).tolist()], dtype=torch.int32, device="cuda"
     )
@@ -138,7 +138,7 @@ class PagedInputs:
 
 
 def build_paged_inputs(
-    config: GqaConfig, kv_lens: list[int], q_lens: Optional[list[int]]
+    config: GqaConfig, kv_lens: List[int], q_lens: Optional[List[int]]
 ) -> PagedInputs:
     """Flat pool + page table: request ``i`` owns the contiguous slot range
     ``[offset_i, offset_i + kv_len_i)``. Q is packed across requests when
@@ -177,21 +177,21 @@ def build_paged_inputs(
 def report_result(
     suite: str,
     config: GqaConfig,
-    case: dict[str, int],
-    operations: dict[str, Callable[[], torch.Tensor]],
+    case: Dict[str, int],
+    operations: Dict[str, Callable[[], torch.Tensor]],
     io_bytes: int,
     *,
     warmup: int,
     iterations: int,
     trials: int,
-) -> dict[str, object]:
+) -> Dict[str, object]:
     samples = measure_operations(
         operations, warmup=warmup, iterations=iterations, trials=trials
     )
     reference = operations["torch"]()
     actual = operations["cuda"]()
     difference = actual.float() - reference.float()
-    result: dict[str, object] = {
+    result: Dict[str, object] = {
         "suite": suite,
         "config": config.name,
         "agreement": {
@@ -236,7 +236,7 @@ def benchmark_decode(
     warmup: int,
     iterations: int,
     trials: int,
-) -> dict[str, object]:
+) -> Dict[str, object]:
     q = torch.randn(
         batch, 1, config.hq, config.head_dim, device="cuda", dtype=torch.bfloat16
     )
@@ -282,7 +282,7 @@ def benchmark_prefill(
     warmup: int,
     iterations: int,
     trials: int,
-) -> dict[str, object]:
+) -> Dict[str, object]:
     q = torch.randn(
         batch, q_len, config.hq, config.head_dim, device="cuda", dtype=torch.bfloat16
     )
@@ -321,7 +321,7 @@ def benchmark_paged_decode(
     warmup: int,
     iterations: int,
     trials: int,
-) -> dict[str, object]:
+) -> Dict[str, object]:
     n_rep = config.hq // config.hkv
     kv_lens = [length + 1 for length in ragged_lens(batch, context)]
     inputs = build_paged_inputs(config, kv_lens, None)
@@ -410,7 +410,7 @@ def benchmark_paged_prefill(
     warmup: int,
     iterations: int,
     trials: int,
-) -> dict[str, object]:
+) -> Dict[str, object]:
     n_rep = config.hq // config.hkv
     q_lens = ragged_lens(batch, q_len)
     inputs = build_paged_inputs(config, q_lens, q_lens)
@@ -506,9 +506,9 @@ def benchmark_paged_prefill(
 @click.option("--trials", type=click.IntRange(min=1), default=10, show_default=True)
 @click.option("--seed", type=int, default=0, show_default=True)
 def benchmark_command(
-    output: Path | None,
-    suites: tuple[str, ...],
-    config_values: tuple[str, ...],
+    output: Optional[Path],
+    suites: Tuple[str, ...],
+    config_values: Tuple[str, ...],
     warmup: int,
     iterations: int,
     trials: int,
@@ -534,7 +534,7 @@ def benchmark_command(
         raise click.ClickException(f"built kernels required: {', '.join(missing)}")
 
     # A bare name filters the matching default; a full spec overrides or appends.
-    chosen: dict[str, GqaConfig] = {}
+    chosen: Dict[str, GqaConfig] = {}
     for value in config_values:
         config = (
             next((c for c in DEFAULT_CONFIGS if c.name == value), None)

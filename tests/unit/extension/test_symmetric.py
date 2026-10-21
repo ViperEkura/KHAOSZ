@@ -1,21 +1,17 @@
-"""Generic symmetric BLAS contracts, dispatch and every compiled tile."""
+"""Symmetric BLAS contracts, selection and compiled tiles."""
 
 from importlib import import_module
 
 import pytest
 import torch
 
+from astrai.extension import (
+    ExplicitSelectionError,
+    op_backend,
+)
 from astrai.extension.backend.newton_schulz import select, symm_out, syrk_out
 from astrai.extension.kernel.newton_schulz import is_available
 from astrai.extension.policy import newton_schulz as plan
-from astrai.extension.runtime.dispatch import (
-    ExplicitSelectionError,
-    ImplRecord,
-    Spec,
-    op_backend,
-    register_impl,
-    unregister_impl,
-)
 
 backend = import_module("astrai.extension.backend.newton_schulz")
 
@@ -93,29 +89,11 @@ def test_zero_beta_does_not_read_addend(device):
     torch.testing.assert_close(output, x @ x.T, atol=0.0001, rtol=0.02)
 
 
-def test_cached_builtin_selection_bypasses_dynamic_external_implementations():
-    x, output = torch.randn(7, 13), torch.empty(7, 7)
-    select("syrk", x, output)
-    available = [False]
-
-    def dynamic(*args, **kwargs):
-        pass
-
-    record = ImplRecord(
-        "syrk",
-        "dynamic_test",
-        dynamic,
-        Spec.always(),
-        priority=-1,
-        available=lambda: available[0],
-    )
-    register_impl(record)
-    try:
-        assert select("syrk", x, output).func is backend._torch_syrk
-        available[0] = True
-        assert select("syrk", x, output).func is dynamic
-        available[0] = False
-        assert select("syrk", x, output).func is backend._torch_syrk
-    finally:
-        unregister_impl("syrk", "dynamic_test")
-    assert select("syrk", x, output).func is backend._torch_syrk
+def test_matrix_dispatchers_keep_independent_context_choices():
+    x = torch.randn(7, 13)
+    syrk_output = torch.empty(7, 7)
+    symm_output = torch.empty_like(x)
+    with op_backend(syrk="torch", symm="torch"):
+        assert select("syrk", x, syrk_output).func is backend._torch_syrk
+        assert select("symm", torch.eye(7), x, symm_output).func is backend._torch_symm
+    assert select("syrk", x, syrk_output).func is backend._torch_syrk

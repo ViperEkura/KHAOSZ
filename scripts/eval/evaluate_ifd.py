@@ -26,6 +26,7 @@ import glob
 import json
 import os
 import statistics
+from typing import List
 
 import torch
 import torch.nn.functional as F
@@ -68,7 +69,7 @@ def _resolve_sentinel_ids(tokenizer, sentinel_text):
     return [0]
 
 
-def _collect_input_files(input_path: str) -> list:
+def _collect_input_files(input_path: str) -> List:
     """Resolve *input_path* to a list of JSONL/JSON files."""
     if os.path.isdir(input_path):
         files = []
@@ -80,7 +81,7 @@ def _collect_input_files(input_path: str) -> list:
     return sorted(glob.glob(input_path))
 
 
-def _load_items(filepath: str) -> list:
+def _load_items(filepath: str) -> List:
     """Load JSONL or JSON (array / single dict) into a list of dicts."""
     with open(filepath, "r", encoding="utf-8") as f:
         if filepath.lower().endswith(".json"):

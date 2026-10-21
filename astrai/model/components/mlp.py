@@ -1,10 +1,10 @@
-from typing import Optional, TypedDict
+from typing import Optional, Tuple, TypedDict
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch import Tensor
 
+from astrai.extension.backend.swiglu import swiglu
 from astrai.factory import BaseFactory
 from astrai.model.components.linear import Linear
 
@@ -38,7 +38,7 @@ class MLP(nn.Module):
         self.down = Linear(dim_ffn, dim, init_std=down_init_std)
 
     def forward(self, x: Tensor) -> FFNOutput:
-        gated = self.up(x) * F.silu(self.gate(x))
+        gated = swiglu(self.up(x), self.gate(x))
         out = self.down(gated)
         return {"hidden_states": out, "aux_loss": None, "router_stats": None}
 
@@ -126,7 +126,7 @@ class DeepSeekMoE(nn.Module):
             / self.n_shared_experts
         )
 
-    def _select_experts(self, router_logits: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+    def _select_experts(self, router_logits: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
         """Return FP32 probabilities and the actual dispatch decision."""
         router_probs = torch.softmax(router_logits.float(), dim=-1)
         topk_weights, topk_indices = torch.topk(

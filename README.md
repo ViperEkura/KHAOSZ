@@ -60,7 +60,7 @@ End-to-end walkthrough in 5 steps:
 
 **1. Install**
 
-AstrAI requires Python 3.12+ and pins PyTorch exactly to `2.11.0`. Training, `scripts/tools/generate.py`, generation evaluations, and the generation demos require CUDA; CPU support is limited to components with an explicit CPU device path, such as the HTTP server and direct-scoring evaluations.
+AstrAI requires Python 3.12+ and pins PyTorch exactly to `2.13.0`. Training, `scripts/tools/generate.py`, generation evaluations, and the generation demos require CUDA; CPU support is limited to components with an explicit CPU device path, such as the HTTP server and direct-scoring evaluations.
 
 ```bash
 git clone https://github.com/ViperEkura/AstrAI.git
@@ -239,7 +239,9 @@ See [Inference Guide](docs/guides/inference.md) for SSE streaming format, error 
 | [Architecture](./docs/developer/architecture.md) | System architecture, class diagram & design patterns |
 | [Data Flow](./docs/developer/dataflow.md) | Data pipeline, storage backends & dataset architecture |
 | [Internals](./docs/developer/internals.md) | Training internals: loss formulas, callback lifecycle, KV cache |
-| [CUDA Kernels](./docs/developer/kernels/README.md) | Custom CUDA attention kernels & benchmarks |
+| [Trainer Internals](./docs/developer/trainer/README.md) | Training ownership, session cleanup, config snapshots and strategy registration |
+| [Test Suites](./docs/developer/testing.md) | Unit / integration / GPU tier layout, skip rules, CI entry |
+| [CUDA Kernels](./docs/developer/kernels/README.md) | CUDA kernel math contracts, design notes & build (GEMM, attention, RoPE, cross-entropy, FP8) |
 | [Docker Serving](./docs/developer/docker/serving.md) | YAML-driven containerized serving (`serve.yaml`, `serve.sh`) |
 | [Docker Training](./docs/developer/docker/training.md) | YAML-driven containerized training (`train.yaml`, `train.sh`) |
 

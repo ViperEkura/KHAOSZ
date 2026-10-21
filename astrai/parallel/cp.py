@@ -35,7 +35,7 @@ from torch import Tensor
 from torch.distributed.tensor.experimental import context_parallel
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
-from astrai.extension.backend.attention import TorchNativeBackend, get_backend
+from astrai.extension.runtime.context import snapshot_op_selection
 from astrai.parallel.topology import ParallelTopology
 
 try:  # private torch module — torch may move or rename it between versions
@@ -106,13 +106,13 @@ class TokenMeanStrategy(Protocol):
 
 
 def _sdpa_is_native() -> bool:
-    """Whether the active attention backend routes through torch SDPA.
+    """Whether the active attention implementation routes through torch SDPA.
 
     Ring attention hooks ``F.scaled_dot_product_attention`` only; the CUDA
     paged kernels and FlashAttention never see the patch.  Fail loudly per
     the repo's no-silent-fallback convention.
     """
-    return isinstance(get_backend(), TorchNativeBackend)
+    return snapshot_op_selection().choice("attention")[0] in ("torch", "torch_native")
 
 
 class CPState:
@@ -164,8 +164,8 @@ class CPState:
         """
         if not _sdpa_is_native():
             raise RuntimeError(
-                "context parallelism requires the torch-native attention "
-                "backend (SDPA); the active backend bypasses the ring hook"
+                "context parallelism requires the Torch attention "
+                "implementation (SDPA); the active choice bypasses the ring hook"
             )
 
         # The ring's partial-attention merge assumes logsumexp carries one
@@ -189,10 +189,12 @@ class CPState:
         ):
             yield
 
-    def mean_loss(self, loss_sum: Tensor, token_count: Tensor) -> tuple[Tensor, Tensor]:
+    def mean_loss(
+        self, loss_sum: Tensor, token_count: Tensor
+    ) -> Tuple[Tensor, Tensor, Tensor]:
         """Global-mean loss and its cp-scaled training counterpart.
 
-        Returns ``(mean, scaled)``: ``mean`` is the true global mean (sum
+        Returns ``(mean, scaled, count)``: ``mean`` is the true global mean (sum
         over the whole cp group divided by the global token count — a plain
         value for logging/validation) and ``scaled = local_sum * cp_size /
         global_count`` is the tensor to backward.  Data-parallel gradient
@@ -210,7 +212,7 @@ class CPState:
         total, count = stats[0], stats[1].clamp(min=1.0)
         mean = (total / count).detach()
         scaled = loss_sum * (self.size / count)
-        return mean, scaled
+        return mean, scaled, stats[1]
 
 
 class CPStrategy:
@@ -252,6 +254,10 @@ class CPStrategy:
         # CP shard. Re-yield through the wrapper instead.
         yield self.compute_loss_output(batch)
 
+    def training_updates(self, batch: Dict[str, Tensor], microbatch_prompts=None):
+        for output in self.training_steps(batch):
+            yield iter((output,))
+
     def compute_loss(self, batch: Dict[str, Tensor]) -> Tensor:
         return self.compute_loss_output(batch)["loss"]
 
@@ -261,5 +267,7 @@ class CPStrategy:
         with self.cp.shard(buffers, seq_dims):
             forward = self.inner.forward_tokens(batch)
             tokens = self.inner.reduce_loss(forward, batch)
-        mean, scaled = self.cp.mean_loss(tokens.loss_sum, tokens.token_count)
-        return self.inner.token_loss_output(scaled, mean, forward)
+        mean, scaled, count = self.cp.mean_loss(tokens.loss_sum, tokens.token_count)
+        output = self.inner.token_loss_output(scaled, mean, forward)
+        output["normalizer"] = float(count.item())
+        return output

@@ -8,12 +8,12 @@ orchestrates both modes as a façade.
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 
 from astrai.factory import BaseFactory
 
 
-def _extract_domain(item: dict, domain_key: Optional[str]) -> str:
+def _extract_domain(item: Dict, domain_key: Optional[str]) -> str:
     if not domain_key:
         return "__default__"
     val = item.get(domain_key, "__default__")
@@ -31,15 +31,15 @@ class SectionRenderer:
 
     def process_sections(
         self,
-        item: dict,
-        sections: list,
+        item: Dict,
+        sections: List,
         config,
         tokenizer,
         *,
         is_top_level: bool = False,
     ):
-        all_ids: list[int] = []
-        loss_mask: list[int] = []
+        all_ids: List[int] = []
+        loss_mask: List[int] = []
 
         has_template = any(s.get("template") for s in sections)
         is_text_config = not has_template and all(
@@ -96,8 +96,8 @@ class SectionRenderer:
 
     def process_sections_batch(
         self,
-        items: list[dict],
-        sections: list,
+        items: List[Dict],
+        sections: List,
         config,
         tokenizer,
         *,
@@ -109,10 +109,10 @@ class SectionRenderer:
         is_text_config = not has_template and all(
             s["action"] == "train" for s in sections
         )
-        plans: list[list[tuple[str, str, bool]]] = []
+        plans: List[List[Tuple[str, str, bool]]] = []
 
         for item in items:
-            plan: list[tuple[str, str, bool]] = []
+            plan: List[Tuple[str, str, bool]] = []
             first_section = True
             for sec in sections:
                 field = sec["field"]
@@ -149,7 +149,7 @@ class SectionRenderer:
                 first_section = False
             plans.append(plan)
 
-        encoded: dict[tuple[int, int], list[int]] = {}
+        encoded: Dict[Tuple[int, int], List[int]] = {}
         for add_special in (False, True):
             refs = [
                 (item_idx, unit_idx, text)
@@ -185,7 +185,7 @@ class SectionRenderer:
                 outputs.append((all_ids, loss_mask))
         return outputs
 
-    def process_list_field(self, item: dict, sections: list, config, tokenizer):
+    def process_list_field(self, item: Dict, sections: List, config, tokenizer):
         """Tokenize a list-valued field, preserving per-element boundaries.
 
         Returns ``(list_of_id_lists, list_of_mask_lists)`` where each
@@ -193,8 +193,8 @@ class SectionRenderer:
         is critical for GRPO where each response must stay a separate
         sequence so the strategy can form a ``[G, R]`` tensor.
         """
-        per_item_ids: list[list[int]] = []
-        per_item_masks: list[list[int]] = []
+        per_item_ids: List[List[int]] = []
+        per_item_masks: List[List[int]] = []
 
         for sec in sections:
             field = sec["field"]
@@ -206,8 +206,8 @@ class SectionRenderer:
                 continue
 
             for val in values:
-                ids: list[int] = []
-                mask: list[int] = []
+                ids: List[int] = []
+                mask: List[int] = []
                 if use_template:
                     if isinstance(val, list):
                         wrapper = {field: val}
@@ -275,11 +275,11 @@ class SectionRenderer:
         ]
 
     @staticmethod
-    def is_value_section(sections: list) -> bool:
+    def is_value_section(sections: List) -> bool:
         return len(sections) == 1 and sections[0].get("action") == "value"
 
     @staticmethod
-    def extract_raw_value(item: dict, sections: list):
+    def extract_raw_value(item: Dict, sections: List):
         sec = sections[0]
         field = sec["field"]
         raw = item.get(field)
@@ -339,9 +339,9 @@ class BaseMaskBuilder(ABC):
     """Convert a JSONL item into token ids and optional loss_mask."""
 
     @abstractmethod
-    def build(self, item: dict, config, tokenizer) -> Optional[dict]: ...
+    def build(self, item: Dict, config, tokenizer) -> Optional[Dict]: ...
 
-    def build_batch(self, items: list[dict], config, tokenizer) -> list[Optional[dict]]:
+    def build_batch(self, items: List[Dict], config, tokenizer) -> List[Optional[Dict]]:
         return [self.build(item, config, tokenizer) for item in items]
 
 
@@ -359,7 +359,7 @@ class SingleOutputMaskBuilder(BaseMaskBuilder):
     def __init__(self, renderer: Optional[SectionRenderer] = None):
         self.renderer = renderer or SectionRenderer()
 
-    def build(self, item: dict, config, tokenizer) -> Optional[dict]:
+    def build(self, item: Dict, config, tokenizer) -> Optional[Dict]:
         sections = config.input.sections
         if not sections:
             return None
@@ -370,7 +370,7 @@ class SingleOutputMaskBuilder(BaseMaskBuilder):
         if ids is None:
             return None
 
-        result: dict = {
+        result: Dict = {
             "sequence": ids,
             "domain": _extract_domain(item, config.output.domain_key),
         }
@@ -410,12 +410,12 @@ class MultiOutputMaskBuilder(BaseMaskBuilder):
     def __init__(self, renderer: Optional[SectionRenderer] = None):
         self.renderer = renderer or SectionRenderer()
 
-    def build(self, item: dict, config, tokenizer) -> Optional[dict]:
+    def build(self, item: Dict, config, tokenizer) -> Optional[Dict]:
         sources_spec = getattr(config.input, "sources", None)
         if not sources_spec:
             return None
 
-        result: dict = {}
+        result: Dict = {}
         required_outputs = {
             output_key
             for output_key, spec in sources_spec.items()
@@ -529,7 +529,7 @@ class SectionedMaskBuilder(BaseMaskBuilder):
         self._single = SingleOutputMaskBuilder()
         self._multi = MultiOutputMaskBuilder()
 
-    def build(self, item: dict, config, tokenizer) -> Optional[dict]:
+    def build(self, item: Dict, config, tokenizer) -> Optional[Dict]:
         sources_spec = getattr(config.input, "sources", None)
         if sources_spec:
             return self._multi.build(item, config, tokenizer)

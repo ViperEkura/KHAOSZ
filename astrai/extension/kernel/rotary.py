@@ -1,34 +1,41 @@
-"""Rotary embedding CUDA kernel wrapper.
+"""Fused RoPE with a first-order gradient for the rotated tensor."""
 
-Calls the compiled CUDA kernel directly. If the kernel is not available,
-raises ``RuntimeError``. Fallback to torch complex multiply is the
-responsibility of ``astrai.extension.backend.rotary.apply_rotary_emb``.
-
-Layout: x is packed [tokens, n_heads, head_dim] or dense
-[batch, seq_len, n_heads, head_dim]. ``freqs_cis`` has matching token axes.
-"""
+from typing import Optional, Tuple
 
 import torch
+from torch import Tensor
+from torch.autograd.function import once_differentiable
 
 from astrai.extension.runtime.loader import get_module
 
 
-def rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
-    """Fused rotary embedding kernel.
+@torch.library.custom_op("astrai::rotary_emb", mutates_args=())
+def rotary_emb(x: Tensor, freqs_cis: Tensor) -> Tensor:
+    if freqs_cis.requires_grad:
+        raise RuntimeError("CUDA rotary does not support freqs_cis gradients")
+    return get_module("rotary_emb").rotary_emb(x, freqs_cis.contiguous())
 
-    Args:
-        x: packed 3D or dense 4D bf16 tensor.
-        freqs_cis: matching token axes followed by [head_dim/2, 2].
 
-    Returns:
-        Tensor with the same shape as ``x``.
-    """
-    mod = get_module("rotary_emb")
-    if not x.is_contiguous():
-        x = x.contiguous()
-    if not freqs_cis.is_contiguous():
-        freqs_cis = freqs_cis.contiguous()
-    return mod.rotary_emb(x, freqs_cis)
+@rotary_emb.register_fake
+def _rotary_fake(x: Tensor, freqs_cis: Tensor) -> Tensor:
+    return torch.empty(x.shape, device=x.device, dtype=x.dtype)
+
+
+def _setup_context(ctx, inputs, output) -> None:
+    _, freqs_cis = inputs
+    ctx.save_for_backward(freqs_cis)
+
+
+@once_differentiable
+def _backward(ctx, grad_output: Tensor) -> Tuple[Tensor, Optional[Tensor]]:
+    (freqs_cis,) = ctx.saved_tensors
+    grad_x = get_module("rotary_emb").rotary_emb_backward(
+        grad_output, freqs_cis.contiguous()
+    )
+    return grad_x, None
+
+
+rotary_emb.register_autograd(_backward, setup_context=_setup_context)
 
 
 __all__ = ["rotary_emb"]

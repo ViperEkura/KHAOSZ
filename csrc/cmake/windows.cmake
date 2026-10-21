@@ -23,10 +23,4 @@ function(astrai_platform_link_options target)
     target_link_directories(${target} PRIVATE "${PYTHON_ROOT_DIR}/libs")
 endfunction()
 
-# Planner translation units include shared tile metadata that exposes inline PTX.
-# Compile them with nvcc so MSVC never parses device instructions.
-set_source_files_properties(
-    "${CMAKE_CURRENT_SOURCE_DIR}/gemm/planning.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/gemm/plan_table.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/gemm/plan_table_builtin.cpp"
-    PROPERTIES LANGUAGE CUDA)
+# GEMM planner sources are ordinary C++; their headers contain no CUDA/PTX.

@@ -9,7 +9,10 @@
 #include <cuda_bf16.h>
 #include <torch/extension.h>
 
-#include <api/gated_deltanet.h>
+#include <cmath>
+#include <limits>
+
+#include <api/torch/gated_deltanet.h>
 #include <utils/launch.cuh>
 
 namespace {
@@ -22,9 +25,8 @@ constexpr int kQuarters = 4;  // norm reduction is split kQuarters ways
  * keep the stores scalar to avoid bank conflicts.
  */
 constexpr int kPitch = kTile + 2;
-constexpr int kQkvSharedBytes =
-    3 * kHeadDim * kPitch * sizeof(__nv_bfloat16) +
-    (2 * kQuarters * kTile + 2 * kTile) * sizeof(float);
+constexpr int kQkvSharedBytes = 3 * kHeadDim * kPitch * sizeof(__nv_bfloat16) +
+                                (2 * kQuarters * kTile + 2 * kTile) * sizeof(float);
 
 // One block per (b, h, token tile).
 __global__ void gated_deltanet_fwd_qkv_kernel(const __nv_bfloat16* __restrict__ q,
@@ -193,10 +195,11 @@ std::vector<torch::Tensor> gated_deltanet_fwd(torch::Tensor q,
                                               torch::Tensor beta,
                                               double eps,
                                               int64_t chunk) {
-    const at::cuda::OptionalCUDAGuard device_guard(device_of(q));
-    auto stream = at::cuda::getCurrentCUDAStream();
-
-    TORCH_CHECK(q.is_cuda() && k.is_cuda() && v.is_cuda(), "q/k/v must be on CUDA");
+    TORCH_CHECK(q.is_cuda() && k.is_cuda() && v.is_cuda() && g.is_cuda() && beta.is_cuda(),
+                "q/k/v/g/beta must be on CUDA");
+    TORCH_CHECK(q.device() == k.device() && q.device() == v.device() &&
+                    q.device() == g.device() && q.device() == beta.device(),
+                "q/k/v/g/beta must be on the same CUDA device");
     TORCH_CHECK(q.scalar_type() == torch::kBFloat16, "q must be bf16");
     TORCH_CHECK(k.scalar_type() == torch::kBFloat16, "k must be bf16");
     TORCH_CHECK(v.scalar_type() == torch::kBFloat16, "v must be bf16");
@@ -204,23 +207,25 @@ std::vector<torch::Tensor> gated_deltanet_fwd(torch::Tensor q,
     TORCH_CHECK(beta.scalar_type() == torch::kFloat32, "beta must be fp32");
     TORCH_CHECK(q.dim() == 4 && k.dim() == 4 && v.dim() == 4, "q/k/v must be [B, T, H, D]");
     TORCH_CHECK(g.dim() == 3 && beta.dim() == 3, "g/beta must be [B, T, H]");
-    TORCH_CHECK(g.is_contiguous() && beta.is_contiguous(), "g/beta must be contiguous");
     TORCH_CHECK(q.sizes() == k.sizes() && q.sizes() == v.sizes(), "q/k/v must share a shape");
-    TORCH_CHECK(g.size(0) == q.size(0) && g.size(1) == q.size(1) && g.size(2) == q.size(2),
-                "g/beta must be [B, T, H] matching q");
-
-    const int batch = q.size(0);
-    const int seq = q.size(1);
-    const int heads = q.size(2);
-    const int dim = q.size(3);
-    TORCH_CHECK(dim == kHeadDim, "head dim must be ", kHeadDim, " for the prep kernel");
+    TORCH_CHECK(g.sizes() == beta.sizes() &&
+                    g.size(0) == q.size(0) && g.size(1) == q.size(1) &&
+                    g.size(2) == q.size(2), "g/beta must be [B, T, H] matching q");
+    TORCH_CHECK(g.is_contiguous() && beta.is_contiguous(), "g/beta must be contiguous");
+    TORCH_CHECK(std::isfinite(eps) && eps > 0.0 && std::isfinite(static_cast<float>(eps)) &&
+                    static_cast<float>(eps) > 0.0f, "eps must be finite and positive");
+    TORCH_CHECK(q.size(0) > 0 && q.size(1) > 0 && q.size(2) > 0,
+                "batch, sequence, and heads must be positive");
+    TORCH_CHECK(q.size(3) == kHeadDim, "head dim must be ", kHeadDim, " for the prep kernel");
     TORCH_CHECK(chunk == kTile, "the scan kernel needs chunk == ", kTile);
-    /*
-     * Tiles must cover the sequence exactly: the vector loads below do not
-     * mask, and the caller pads to a multiple of the chunk anyway.
-     */
-    TORCH_CHECK(seq % kTile == 0, "seq must be a multiple of ", kTile);
+    TORCH_CHECK(q.size(1) % kTile == 0, "seq must be a multiple of ", kTile);
+    TORCH_CHECK(q.numel() <= std::numeric_limits<int>::max(),
+                "GatedDeltaNet input exceeds int32 kernel indexing");
 
+    const int batch = static_cast<int>(q.size(0));
+    const int seq = static_cast<int>(q.size(1));
+    const int heads = static_cast<int>(q.size(2));
+    const int dim = kHeadDim;
     /*
      * The layer hands over [B, T, H, D] whose memory is laid out as [B, H, D, T],
      * so the token axis is the contiguous one. Accepting any other layout would
@@ -231,6 +236,9 @@ std::vector<torch::Tensor> gated_deltanet_fwd(torch::Tensor q,
                         named->stride(2) == static_cast<int64_t>(seq) * dim,
                     "q/k/v must carry the projection layout ([B, H, D, T] in memory)");
     }
+
+    const at::cuda::OptionalCUDAGuard device_guard(device_of(q));
+    auto stream = at::cuda::getCurrentCUDAStream();
 
     auto head_major = [&](const torch::Tensor& t) {
         return torch::empty({batch, heads, seq, dim}, t.options());
@@ -244,14 +252,13 @@ std::vector<torch::Tensor> gated_deltanet_fwd(torch::Tensor q,
     const int tiles = (seq + kTile - 1) / kTile;
     static bool configured = false;
     if (!configured) {
-        ASTRAI_CUDA_CHECK(cudaFuncSetAttribute(
-            gated_deltanet_fwd_qkv_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
-            kQkvSharedBytes));
+        ASTRAI_CUDA_CHECK(cudaFuncSetAttribute(gated_deltanet_fwd_qkv_kernel,
+                                               cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                               kQkvSharedBytes));
         configured = true;
     }
 
-    gated_deltanet_fwd_qkv_kernel<<<batch * heads * tiles, kThreads, kQkvSharedBytes,
-                                      stream>>>(
+    gated_deltanet_fwd_qkv_kernel<<<batch * heads * tiles, kThreads, kQkvSharedBytes, stream>>>(
         reinterpret_cast<const __nv_bfloat16*>(q.data_ptr()),
         reinterpret_cast<const __nv_bfloat16*>(k.data_ptr()),
         reinterpret_cast<const __nv_bfloat16*>(v.data_ptr()),

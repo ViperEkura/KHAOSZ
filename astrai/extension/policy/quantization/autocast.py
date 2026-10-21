@@ -8,6 +8,7 @@ import functools
 import threading
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 from torch.library import Library
@@ -58,12 +59,7 @@ __all__ = [
 # tuple; dtype validation stays in the C++ binding.
 
 
-def _is_fp8(dtype: torch.dtype) -> bool:
-    """A pre-quantized weight takes the GEMM directly (no re-quantize)."""
-    return dtype in (torch.float8_e4m3fn, torch.float8_e5m2)
-
-
-def fp8_format_pair(fmt: str | torch.dtype) -> tuple[torch.dtype, torch.dtype]:
+def fp8_format_pair(fmt: Union[str, torch.dtype]) -> Tuple[torch.dtype, torch.dtype]:
     """Format spec -> (fwd, bwd) fp8 dtype pair.
 
     A dtype is symmetric; ``'hybrid'`` is E4M3 forward / E5M2 backward
@@ -98,14 +94,14 @@ class _ActiveConfig:
 
     enabled: bool
     recipe: FP8Recipe
-    fp8_format: tuple[torch.dtype, torch.dtype]
+    fp8_format: Tuple[torch.dtype, torch.dtype]
 
 
 # Thread-local active configuration (torch's autocast TLS analog): set by
 # fp8_autocast on __enter__, absent outside any region. Autograd engine
 # threads run backwards with their own empty context — fine, since backward
 # only reads state captured on ctx at forward time.
-_active_config: ContextVar[_ActiveConfig | None] = ContextVar(
+_active_config: ContextVar[Optional[_ActiveConfig]] = ContextVar(
     "astrai_fp8_active_config", default=None
 )
 
@@ -113,7 +109,7 @@ _active_config: ContextVar[_ActiveConfig | None] = ContextVar(
 # machine owned — the per-weight meta registry (delayed-scaling rings, the
 # version-keyed weight-cast cache, the checkpoint pending queue, the
 # generation counter invalidating that cache) — lives in the C++ op's
-# translation unit (``csrc/gemm/fp8_linear.cu``). A meta is addressed
+# translation unit (``csrc/gemm/fp8/linear.cu``). A meta is addressed
 # by its module's *slot* when the dispatcher knows one (see the slot
 # stable module path, so a replaced weight parameter keeps its history) and by
 # ``(data_ptr, shape, dtype)`` otherwise; the snapshot binds slotted entries by
@@ -123,7 +119,7 @@ _default_recipe = FP8Recipe()
 _default_format = (torch.float8_e4m3fn, torch.float8_e5m2)
 
 
-def fp8_state_dict() -> dict:
+def fp8_state_dict() -> Dict:
     """Checkpoint snapshot of the delayed-scaling rings (A1): save it beside
     the optimizer state. Empty under dynamic scaling (no rings exist) and on
     a box without the extension (bf16 training never allocated any)."""
@@ -132,7 +128,7 @@ def fp8_state_dict() -> dict:
     return get_module("gemm").fp8_state_dict()
 
 
-def fp8_load_state_dict(sd: dict) -> None:
+def fp8_load_state_dict(sd: Dict) -> None:
     """Restore a :func:`fp8_state_dict` snapshot. Unmatched entries (a model
     shape/topology change across the checkpoint) re-seed on next use — the
     same resume transient a ring-less restart would pay on every step."""
@@ -147,7 +143,7 @@ def fp8_reset() -> None:
         get_module("gemm").fp8_reset()
 
 
-def _active() -> _ActiveConfig | None:
+def _active() -> Optional[_ActiveConfig]:
     """The active config when fp8 dispatch is on, else ``None`` (fast guard).
 
     A region config wins (honoring nested ``enabled=False`` regions); with no
@@ -160,15 +156,6 @@ def _active() -> _ActiveConfig | None:
     if _default_enabled:
         return _ActiveConfig(True, _default_recipe, _default_format)
     return None
-
-
-def _current_config() -> _ActiveConfig:
-    """Like ``_active()`` but always returns a config (disabled regions and
-    out-of-region direct calls resolve to the global defaults)."""
-    cfg = _active_config.get()
-    if cfg is not None:
-        return cfg
-    return _ActiveConfig(_default_enabled, _default_recipe, _default_format)
 
 
 class fp8_autocast:
@@ -190,14 +177,14 @@ class fp8_autocast:
         self,
         enabled: bool = True,
         update_interval: int = 16,
-        recipe: FP8Recipe | None = None,
-        fp8_format: str | torch.dtype = "hybrid",
+        recipe: Optional[FP8Recipe] = None,
+        fp8_format: Union[str, torch.dtype] = "hybrid",
         margin: int = 0,
     ):
         if recipe is None:
             recipe = FP8Recipe(history_len=update_interval, margin=margin)
         self._config = _ActiveConfig(bool(enabled), recipe, fp8_format_pair(fp8_format))
-        self._tokens: list[Token] = []
+        self._tokens: List[Token] = []
 
     def __enter__(self) -> "fp8_autocast":
         if self._config.enabled:
@@ -292,7 +279,7 @@ def _linear_cuda_impl(x: torch.Tensor, w: torch.Tensor, bias=None):
     )
 
 
-_linear_libs: list[Library] | None = None
+_linear_libs: Optional[List[Library]] = None
 _install_lock = threading.Lock()
 
 

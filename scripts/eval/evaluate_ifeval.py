@@ -23,7 +23,7 @@ from astrai.inference import InferenceEngine, build_engine
 from astrai.tokenize import AutoTokenizer
 
 IFEVAL_HF_DATASET = "google/IFEval"
-CONSTRAINT_VERIFIERS: Dict[str, Callable[[str, dict], bool]] = {}
+CONSTRAINT_VERIFIERS: Dict[str, Callable[[str, Dict], bool]] = {}
 
 
 def register(instruction_id: str):
@@ -35,7 +35,7 @@ def register(instruction_id: str):
 
 
 @register("keywords:existence")
-def check_keyword_existence(response: str, kwargs: dict) -> bool:
+def check_keyword_existence(response: str, kwargs: Dict) -> bool:
     for kw in kwargs["keywords"]:
         if not re.search(re.escape(kw), response, re.IGNORECASE):
             return False
@@ -43,7 +43,7 @@ def check_keyword_existence(response: str, kwargs: dict) -> bool:
 
 
 @register("keywords:frequency")
-def check_keyword_frequency(response: str, kwargs: dict) -> bool:
+def check_keyword_frequency(response: str, kwargs: Dict) -> bool:
     keyword = kwargs["keyword"]
     frequency = kwargs.get("frequency", 1)
     relation = kwargs.get("relation", "at least")
@@ -54,7 +54,7 @@ def check_keyword_frequency(response: str, kwargs: dict) -> bool:
 
 
 @register("keywords:forbidden_words")
-def check_forbidden_words(response: str, kwargs: dict) -> bool:
+def check_forbidden_words(response: str, kwargs: Dict) -> bool:
     for word in kwargs["forbidden_words"]:
         if re.search(r"\b" + re.escape(word) + r"\b", response, re.IGNORECASE):
             return False
@@ -62,7 +62,7 @@ def check_forbidden_words(response: str, kwargs: dict) -> bool:
 
 
 @register("keywords:letter_frequency")
-def check_letter_frequency(response: str, kwargs: dict) -> bool:
+def check_letter_frequency(response: str, kwargs: Dict) -> bool:
     letter = kwargs["letter"].lower()
     frequency = kwargs.get("let_frequency", 1)
     relation = kwargs.get("let_relation", "at least")
@@ -73,14 +73,14 @@ def check_letter_frequency(response: str, kwargs: dict) -> bool:
 
 
 @register("detectable_content:number_placeholders")
-def check_placeholders(response: str, kwargs: dict) -> bool:
+def check_placeholders(response: str, kwargs: Dict) -> bool:
     num = kwargs.get("num_placeholders", 1)
     placeholders = re.findall(r"\[.*?\]", response)
     return len(placeholders) >= num
 
 
 @register("detectable_content:postscript")
-def check_postscript(response: str, kwargs: dict) -> bool:
+def check_postscript(response: str, kwargs: Dict) -> bool:
     marker = kwargs.get("postscript_marker", "P.S.")
     response_lower = response.lower()
     if marker == "P.P.S":
@@ -92,7 +92,7 @@ def check_postscript(response: str, kwargs: dict) -> bool:
 
 
 @register("detectable_format:number_bullet_lists")
-def check_bullet_lists(response: str, kwargs: dict) -> bool:
+def check_bullet_lists(response: str, kwargs: Dict) -> bool:
     num = kwargs.get("num_bullets", 1)
     bullets = re.findall(r"^\s*\*[^\*].*$", response, re.MULTILINE)
     dashes = re.findall(r"^\s*-.*$", response, re.MULTILINE)
@@ -100,7 +100,7 @@ def check_bullet_lists(response: str, kwargs: dict) -> bool:
 
 
 @register("detectable_format:number_highlighted_sections")
-def check_highlighted_sections(response: str, kwargs: dict) -> bool:
+def check_highlighted_sections(response: str, kwargs: Dict) -> bool:
     num = kwargs.get("num_highlights", 1)
     highlights = re.findall(r"\*[^\n\*]+\*", response)
     count = 0
@@ -111,7 +111,7 @@ def check_highlighted_sections(response: str, kwargs: dict) -> bool:
 
 
 @register("detectable_format:multiple_sections")
-def check_multiple_sections(response: str, kwargs: dict) -> bool:
+def check_multiple_sections(response: str, kwargs: Dict) -> bool:
     splitter = kwargs.get("section_spliter", "Section")
     num = kwargs.get("num_sections", 1)
     pattern = r"\s?" + re.escape(splitter) + r"\s?\d+\s?"
@@ -120,7 +120,7 @@ def check_multiple_sections(response: str, kwargs: dict) -> bool:
 
 
 @register("detectable_format:title")
-def check_title(response: str, kwargs: dict) -> bool:
+def check_title(response: str, kwargs: Dict) -> bool:
     titles = re.findall(r"<<[^>\n]+>>", response)
     for title in titles:
         if title.strip("<>").strip():
@@ -129,7 +129,7 @@ def check_title(response: str, kwargs: dict) -> bool:
 
 
 @register("detectable_format:json_format")
-def check_json_format(response: str, kwargs: dict) -> bool:
+def check_json_format(response: str, kwargs: Dict) -> bool:
     value = response.strip()
     for prefix in ("```json", "```Json", "```JSON", "```"):
         if value.lower().startswith(prefix.lower()):
@@ -144,7 +144,7 @@ def check_json_format(response: str, kwargs: dict) -> bool:
 
 
 @register("detectable_format:general_punctuation")
-def check_general_punctuation(response: str, kwargs: dict) -> bool:
+def check_general_punctuation(response: str, kwargs: Dict) -> bool:
     punctuation_blacklist = kwargs.get("punctuation_blacklist", [])
     for punct in punctuation_blacklist:
         if punct in response:
@@ -153,14 +153,14 @@ def check_general_punctuation(response: str, kwargs: dict) -> bool:
 
 
 @register("detectable_format:number_highlighted_words")
-def check_highlighted_words(response: str, kwargs: dict) -> bool:
+def check_highlighted_words(response: str, kwargs: Dict) -> bool:
     num = kwargs.get("num_highlights", 1)
     highlights = re.findall(r"\*[^\s\*][^\*]*[^\s\*]\*", response)
     return len(highlights) >= num
 
 
 @register("startend:end_checker")
-def check_end_checker(response: str, kwargs: dict) -> bool:
+def check_end_checker(response: str, kwargs: Dict) -> bool:
     end_phrase = kwargs["end_phrase"]
     return (
         response.strip()
@@ -172,29 +172,29 @@ def check_end_checker(response: str, kwargs: dict) -> bool:
 
 
 @register("startend:quotation")
-def check_quotation(response: str, kwargs: dict) -> bool:
+def check_quotation(response: str, kwargs: Dict) -> bool:
     value = response.strip()
     return value.startswith('"') and value.endswith('"')
 
 
 @register("startend:start_checker")
-def check_start_checker(response: str, kwargs: dict) -> bool:
+def check_start_checker(response: str, kwargs: Dict) -> bool:
     starter = kwargs["starter"]
     return bool(re.search(r"^\s*" + re.escape(starter), response, re.MULTILINE))
 
 
 @register("change_case:english_capital")
-def check_english_capital(response: str, kwargs: dict) -> bool:
+def check_english_capital(response: str, kwargs: Dict) -> bool:
     return response.isupper()
 
 
 @register("change_case:english_lowercase")
-def check_english_lowercase(response: str, kwargs: dict) -> bool:
+def check_english_lowercase(response: str, kwargs: Dict) -> bool:
     return response.islower()
 
 
 @register("change_case:capital_word_frequency")
-def check_capital_word_frequency(response: str, kwargs: dict) -> bool:
+def check_capital_word_frequency(response: str, kwargs: Dict) -> bool:
     frequency = kwargs.get("capital_frequency", 1)
     relation = kwargs.get("capital_relation", "at least")
     capital_words = re.findall(r"\b[A-Z]{2,}\b", response)
@@ -205,7 +205,7 @@ def check_capital_word_frequency(response: str, kwargs: dict) -> bool:
 
 
 @register("punctuation:no_comma")
-def check_no_comma(response: str, kwargs: dict) -> bool:
+def check_no_comma(response: str, kwargs: Dict) -> bool:
     return "," not in response
 
 
@@ -222,7 +222,7 @@ def count_sentences(text: str) -> int:
 
 
 @register("length_constraints:number_words")
-def check_number_words(response: str, kwargs: dict) -> bool:
+def check_number_words(response: str, kwargs: Dict) -> bool:
     num = kwargs.get("num_words", 100)
     relation = kwargs.get("relation", "at least")
     cnt = count_words(response)
@@ -232,7 +232,7 @@ def check_number_words(response: str, kwargs: dict) -> bool:
 
 
 @register("length_constraints:number_sentences")
-def check_number_sentences(response: str, kwargs: dict) -> bool:
+def check_number_sentences(response: str, kwargs: Dict) -> bool:
     num = kwargs.get("num_sentences", 5)
     relation = kwargs.get("relation", "at least")
     cnt = count_sentences(response)
@@ -242,7 +242,7 @@ def check_number_sentences(response: str, kwargs: dict) -> bool:
 
 
 @register("length_constraints:number_paragraphs")
-def check_number_paragraphs(response: str, kwargs: dict) -> bool:
+def check_number_paragraphs(response: str, kwargs: Dict) -> bool:
     num = kwargs.get("num_paragraphs", 1)
     if "***" in response:
         paragraphs = re.split(r"\s?\*\*\*\s?", response)
@@ -253,7 +253,7 @@ def check_number_paragraphs(response: str, kwargs: dict) -> bool:
 
 
 @register("length_constraints:nth_paragraph_first_word")
-def check_nth_paragraph_first_word(response: str, kwargs: dict) -> bool:
+def check_nth_paragraph_first_word(response: str, kwargs: Dict) -> bool:
     num_paragraphs = kwargs.get("num_paragraphs", 1)
     nth = kwargs.get("nth_paragraph", 1)
     first_word = kwargs.get("first_word", "").lower()
@@ -276,7 +276,7 @@ def check_nth_paragraph_first_word(response: str, kwargs: dict) -> bool:
 
 
 @register("length_constraints:nth_word_checker")
-def check_nth_word(response: str, kwargs: dict) -> bool:
+def check_nth_word(response: str, kwargs: Dict) -> bool:
     nth = kwargs.get("nth_word", 1)
     target = kwargs.get("target_word", "").lower()
     words = re.findall(r"\b\w+\b", response)
@@ -286,13 +286,13 @@ def check_nth_word(response: str, kwargs: dict) -> bool:
 
 
 @register("combination:repeat_prompt")
-def check_repeat_prompt(response: str, kwargs: dict) -> bool:
+def check_repeat_prompt(response: str, kwargs: Dict) -> bool:
     prompt = kwargs["prompt_to_repeat"]
     return response.strip().lower().startswith(prompt.strip().lower())
 
 
 @register("combination:two_responses")
-def check_two_responses(response: str, kwargs: dict) -> bool:
+def check_two_responses(response: str, kwargs: Dict) -> bool:
     parts = response.split("******")
     valid = [p for p in parts if p.strip()]
     if len(valid) != 2:
@@ -312,7 +312,7 @@ def download_ifeval(data_path: str):
     print(f"  saved {len(ds)} items to {data_path}")
 
 
-def load_problems(data_path: str) -> List[dict]:
+def load_problems(data_path: str) -> List[Dict]:
     problems = []
     with open(data_path, "r", encoding="utf-8") as f:
         for line in f:
@@ -322,7 +322,7 @@ def load_problems(data_path: str) -> List[dict]:
     return problems
 
 
-def verify_response(response: str, instruction_id: str, kwargs: dict) -> Optional[bool]:
+def verify_response(response: str, instruction_id: str, kwargs: Dict) -> Optional[bool]:
     verifier = CONSTRAINT_VERIFIERS.get(instruction_id)
     if verifier is None:
         return None
@@ -362,7 +362,7 @@ def generate_one(
 def evaluate(
     engine: InferenceEngine,
     tokenizer: AutoTokenizer,
-    problems: List[dict],
+    problems: List[Dict],
     max_tokens: int,
     temperature: float,
     top_p: float,

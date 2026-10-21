@@ -46,10 +46,10 @@ BLAS-style formulas, not a complete BLAS interface with side/uplo/trans flags.
 flowchart LR
     Optimizer --> NS[backend.newton_schulz]
     NS --> Ops[backend.newton_schulz]
-    Ops --> Registry[runtime.dispatch]
-    Registry --> Policy[policy.newton_schulz]
-    Registry --> Torch[Torch fallback]
-    Registry --> Adapter[kernel.newton_schulz]
+    Ops --> Dispatch[backend.newton_schulz dispatcher]
+    Dispatch --> Policy[policy.newton_schulz]
+    Dispatch --> Torch[Torch fallback]
+    Dispatch --> Adapter[kernel.newton_schulz]
     Adapter --> CUDA[Newton-Schulz module]
     CUDA --> Mainloop[GemmCollectiveMainloop]
     CUDA --> Epilogue[GemmCollectiveEpilogue]
@@ -62,11 +62,11 @@ surface, \`entry.cu\` validates tensors and packs GEMM parameters, and
 planner. Their declarations are private to \`newton_schulz/entry.h\`.
 
 The kernel adapter forwards execution arguments and exposes candidate and plan
-metadata. The backend owns validation, operator registration and fallback. The
+metadata. The operator dispatcher owns validation and fallback. The
 policy owns optional measured-row overrides and native planner selection; the
 optimizer has no tile, layout or shape-specific conditions.
-`op_backend(syrk="torch", symm="torch")` forces Torch through the shared
-operator registry. Explicit CUDA selection and the adapter allow candidate
+`op_backend(syrk="torch", symm="torch")` forces Torch through the two
+operator dispatchers. Explicit CUDA selection and the adapter allow candidate
 measurement without using automatic planning.
 
 SYRK has a triangular WMMA candidate and square candidates built from the
@@ -78,7 +78,7 @@ FP32 accumulators before BF16 rounding. Batch launches reuse the existing
 `GemmParams` batch strides and `grid.z`; matrices never share accumulators.
 
 Tile candidates reuse the complete `TileManifest` from
-`include/policy/manifest.cuh`. `kernel.newton_schulz.tiles(operation)` reports
+`include/policy/gemm/manifest.h`. `kernel.newton_schulz.tiles(operation)` reports
 CTA/warp dimensions, K depth, stages, thread count, shared memory and supported
 input layouts. SYRK filters for square CTA geometry; its column-major
 candidates also follow the GEMM crosswise K-depth constraint. The WMMA
@@ -131,7 +131,7 @@ part of each decision.
 ## Native cost planning
 
 Symmetric operations reuse `geometry_cost` and `geometry_raster` from
-`include/launcher/gemm_cost.h`. The legacy geometry cost ranks five relative work proxies in log space; lower scores are preferred:
+`include/policy/gemm/cost.h`. The legacy geometry cost ranks five relative work proxies in log space; lower scores are preferred:
 
 | Proxy | Work represented |
 | --- | --- |
@@ -228,5 +228,6 @@ Replace angle-bracket placeholders before running these commands. Sweep files
 are measurement artifacts rather than checked-in benchmark data.
 A faster individual kernel must also pass the complete recurrence benchmark
 before selecting it for optimizer use.
-A shape-held-out [cost-model validation report](../../reports/ns-dispatch-cost-2026-10-08.md)
-records one measured device and the architecture compile coverage.
+A locally held shape-held-out cost-model validation report records one
+measured device and the architecture compile coverage; the report file is
+excluded from version control.

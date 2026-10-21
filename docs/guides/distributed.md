@@ -94,8 +94,8 @@ Context parallelism (`--cp_size`) shards the **sequence** dimension across a gro
 
 ```bash
 export CUDA_VISIBLE_DEVICES=0,1
-#   set_op("attention", "torch_native") before the run (or ASTR_BACKEND=torch)
-ASTR_BACKEND=torch python scripts/tools/train.py \
+# Context parallelism requires the Torch SDPA attention implementation.
+ASTR_OPS=attention=torch python scripts/tools/train.py \
     --train_type=seq \
     --param_path ./params \
     --data_root_path ./dataset/cached \

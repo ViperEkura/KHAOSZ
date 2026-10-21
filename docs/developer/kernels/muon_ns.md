@@ -49,8 +49,11 @@ these same backend options to the gathered full logical matrix, then restore
 the original placement. NS never runs independently on each local shard.
 The supported scope is a 2D matrix on a one-dimensional mesh with `Shard(0)`,
 `Shard(1)` or `Replicate`; other meshes/placements and packed 3D experts are
-rejected. DTensor matrices are processed one at a time, so `ns_batch_size`
-continues to control plain parameters only.
+rejected. DTensor matrices retain the upstream grouping by logical shape, device, dtype,
+mesh and placement. `batch_ns_updates` and `ns_batch_size` control bounded
+sharded chunks as well as plain parameters; each matrix is normalized separately.
+`ns_backend` selects dispatch independently of batching, and `reuse_ns_buffers`
+also applies to gathered sharded updates.
 
 Gather breaks BF16 non-Nesterov momentum aliasing. After NS normalizes its
 full input, the optimizer writes that normalized momentum back to the

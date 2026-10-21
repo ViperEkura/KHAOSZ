@@ -11,7 +11,7 @@ from torch import Tensor
 
 from astrai.trainer.rollout import RolloutResult
 from astrai.trainer.strategy.base import BaseStrategy
-from astrai.trainer.strategy.factory import StrategyFactory
+from astrai.trainer.strategy.factory import StrategyCapabilities, StrategyFactory
 from astrai.trainer.strategy.ops import (
     LossOutput,
     get_logprobs,
@@ -19,7 +19,9 @@ from astrai.trainer.strategy.ops import (
 )
 
 
-@StrategyFactory.register("dpo")
+@StrategyFactory.register(
+    "dpo", capabilities=StrategyCapabilities(reference_model=True)
+)
 class DPOStrategy(BaseStrategy):
     """Direct Preference Optimization strategy.
 
@@ -104,6 +106,7 @@ class DPOStrategy(BaseStrategy):
             {"dpo_loss": dpo_loss},
             aux_loss,
             policy_output.get("router_stats"),
+            normalizer=float(chosen_ids.shape[0]),
         )
 
     def supports_online(self) -> bool:
@@ -150,4 +153,6 @@ class DPOStrategy(BaseStrategy):
 
 
 # Online DPO uses the same objective with a rollout runner.
-StrategyFactory.register("online_dpo")(DPOStrategy)
+StrategyFactory.register(
+    "online_dpo", capabilities=StrategyCapabilities(online=True, reference_model=True)
+)(DPOStrategy)

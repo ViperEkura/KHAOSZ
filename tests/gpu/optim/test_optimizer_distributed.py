@@ -5,7 +5,7 @@ from torch.distributed.tensor import DTensor, Shard
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from astrai.model import AutoRegressiveLM
-from astrai.optim import NoraNAdamW
+from astrai.optimization.optimizer import NoraNAdamW
 from astrai.parallel.setup import find_free_port
 from tests.support.capabilities import skip_no_cuda
 from tests.support.models import make_tiny_config

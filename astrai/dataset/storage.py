@@ -244,7 +244,7 @@ class Store(ABC):
 
     def _normalize(
         self,
-        raw: Dict[str, list],
+        raw: Dict[str, List],
         offsets: Optional[Dict[str, List[int]]] = None,
     ):
         """Register segments and pre-compute indices for both access modes.
@@ -460,31 +460,11 @@ class MmapStore(Store, Streamable, Recordable):
             self._mmap_refs.extend(tensors)
 
 
-class JsonlSource:
-    """Read raw JSON records from a ``.jsonl`` file or directory.
-
-    A thin reader used by :class:`JsonlStore` in processor mode — holds
-    no tokenizer, performs no tokenisation, just yields dicts.
-    """
-
-    def __init__(self, path: str):
-        self.path = Path(path)
-        self._records: Optional[List[dict]] = None
-
-    def load(self) -> List[dict]:
-        if self._records is None:
-            self._records = self._read(self.path)
-        return self._records
-
-    @staticmethod
-    def _read(root: Path) -> List[dict]:
-        if root.is_file():
-            return JsonlSource._read_file(root)
-        return JsonlSource._read_dir(root)
-
-    @staticmethod
-    def _read_file(path: Path) -> List[dict]:
-        records: List[dict] = []
+def _read_jsonl(root: Path) -> List[Dict]:
+    """Read raw records in file order, skipping empty or malformed lines."""
+    records: List[Dict] = []
+    paths = [root] if root.is_file() else sorted(root.glob("*.jsonl"))
+    for path in paths:
         with open(path, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -494,14 +474,7 @@ class JsonlSource:
                     records.append(json.loads(line))
                 except json.JSONDecodeError:
                     logger.warning("Failed to parse JSON line in %s, skipping", path)
-        return records
-
-    @staticmethod
-    def _read_dir(root: Path) -> List[dict]:
-        records: List[dict] = []
-        for jsonl_path in sorted(root.glob("*.jsonl")):
-            records.extend(JsonlSource._read_file(jsonl_path))
-        return records
+    return records
 
 
 @StoreFactory.register("jsonl")
@@ -542,17 +515,16 @@ class JsonlStore(Store, Streamable, Recordable):
         stride: Optional[int] = None,
     ):
         super().__init__(window_size=window_size, stride=stride)
-        self._source: Optional[JsonlSource] = None
-        self._processor: Optional[Callable[[dict], Dict[str, Tensor]]] = None
+        self._records: List[Dict] = []
+        self._processor: Optional[Callable[[Dict], Dict[str, Tensor]]] = None
         self._keys_cache: Optional[List[str]] = None
 
     def load(self, path: str, transform=None, processor=None, **kwargs):
-        self._source = JsonlSource(path)
-        records = self._source.load()
+        self._records = _read_jsonl(Path(path))
 
         if processor is not None:
             self._processor = processor
-            self._num_records = len(records)
+            self._num_records = len(self._records)
             return
 
         if transform is None:
@@ -561,14 +533,14 @@ class JsonlStore(Store, Streamable, Recordable):
                 "Use DatasetFactory.load() which auto-constructs it."
             )
 
-        transformed = transform.apply(records)
+        transformed = transform.apply(self._records)
         self._normalize(transformed)
 
     @property
     def keys(self) -> List[str]:
         if self._processor is not None:
             if self._keys_cache is None and self._num_records > 0:
-                sample = self._processor(self._source.load()[0])
+                sample = self._processor(self._records[0])
                 self._keys_cache = list(sample.keys())
             return self._keys_cache or []
         return list(self._data.keys())
@@ -580,7 +552,7 @@ class JsonlStore(Store, Streamable, Recordable):
                     f"Record index out of bounds: {index}, "
                     f"num_records={self._num_records}"
                 )
-            record = self._source.load()[index]
+            record = self._records[index]
             data = self._processor(record)
             if isinstance(keys, str):
                 return data[keys]

@@ -16,7 +16,7 @@ from torch.distributed.tensor import Shard, distribute_tensor
 from astrai.extension.backend.newton_schulz import cuda as ns_cuda
 from astrai.extension.kernel.newton_schulz import is_available
 from astrai.extension.policy import newton_schulz as plan
-from astrai.optim.muon_adamw import _ShardedMuon
+from astrai.optimization.optimizer.muon.sharded_update import ShardedMuon
 from tests.gpu.optim.test_muon_ns_batch import _small_plans
 
 WORLD = int(os.environ.get("ASTRAI_MUON_TEST_WORLD_SIZE", "2"))
@@ -42,7 +42,7 @@ def _worker(rank, world, rendezvous, output, nesterov):
             distribute_tensor(expected.detach().clone(), mesh, [Shard(0)])
         )
         wanted = torch.optim.Muon([expected], lr=0.001, nesterov=nesterov)
-        got = _ShardedMuon([actual], lr=0.001, nesterov=nesterov, use_ns_kernels=True)
+        got = ShardedMuon([actual], lr=0.001, nesterov=nesterov, use_ns_kernels=True)
         launches = []
         original = ns_cuda.iterate
 

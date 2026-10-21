@@ -6,6 +6,7 @@ import pytest
 import torch
 
 from astrai.inference.core.request import GenerationResult
+from astrai.trainer.backend import run_batch
 from astrai.trainer.rollout import (
     RolloutEvaluator,
     SamplingParams,
@@ -34,17 +35,17 @@ def test_rollout_generator_shapes(device):
     assert r.policy_version == 0
 
 
-def test_rollout_generator_uses_eval_and_restores_mode(device):
+def test_rollout_generator_uses_eval_and_restores_mode(device, monkeypatch):
     gen, model = _make_generator(device, group_size=1, max_tokens=2)
     model.train()
     seen_training = []
-    original = gen.backend.scheduler.run_batch
+    original = run_batch
 
     def recording_run_batch(*args, **kwargs):
         seen_training.append(model.training)
         return original(*args, **kwargs)
 
-    gen.backend.scheduler.run_batch = recording_run_batch
+    monkeypatch.setattr("astrai.trainer.backend.run_batch", recording_run_batch)
     gen.generate(_make_instruction_batch(n=1))
     assert seen_training == [False]
     assert model.training is True
@@ -125,7 +126,7 @@ def test_apply_weight_update_hands_derived_version_inside_lock(device):
         # live version has not moved yet because the commit follows the
         # update — weight publishers rely on exactly this ordering.
         seen["arg"] = policy_version
-        seen["live_during"] = gen.backend.scheduler.policy_version
+        seen["live_during"] = gen.backend.engine_core.policy_version
 
     gen.apply_weight_update(None, record)
 
@@ -144,7 +145,7 @@ def test_rollout_generator_serializes_direct_scheduler_update(device):
     rollout = []
 
     def update_scheduler_directly():
-        gen.backend.scheduler.update_weights(1)
+        gen.backend.engine_core.update_weights(1)
         update_finished.set()
 
     _assert_interleaved(
@@ -159,16 +160,16 @@ def test_rollout_generator_serializes_direct_scheduler_update(device):
     assert gen.policy_version == 1
 
 
-def test_rollout_generator_keeps_generation_start_version(device):
+def test_rollout_generator_keeps_generation_start_version(device, monkeypatch):
     gen, _ = _make_generator(device, group_size=1, max_tokens=2)
-    original_run_batch = gen.backend.scheduler.run_batch
+    original_run_batch = run_batch
 
     def update_after_generation(*args, **kwargs):
         result = original_run_batch(*args, **kwargs)
-        gen.backend.scheduler.update_weights(1)
+        gen.backend.engine_core.update_weights(1)
         return result
 
-    gen.backend.scheduler.run_batch = update_after_generation
+    monkeypatch.setattr("astrai.trainer.backend.run_batch", update_after_generation)
 
     rollout = gen.generate(_make_instruction_batch(n=1))
 
@@ -201,7 +202,7 @@ def test_rollout_generator_logprobs_are_nonpositive(device):
             assert torch.all(lp <= 1e-5)
 
 
-def test_rollout_generator_rejects_failed_requests(device):
+def test_rollout_generator_rejects_failed_requests(device, monkeypatch):
     gen, _ = _make_generator(device, group_size=2, max_tokens=4)
 
     def failed_run_batch(*_args, **kwargs):
@@ -211,7 +212,7 @@ def test_rollout_generator_rejects_failed_requests(device):
             GenerationResult([], [], "rejected", "kv_cache_allocation_failed"),
         ]
 
-    gen.backend.scheduler.run_batch = failed_run_batch
+    monkeypatch.setattr("astrai.trainer.backend.run_batch", failed_run_batch)
 
     with pytest.raises(
         RuntimeError,

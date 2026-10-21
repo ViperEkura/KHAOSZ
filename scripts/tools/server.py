@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Dict, Optional, Set
 
 import click
 import torch
@@ -27,9 +28,9 @@ _SERVER_KEYS = (
 
 def _merge_yaml_into_kwargs(
     config_path: str,
-    passed_kwargs: dict,
-    explicit_keys: set[str] | None = None,
-) -> dict:
+    passed_kwargs: Dict,
+    explicit_keys: Optional[Set[str]] = None,
+) -> Dict:
     """Merge Click defaults, YAML server values, then explicit CLI values."""
     return merge_yaml_into_kwargs(
         config_path,
@@ -92,7 +93,7 @@ _SPECS = [
 ]
 
 
-def _as_int(value, name: str) -> int | None:
+def _as_int(value, name: str) -> Optional[int]:
     if value is None:
         return None
     if isinstance(value, bool):
@@ -105,9 +106,9 @@ def _as_int(value, name: str) -> int | None:
 
 def _resolve_server_config(
     config_path: str,
-    passed_kwargs: dict,
-    explicit_keys: set[str] | None = None,
-) -> dict:
+    passed_kwargs: Dict,
+    explicit_keys: Optional[Set[str]] = None,
+) -> Dict:
     """Merge YAML values, then coerce and validate the resolved settings.
 
     ``explicit_keys`` are CLI flags that win over YAML; when None, YAML values

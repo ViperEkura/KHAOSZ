@@ -5,7 +5,7 @@ import torch
 
 from astrai.model.autoregressive_lm import AutoRegressiveLM
 from astrai.trainer.callbacks import MetricCallback
-from astrai.trainer.strategy import BaseStrategy, SEQStrategy
+from astrai.trainer.strategy import SEQStrategy
 from tests.support.models import make_tiny_config
 
 
@@ -46,8 +46,6 @@ def test_seq_strategy_combines_and_reports_moe_aux_loss(device):
 
 def test_metric_callback_includes_dynamic_strategy_metrics(tmp_path):
     callback = MetricCallback(
-        ckpt_dir=tmp_path,
-        save_interval=1,
         metrics=["loss", "lr"],
     )
     context = SimpleNamespace(
@@ -77,8 +75,6 @@ def test_metric_callback_only_computes_requested_metrics(tmp_path):
         raise AssertionError("unrequested metric was computed")
 
     callback = MetricCallback(
-        ckpt_dir=tmp_path,
-        save_interval=1,
         metrics=["loss"],
     )
     callback._metric_funcs["grad_snr"] = fail_metric
@@ -92,16 +88,3 @@ def test_metric_callback_only_computes_requested_metrics(tmp_path):
     metrics = callback._metrics(context, callback.metrics)
 
     assert metrics == {"loss": 2.0}
-
-
-def test_legacy_strategy_tensor_loss_is_normalized():
-    class LegacyStrategy(BaseStrategy):
-        def compute_loss(self, batch):
-            return torch.tensor(2.0, requires_grad=True)
-
-    strategy = LegacyStrategy(torch.nn.Linear(1, 1), "cpu")
-
-    output = strategy({})
-
-    assert output["loss"].item() == 2.0
-    assert output["metrics"]["loss"] == 2.0
