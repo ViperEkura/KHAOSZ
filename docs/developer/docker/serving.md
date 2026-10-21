@@ -34,7 +34,7 @@ runtime:
     enabled: true  # false → cpu profile (server-cpu service)
     devices: all   # all | [0]
   container:
-    cuda_tag: cu128
+    cuda_tag: cu130
   # environment:
   #   TOKENIZERS_PARALLELISM: "false"
 

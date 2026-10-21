@@ -8,7 +8,7 @@ import safetensors.torch as st
 import torch
 import torch.nn.functional as F
 
-from astrai.config import TrainConfig
+from astrai.config import ComponentSpec, TrainConfig
 from astrai.config.model_config import ConfigFactory
 from astrai.model import AutoModel, AutoRegressiveLM
 from astrai.model.components.attention import GQA
@@ -24,7 +24,7 @@ from astrai.serialization import (
 )
 from astrai.serialization.hf_adapter import _half_to_interleaved
 from astrai.trainer.callbacks.checkpoint import CheckpointCallback
-from astrai.trainer.train_context import TrainContextBuilder
+from astrai.trainer.context import TrainContextBuilder
 from tests.support.checkpoint import assert_state_dicts_equal
 from tests.support.models import make_tiny_config
 
@@ -86,13 +86,20 @@ def _write_mapping(model_dir, mapping=TEST_MAPPING):
 def _load_training_policy(path, cfg, monkeypatch, *, resume=False, **overrides):
     monkeypatch.setenv("LOCAL_DEVICE", "cpu")
     options = dict(
-        model_fn=lambda: AutoRegressiveLM(cfg),
+        model=ComponentSpec(type="autoregressive_lm", params={"config": cfg.to_dict()}),
         strategy="seq",
-        dataset=torch.utils.data.TensorDataset(torch.zeros(2, 4, dtype=torch.long)),
-        optimizer_fn=lambda model: torch.optim.SGD(model.parameters(), lr=0.1),
-        scheduler_fn=lambda optim: torch.optim.lr_scheduler.LambdaLR(
-            optim, lambda _: 1
+        dataset=ComponentSpec(
+            type="tests.support.rollout:RandomTokenDataset",
+            params={"length": 2, "max_length": 4, "vocab_size": cfg.vocab_size},
         ),
+        optimizer=ComponentSpec(type="torch.optim:SGD", params={"lr": 0.1}),
+        scheduler=ComponentSpec(
+            type="torch.optim.lr_scheduler:StepLR",
+            params={"step_size": 1, "gamma": 1.0},
+        ),
+        dp_mode="none",
+        num_workers=0,
+        pin_memory=False,
         device_type="cpu",
         batch_per_device=1,
         ckpt_dir=str(path / "checkpoints"),
@@ -787,8 +794,13 @@ def test_missing_policy_weights_fail_before_optimizer(
         optimizer_calls.append(model)
         return torch.optim.SGD(model.parameters(), lr=0.1)
 
+    monkeypatch.setattr(
+        TrainContextBuilder,
+        "_instantiate_optimizer",
+        lambda self, model: optimizer_fn(model),
+    )
     with pytest.raises(RuntimeError, match=missing_key):
-        _load_training_policy(tmp_path, cfg, monkeypatch, optimizer_fn=optimizer_fn)
+        _load_training_policy(tmp_path, cfg, monkeypatch)
     assert not optimizer_calls
     with pytest.raises(RuntimeError, match=missing_key):
         AutoModel.from_pretrained(tmp_path)
@@ -808,7 +820,12 @@ def test_partial_warm_start_is_explicit_and_never_relaxes_resume(
     assert context.pretrained_metadata["partial_warm_start"]
     with pytest.raises(RuntimeError, match="lm_head.weight"):
         _load_training_policy(
-            tmp_path, cfg, monkeypatch, allow_partial_pretrained=True, resume=True
+            tmp_path,
+            cfg,
+            monkeypatch,
+            allow_partial_pretrained=True,
+            resume=True,
+            load_state_dict={"optimizer": False, "scheduler": False},
         )
 
 
@@ -826,7 +843,14 @@ def test_new_lora_adapters_are_allowed_but_backbone_and_resume_are_complete(
     )
     assert len(context.pretrained_metadata["allowed_new_parameters"]) == 4
     with pytest.raises(RuntimeError, match="lora_A"):
-        _load_training_policy(tmp_path, cfg, monkeypatch, lora=lora, resume=True)
+        _load_training_policy(
+            tmp_path,
+            cfg,
+            monkeypatch,
+            lora=lora,
+            resume=True,
+            load_state_dict={"optimizer": False, "scheduler": False},
+        )
     state = dict(reference.state_dict())
     del state["model.layers.0.attention.q_proj.weight"]
     save_model(cfg.to_dict(), state, str(tmp_path))

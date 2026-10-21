@@ -51,9 +51,8 @@ classDiagram
     class PendingExecution
 
     InferenceEngine --> InprocClient
-    InprocClient --> Scheduler : public facade
-    Scheduler *-- EngineCore
-    EngineCore --> Scheduler : plan and apply results
+    InprocClient --> EngineCore : public facade
+    EngineCore *-- Scheduler : plan and apply results
     EngineCore --> GPUModelRunner : execute
     Scheduler --> SchedulerOutput
     GPUModelRunner --> PendingExecution
@@ -61,11 +60,13 @@ classDiagram
     ModelRunnerOutput --> Scheduler
 ```
 
-The `Scheduler` public facade remains compatible with existing callers:
-`start`/`stop`, `run_batch`, `score_ids`, request submission and the
-policy-version protocol. The driver owns execution orchestration; the
-scheduler owns the mutable request state. `SchedulerStep` remains an
-internal compatibility/planning helper rather than a second request owner.
+`EngineCore` provides `start`/`stop`, `execute_requests`, `score_ids`,
+request submission and policy-version operations. `Scheduler` owns mutable
+request and KV state and applies results. `StepPlanner` generates execution
+entries without a back-reference to the driver. Training rollout formats
+tokenized batches in `astrai.trainer.backend.run_batch` and passes requests
+to `EngineCore.execute_requests`, using the same scheduling and result path
+as serving.
 
 ## Stages 0 and 1
 

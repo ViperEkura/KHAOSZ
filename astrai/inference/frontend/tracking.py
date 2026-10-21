@@ -8,7 +8,8 @@ chunk type carries structured output to protocol adapters.
 import asyncio
 import threading
 from collections import deque
-from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Callable, Deque, Dict, List, Optional, Set, Tuple
 
 from astrai.inference.core.events import (
     FINISH_ABORTED,
@@ -48,7 +49,7 @@ class EventQueueSink(OutputEventSink):
     ):
         self._lock = threading.Lock()
         self._queues: Dict[str, Deque[Any]] = {}
-        self._terminal: set[str] = set()
+        self._terminal: Set[str] = set()
         self._async_subscribers: Dict[
             str, Tuple[asyncio.AbstractEventLoop, asyncio.Queue]
         ] = {}
@@ -201,35 +202,18 @@ class RequestTracker:
         return done.wait(timeout=timeout)
 
 
+@dataclass(slots=True, eq=False, repr=False, match_args=False)
 class StreamChunk:
     """One structured output chunk (text + token ids + terminal facts)."""
 
-    __slots__ = (
-        "text",
-        "delta_token_ids",
-        "current_token_ids",
-        "stopped",
-        "finish_reason",
-        "prompt_tokens",
-        "completion_tokens",
-        "stop_sequence",
-    )
-
-    def __init__(
-        self,
-        text: str,
-        delta_token_ids: List[int],
-        current_token_ids: List[int],
-        stopped: bool,
-    ):
-        self.text = text
-        self.delta_token_ids = delta_token_ids
-        self.current_token_ids = current_token_ids
-        self.stopped = stopped
-        self.finish_reason: Optional[str] = None
-        self.prompt_tokens: int = 0
-        self.completion_tokens: int = 0
-        self.stop_sequence: Optional[str] = None
+    text: str
+    delta_token_ids: List[int]
+    current_token_ids: List[int]
+    stopped: bool
+    finish_reason: Optional[str] = field(default=None, init=False)
+    prompt_tokens: int = field(default=0, init=False)
+    completion_tokens: int = field(default=0, init=False)
+    stop_sequence: Optional[str] = field(default=None, init=False)
 
     @property
     def is_final(self) -> bool:

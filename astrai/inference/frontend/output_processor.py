@@ -113,11 +113,8 @@ class OutputProcessor:
         *,
         prompt_tokens: int = 0,
     ):
-        self._id = request_id
-        self._tokenizer = tokenizer
         self._decoder = StreamDecoder(tokenizer)
         self._stop = StopSequenceChecker(stop_sequences or [])
-        self._keep_ids = keep_token_ids
         # Text-level stops can finish before any core terminal event arrives.
         self.state = ProcessedOutput(request_id=request_id, prompt_tokens=prompt_tokens)
 

@@ -1,14 +1,19 @@
+import json
 from pathlib import Path
 
 import torch
 
 from astrai.model.components.decoder_block import DecoderBlock
+from astrai.model.components.mlp import MLP
 from astrai.serialization import Checkpoint
 from astrai.trainer.callbacks import (
     GradientCheckpointingCallback,
     TrainCallback,
 )
-from astrai.trainer.callbacks.checkpoint import _copy_tokenizer_files
+from astrai.trainer.callbacks.checkpoint import (
+    CheckpointCallback,
+    _copy_tokenizer_files,
+)
 from astrai.trainer.trainer import Trainer
 from tests.support.checkpoint import load_checkpoint_meta
 from tests.support.rollout import RandomTokenDataset
@@ -97,12 +102,33 @@ def test_gradient_checkpointing_backward(test_model):
         assert p.grad is None or p.grad.sum().item() == 0, f"{name} grad not zeroed"
 
 
+def test_mlp_only_checkpoint_keeps_attention_unwrapped(test_model):
+    model = test_model["model"]
+    device = test_model["device"]
+    callback = GradientCheckpointingCallback(modules=[MLP])
+    model.apply(callback._enable)
+
+    for layer in model.model.layers:
+        assert hasattr(layer.mlp, "_original_forward")
+        assert not hasattr(layer.attention, "_original_forward")
+        assert not hasattr(layer, "_original_forward")
+
+    input_ids = torch.randint(0, 1000, (2, 32)).to(device)
+    target_ids = torch.randint(0, 1000, (2, 32)).to(device)
+    logits = model(input_ids)["logits"]
+    torch.nn.functional.cross_entropy(
+        logits.flatten(0, 1).float(), target_ids.flatten()
+    ).backward()
+    assert all(p.grad is not None for p in model.parameters() if p.requires_grad)
+
+    model.apply(callback._disable)
+
+
 def test_gradient_checkpointing_trainer_integration(
     base_test_env, random_dataset, train_config_factory, device
 ):
     """Gradient checkpointing runs end-to-end via Trainer."""
     train_config = train_config_factory(
-        model_fn=lambda: base_test_env["model"],
         dataset=random_dataset,
         test_dir=base_test_env["test_dir"],
         device=device,
@@ -123,7 +149,6 @@ def test_callback_integration(
 ):
     """Test that all callbacks are properly integrated"""
     train_config = train_config_factory(
-        model_fn=lambda: base_test_env["model"],
         dataset=random_dataset,
         test_dir=base_test_env["test_dir"],
         device=device,
@@ -160,7 +185,6 @@ def test_checkpoint_captures_completed_optimizer_step(
         for name, tensor in model.state_dict().items()
     }
     train_config = train_config_factory(
-        model_fn=lambda: model,
         dataset=RandomTokenDataset(length=2),
         test_dir=base_test_env["test_dir"],
         device=device,
@@ -180,9 +204,44 @@ def test_checkpoint_captures_completed_optimizer_step(
     assert checkpoint.extra["optimizer"]["state"]
     assert checkpoint.extra["scheduler"]["last_epoch"] == 1
     assert checkpoint.meta["optimizer_step"] == 1
+    log_path = Path(base_test_env["test_dir"]) / "epoch_0_step_1" / "metric.jsonl"
+    assert [
+        record["step"] for record in map(json.loads, log_path.read_text().splitlines())
+    ] == [1]
     assert (
-        Path(base_test_env["test_dir"]) / "epoch_0_step_1" / "metric.jsonl"
-    ).is_file()
+        "metric.jsonl"
+        in json.loads((log_path.parent / "manifest.json").read_text())["files"]
+    )
+    assert not (Path(base_test_env["test_dir"]) / "metric.jsonl").exists()
+
+
+def test_metrics_are_published_with_each_checkpoint(
+    base_test_env, train_config_factory, device
+):
+    config = train_config_factory(
+        dataset=RandomTokenDataset(length=4),
+        test_dir=base_test_env["test_dir"],
+        device=device,
+        batch_per_device=2,
+        ckpt_interval=1,
+    )
+
+    Trainer(config).train()
+
+    directory = Path(base_test_env["test_dir"])
+    for step in (1, 2):
+        checkpoint_dir = directory / f"epoch_0_step_{step}"
+        records = [
+            json.loads(line)
+            for line in (checkpoint_dir / "metric.jsonl").read_text().splitlines()
+        ]
+        assert [
+            record["step"] for record in records if record["type"] == "step"
+        ] == list(range(1, step + 1))
+        assert (
+            "metric.jsonl"
+            in json.loads((checkpoint_dir / "manifest.json").read_text())["files"]
+        )
 
 
 def test_checkpoint_snapshots_tokenizer_files(
@@ -195,7 +254,6 @@ def test_checkpoint_snapshots_tokenizer_files(
     (param_dir / "tokenizer_config.json").write_text("{}")
 
     train_config = train_config_factory(
-        model_fn=lambda: base_test_env["model"],
         dataset=RandomTokenDataset(length=2),
         test_dir=base_test_env["test_dir"],
         device=device,
@@ -208,6 +266,8 @@ def test_checkpoint_snapshots_tokenizer_files(
     ckpt_dir = Path(base_test_env["test_dir"]) / "epoch_0_step_1"
     assert (ckpt_dir / "tokenizer.json").is_file()
     assert (ckpt_dir / "tokenizer_config.json").is_file()
+    files = json.loads((ckpt_dir / "manifest.json").read_text())["files"]
+    assert {"tokenizer.json", "tokenizer_config.json"} <= set(files)
 
     # Resuming with param_path == checkpoint dir must not raise
     # (samefile guard).
@@ -232,7 +292,6 @@ def test_interrupt_before_first_step_still_checkpoints(
             context.request_stop()
 
     train_config = train_config_factory(
-        model_fn=lambda: base_test_env["model"],
         dataset=RandomTokenDataset(length=2),
         test_dir=base_test_env["test_dir"],
         device=device,

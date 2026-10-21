@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import shutil
 import time
 from functools import partial
 from pathlib import Path
+from typing import TYPE_CHECKING, Dict, List
 
 import torch
 import torch.distributed as dist
@@ -21,31 +23,28 @@ from astrai.trainer.callbacks.metric_util import (
     ctx_get_moe_metric,
     ctx_get_val_loss,
 )
-from astrai.trainer.train_context import TrainContext
+
+if TYPE_CHECKING:
+    from astrai.trainer.context import TrainContext
 
 
 @CallbackFactory.register("metric")
 class MetricCallback(TrainCallback):
     def __init__(
         self,
-        ckpt_dir: str,
-        save_interval: int,
-        metrics: list[str] = None,
+        metrics: List[str] = None,
         val_step: int = 0,
         grad_snr_interval: int = 1,
     ):
         if grad_snr_interval <= 0:
             raise ValueError("grad_snr_interval must be positive")
-        self.last_log_flush_step = None
-        self.save_interval = save_interval
         self.metrics = metrics or ["loss", "lr"]
         self.val_step = val_step
         self.grad_snr_interval = grad_snr_interval
         self._next_val_step = 0
-
-        self.ckpt_dir = Path(ckpt_dir) if ckpt_dir else Path.cwd() / "checkpoint"
-
         self.log_cache = []
+        self.pending_records = []
+        self.source_log_path = None
 
         self._metric_funcs = {
             "loss": ctx_get_loss,
@@ -90,7 +89,7 @@ class MetricCallback(TrainCallback):
         return result
 
     @only_on_rank(0)
-    def _append(self, event_type: str, context: TrainContext, **extra):
+    def _append(self, event_type: str, context: TrainContext, pending=False, **extra):
         entry = {
             "type": event_type,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -99,7 +98,7 @@ class MetricCallback(TrainCallback):
             "consumed_samples": context.consumed_samples,
             **extra,
         }
-        self.log_cache.append(entry)
+        (self.pending_records if pending else self.log_cache).append(entry)
 
     def _run_validation(self, context: TrainContext) -> float:
         context.model.eval()
@@ -130,7 +129,7 @@ class MetricCallback(TrainCallback):
         context.model.train()
         return avg_loss
 
-    def _run_rollout_validation(self, context: TrainContext) -> dict[str, float]:
+    def _run_rollout_validation(self, context: TrainContext) -> Dict[str, float]:
         """Validation for online strategies via :class:`RolloutEvaluator`.
 
         Reports reward statistics under the evaluator's own sampling
@@ -139,7 +138,7 @@ class MetricCallback(TrainCallback):
         eval mode itself, so no global mode switch is needed here; the
         replay cache and its cadence stay untouched by construction.
         """
-        totals: dict[str, float] = {}
+        totals: Dict[str, float] = {}
         num_batches = 0
         for batch in context.val_dataloader:
             metrics = context.val_evaluator.evaluate(batch)
@@ -151,16 +150,42 @@ class MetricCallback(TrainCallback):
         return {name: total / num_batches for name, total in totals.items()}
 
     def on_train_begin(self, context: TrainContext):
-        self.last_log_flush_step = context.optimizer_step
+        if self.val_step > 0:
+            next_slot = (
+                (context.optimizer_step + self.val_step - 1) // self.val_step
+            ) * self.val_step
+            # Async rollout observes the pre-update step; offline training
+            # advances the counter before calling before_optimizer_step.
+            self._next_val_step = next_slot + (
+                0 if context.async_rollout is not None else 1
+            )
+        if context.checkpoint is not None and context.param_path is not None:
+            source = Path(context.param_path) / "metric.jsonl"
+            if source.is_file():
+                self.source_log_path = source
 
     @only_on_rank(0)
-    def _flush(self, epoch, step):
-        log_file = self.ckpt_dir / f"epoch_{epoch}_step_{step}" / "metric.jsonl"
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_file, "w") as f:
-            f.writelines(json.dumps(log) + "\n" for log in self.log_cache)
+    def write_snapshot(self, destination: Path) -> None:
+        """Add the committed metric history to a checkpoint's staging directory."""
+        with destination.open("wb") as output:
+            if self.source_log_path is not None:
+                with self.source_log_path.open("rb") as source:
+                    shutil.copyfileobj(source, output)
+            for record in self.log_cache:
+                output.write((json.dumps(record) + "\n").encode("utf-8"))
+
+    def checkpoint_saved(self, path: Path, published: bool) -> None:
+        if not published:
+            if self.log_cache:
+                raise RuntimeError(
+                    f"Checkpoint {path} already exists but has unsaved metrics"
+                )
+            return
+        self.source_log_path = path / "metric.jsonl"
+        self.log_cache.clear()
 
     def before_optimizer_step(self, context):
+        self.pending_records.clear()
         # GradSNR keeps model-sized first-moment state. Only update it when
         # requested and at the configured sampling interval.
         if (
@@ -182,30 +207,28 @@ class MetricCallback(TrainCallback):
                 context.val_loss = None
                 val_metrics = self._run_rollout_validation(context)
                 self._next_val_step = context.optimizer_step + self.val_step
-                self._append("validation", context, **val_metrics)
+                self._append("validation", context, pending=True, **val_metrics)
             else:
                 context.val_loss = self._run_validation(context)
                 self._next_val_step = context.optimizer_step + self.val_step
-                self._append("validation", context, val_loss=context.val_loss)
+                self._append(
+                    "validation", context, pending=True, val_loss=context.val_loss
+                )
 
         step_metrics = [m for m in self.metrics if m != "val_loss"]
-        self._append("step", context, **self._metrics(context, step_metrics))
+        self._append(
+            "step", context, pending=True, **self._metrics(context, step_metrics)
+        )
 
     def after_optimizer_step(self, context):
-        if context.optimizer_step - self.last_log_flush_step >= self.save_interval:
-            self._flush(context.epoch, context.optimizer_step)
-            self.last_log_flush_step = context.optimizer_step
-
-    def on_epoch_end(self, context):
-        self._append("epoch", context)
+        for record in self.pending_records:
+            record["step"] = context.optimizer_step
+            record["consumed_samples"] = context.consumed_samples
+        self.log_cache.extend(self.pending_records)
+        self.pending_records.clear()
 
     def on_train_end(self, context):
-        if (
-            self.last_log_flush_step is None
-            or context.optimizer_step != self.last_log_flush_step
-        ):
-            self._flush(context.epoch, context.optimizer_step)
-            self.last_log_flush_step = context.optimizer_step
+        self.pending_records.clear()
 
-    def on_error(self, context):
-        self._flush(context.epoch, context.optimizer_step)
+    def on_shutdown(self, context):
+        self.pending_records.clear()

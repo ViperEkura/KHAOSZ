@@ -28,8 +28,8 @@ def admit(sched, rid="r", max_tokens=8, prompt=(10, 11)):
     sched.add_request(
         "input", request_id=rid, prompt_ids=list(prompt), max_tokens=max_tokens
     )
-    sched.admit_requests()
-    return sched._states[rid]
+    sched.scheduler.admit_requests()
+    return sched.scheduler._states[rid]
 
 
 def output(plan, tokens=7, *, reverse=False):

@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import sys
-from typing import IO
+from typing import IO, TYPE_CHECKING, Optional
 
 from tqdm import tqdm
 
 from astrai.parallel import only_on_rank
 from astrai.trainer.callbacks.base import CallbackFactory, TrainCallback
-from astrai.trainer.train_context import TrainContext
+from astrai.trainer.step_plan import global_epoch_steps, legacy_epoch_steps
+
+if TYPE_CHECKING:
+    from astrai.trainer.context import TrainContext
 
 
 @CallbackFactory.register("progress_bar")
@@ -19,7 +22,7 @@ class ProgressBarCallback(TrainCallback):
     """
 
     def __init__(
-        self, num_epoch: int, log_interval: int = 100, file: IO[str] | None = None
+        self, num_epoch: int, log_interval: int = 100, file: Optional[IO[str]] = None
     ):
         self.num_epoch = num_epoch
         self.log_interval = log_interval
@@ -28,7 +31,28 @@ class ProgressBarCallback(TrainCallback):
 
     @only_on_rank(0)
     def on_epoch_begin(self, context: TrainContext):
-        total_steps = len(context.dataloader) // context.executor.grad_accum_steps
+        if context.global_cursor:
+            config = context.config
+            total_steps = global_epoch_steps(
+                context.dataset_len,
+                context.epoch_sample_offset,
+                context.samples_per_step,
+                config.epoch_tail_policy,
+                online=context.strategy.policy_version is not None,
+                rl_update_epochs=config.rl_update_epochs,
+                rl_minibatch_prompts=config.rl_minibatch_prompts,
+            )
+        elif context.async_rollout is None and context.strategy.policy_version is None:
+            total_steps = legacy_epoch_steps(
+                len(context.dataloader.sampler),
+                context.config.batch_per_device,
+                context.executor.grad_accum_steps,
+                context.config.epoch_tail_policy,
+            )
+        else:
+            total_steps = (
+                len(context.dataloader) + context.executor.grad_accum_steps - 1
+            ) // context.executor.grad_accum_steps
         self.progress_bar = tqdm(
             total=total_steps,
             desc=f"Epoch {context.epoch + 1}/{self.num_epoch}",

@@ -43,13 +43,6 @@ from astrai.extension.policy.quantization.autocast import (
 from astrai.extension.runtime.loader import get_module
 from tests.support.capabilities import skip_no_fp8
 
-try:
-    from astrai.extension.kernel.quantize import K_FOLD_SLOTS
-except RuntimeError:
-    # Import-safe without the extension: K_FOLD_SLOTS is only read by
-    # kernel-level tests that skip via skip_no_fp8 when not built.
-    K_FOLD_SLOTS = None
-
 
 @pytest.fixture(autouse=True)
 def _clean_fp8_state():
@@ -217,13 +210,13 @@ def test_recipe_change_rebuilds_rings():
     with fp8_autocast(enabled=True, recipe=FP8Recipe(history_len=4)):
         lin(x)
     meta = _meta(lin.weight, history_len=4)
-    assert meta["x"]["state"].numel() == 4 + 6 + K_FOLD_SLOTS
+    assert meta["x"]["state"].numel() == 4 + 6 + get_module("quantize").K_FOLD_SLOTS
     assert meta["x"]["idx"] == 1
 
     with fp8_autocast(enabled=True, recipe=FP8Recipe(history_len=8)):
         lin(x)
     meta = _meta(lin.weight, history_len=8)
-    assert meta["x"]["state"].numel() == 8 + 6 + K_FOLD_SLOTS
+    assert meta["x"]["state"].numel() == 8 + 6 + get_module("quantize").K_FOLD_SLOTS
     # Rebuilt fresh inside the forward above: seeded, folded, advanced once.
     assert meta["x"]["idx"] == 1 and meta["x"]["initialized"]
 
@@ -270,7 +263,7 @@ def test_registry_evicts_a_dead_weights_ring():
     doomed = torch.randn(96, 64, device=dev, dtype=torch.bfloat16)
     run_once(keep)
     run_once(doomed)
-    assert gemm.fp8_debug_stats()["metas"] == 2
+    assert len(gemm.fp8_state_dict()["entries"]) == 2
     assert len(fp8_state_dict()["entries"]) == 2
 
     del doomed
@@ -278,7 +271,7 @@ def test_registry_evicts_a_dead_weights_ring():
     torch.cuda.empty_cache()
     # The next snapshot prunes it, and reports only what a resume can bind.
     assert len(fp8_state_dict()["entries"]) == 1
-    assert gemm.fp8_debug_stats()["metas"] == 1
+    assert len(gemm.fp8_state_dict()["entries"]) == 1
 
 
 @skip_no_fp8
@@ -300,3 +293,44 @@ def test_state_dict_geometry_mismatch_stays_fresh():
     meta = _meta(lin2.weight, history_len=8)
     assert meta["x"]["idx"] == 1
     assert meta["x"]["initialized"]
+
+
+@skip_no_fp8
+@pytest.mark.parametrize(
+    "field,value,match",
+    [
+        ("cur", 2, "cur"),
+        ("idx", -1, "idx"),
+        ("state", torch.zeros(4), "too small"),
+        ("state", torch.zeros(40, dtype=torch.float64), "float32"),
+    ],
+)
+def test_bad_pending_snapshot_fails_at_load(field, value, match):
+    lin = _linear(53)
+    _meta(lin.weight)
+    saved = fp8_state_dict()
+    f8mod.fp8_reset()
+    saved["entries"][0]["w"][field] = value
+    with pytest.raises(RuntimeError, match=match):
+        fp8_load_state_dict(saved)
+    assert fp8_state_dict()["entries"] == []
+
+
+@skip_no_fp8
+def test_pending_snapshot_metadata_is_typed_and_legacy_cur_defaults_to_zero():
+    lin = _linear(54)
+    _meta(lin.weight)
+    saved = fp8_state_dict()
+    entry = saved["entries"][0]
+    for key in ("w", "x", "g"):
+        entry[key].pop("cur")
+    entry.pop("slot_name")
+    entry.pop("role")
+    f8mod.fp8_reset()
+    fp8_load_state_dict(saved)
+    # Editing Python metadata after loading must not change the pending entry.
+    entry["shape"] = [999, 999]
+    entry["dtype"] = "torch.float64"
+    entry["w"]["idx"] = -1
+    rebound = _meta(lin.weight)
+    assert rebound["w"]["cur"] == 0 and rebound["w"]["idx"] == 0

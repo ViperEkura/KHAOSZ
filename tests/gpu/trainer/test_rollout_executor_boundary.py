@@ -9,10 +9,11 @@ from torch import nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import Dataset
 
-from astrai.config import TrainConfig
+from astrai.config import ComponentSpec, TrainConfig
 from astrai.model.autoregressive_lm import AutoRegressiveLM
 from astrai.parallel import get_rank, spawn_parallel_fn
 from astrai.parallel.executor import DDPExecutor
+from astrai.trainer.backend import run_batch
 from tests.support.inference import make_cpu_scheduler
 from tests.support.models import make_rollout_config
 from tests.support.tokenizers import FakeTokenizer
@@ -53,17 +54,23 @@ def _optimizer_fn(model):
     return torch.optim.SGD(model.parameters(), lr=1e-3)
 
 
-def _scheduler_fn(optimizer):
+def _scheduler_fn(optimizer, _dataset_len):
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lambda _step: 1.0)
 
 
 def _online_train_config(dp_mode):
     return TrainConfig(
         strategy="online_grpo",
-        model_fn=_ConfigModel,
-        dataset=_ConfigDataset(),
-        optimizer_fn=_optimizer_fn,
-        scheduler_fn=_scheduler_fn,
+        model=ComponentSpec(type=__name__ + ":_ConfigModel"),
+        dataset=ComponentSpec(
+            type="tests.gpu.trainer.test_rollout_executor_boundary:_ConfigDataset",
+            params={},
+        ),
+        optimizer=ComponentSpec(type="torch.optim:SGD", params={"lr": 1e-3}),
+        scheduler=ComponentSpec(
+            type="torch.optim.lr_scheduler:StepLR",
+            params={"step_size": 1, "gamma": 1.0},
+        ),
         dp_size=2,
         dp_mode=dp_mode,
         reward_model_fn=object,
@@ -136,8 +143,8 @@ def test_l20_ddp_inference_view_matches_greedy_generation(tmp_path):
         )
         prompts = [[5, 6, 7], [8, 9, 10, 11]]
 
-        expected = baseline.run_batch(prompts, max_tokens=4, temperature=0)
-        actual = ddp_view.run_batch(prompts, max_tokens=4, temperature=0)
+        expected = run_batch(baseline, prompts, max_tokens=4, temperature=0)
+        actual = run_batch(ddp_view, prompts, max_tokens=4, temperature=0)
 
         assert actual == expected
     finally:
@@ -171,7 +178,8 @@ def _multi_rank_rollout_then_train_worker():
     scheduler = make_cpu_scheduler(
         inference_model, FakeTokenizer(), max_batch_size=1, max_seq_len=64
     )
-    result = scheduler.run_batch(
+    result = run_batch(
+        scheduler,
         [[5 + rank, 6 + rank, 7 + rank]],
         max_tokens=2 + rank,
         temperature=0,
@@ -203,7 +211,7 @@ def _multi_rank_rollout_then_train_worker():
     # generation agrees across replicas after invalidating stale KV state.
     scheduler.update_weights(1)
     inference_model.eval()
-    post_update = scheduler.run_batch([[11, 12, 13]], max_tokens=3, temperature=0)
+    post_update = run_batch(scheduler, [[11, 12, 13]], max_tokens=3, temperature=0)
     gathered = [None] * dist.get_world_size()
     dist.all_gather_object(gathered, post_update)
     assert all(tokens == gathered[0] for tokens in gathered)

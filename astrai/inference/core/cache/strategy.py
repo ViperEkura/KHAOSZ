@@ -14,7 +14,7 @@ and request lifecycle management.
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, OrderedDict
+from typing import Callable, Dict, List, Optional, OrderedDict, Tuple
 
 import torch
 
@@ -289,7 +289,7 @@ class RadixNode:
 
     def __init__(self, parent=None, tokens=(), page_idx=None):
         self.parent = parent
-        self.children: Dict[tuple, "RadixNode"] = {}
+        self.children: Dict[Tuple, "RadixNode"] = {}
         self.page_idx = page_idx
         self.tokens = tuple(tokens)
 

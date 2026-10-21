@@ -6,7 +6,7 @@ directory. Tensor conversion here handles layouts supported by AstrAI.
 
 import logging
 import re
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, List, Mapping, Optional
 
 import torch
 
@@ -88,7 +88,9 @@ def _is_dense_mlp_layer(config: BaseConfig, layer_id: int) -> bool:
     return step > 1 and (layer_id + 1) % step != 0
 
 
-def adapt_config(raw: Dict[str, Any], model_dir: str | None = None) -> Dict[str, Any]:
+def adapt_config(
+    raw: Dict[str, Any], model_dir: Optional[str] = None
+) -> Dict[str, Any]:
     """Import an HF config when its model directory provides a mapping."""
     mapping = load_hf_mapping(model_dir) if model_dir is not None else None
     return convert_hf_config(raw, mapping) if mapping is not None else raw
@@ -127,7 +129,7 @@ def convert_hf_weights(
                 f"head_dim={head_dim} is odd; rotary permutation requires even"
             )
     converted: Dict[str, torch.Tensor] = {}
-    skipped: list[str] = []
+    skipped: List[str] = []
     for source_key, tensor in state_dict.items():
         if source_key.startswith(skip_prefixes):
             continue

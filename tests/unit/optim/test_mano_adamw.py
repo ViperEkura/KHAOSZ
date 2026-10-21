@@ -5,8 +5,8 @@ import pytest
 import torch
 
 from astrai.model import AutoRegressiveLM
-from astrai.optim import Mano, ManoAdamW, OptimizerFactory
-from astrai.trainer.schedule import SchedulerFactory
+from astrai.optimization.optimizer import Mano, ManoAdamW, OptimizerFactory
+from astrai.optimization.scheduler import SchedulerFactory
 from tests.support.models import make_tiny_config
 
 

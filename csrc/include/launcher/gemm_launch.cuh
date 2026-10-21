@@ -3,8 +3,8 @@
 #include <cstdio>
 #include <type_traits>
 
-#include <launcher/plan_types.h>
 #include <kernel/gemm/kernel.cuh>
+#include <policy/gemm/config.h>
 #include <utils/device.cuh>
 #include <utils/launch.cuh>
 
@@ -13,14 +13,14 @@ namespace gemm {
 
 /*
  * Launchers — pure CUDA, usable from the binding and the C tests. The
- * runtime knobs live in GemmConfig (launcher/plan_types.h), owned at runtime by
+ * runtime knobs live in GemmConfig (policy/gemm/config.h), owned at runtime by
  * astrai.extension.policy.gemm.plan.
  */
 
 // Grid for one Policy's tile: N x M blocks, batch on z.
 template <typename Traits> dim3 gemm_grid(const GemmParams& p) {
-    return dim3((p.n + Traits::kBlockN - 1) / Traits::kBlockN,
-                (p.m + Traits::kBlockM - 1) / Traits::kBlockM, p.batch);
+    return dim3(p.n / Traits::kBlockN + (p.n % Traits::kBlockN != 0),
+                p.m / Traits::kBlockM + (p.m % Traits::kBlockM != 0), p.batch);
 }
 
 // One plan-log line per launch (" mx" marks the block_scale cell).
@@ -112,17 +112,32 @@ bool tma_maps_for(const GemmParams& p, CUtensorMap* ma, CUtensorMap* mb) {
     return true;
 }
 
+/* Keep the broadcast and strided-batch kernel variants in one routing ladder. */
+template <typename F> decltype(auto) with_tma_ranks(bool rank3a, bool rank3b, F&& fn) {
+    if (rank3a) {
+        if (rank3b)
+            return fn(std::true_type{}, std::true_type{});
+        return fn(std::true_type{}, std::false_type{});
+    }
+    if (rank3b)
+        return fn(std::false_type{}, std::true_type{});
+    return fn(std::false_type{}, std::false_type{});
+}
+
 /*
  * TMA launch for one Policy; false (nothing launched) on an undescribable
  * operand (misaligned base/ld) so the caller falls back to cp.async.
  */
-template <typename Policy> bool launch_policy_tma(const GemmParams& p, cudaStream_t stream) {
+template <typename Policy>
+bool launch_policy_tma(const GemmParams& p, cudaStream_t stream, int smem_max = -1) {
+    if (smem_max < 0)
+        smem_max = device_facts().smem_max;
     using Traits = typename Policy::Traits;
     /*
      * The planner prices rings only; TMA's pad + barriers can tip past
      * the opt-in ceiling on the fattest pair — fall back, not fail.
      */
-    if (Policy::kSmemBytes > astrai::device_facts().smem_max)
+    if (Policy::kSmemBytes > smem_max)
         return false;
     CUtensorMap ma{}, mb{};
     if (!tma_maps_for<Policy>(p, &ma, &mb))
@@ -139,17 +154,10 @@ template <typename Policy> bool launch_policy_tma(const GemmParams& p, cudaStrea
         launch_with_smem<gemm_kernel_tma<Policy, decltype(rank3a)::value, decltype(rank3b)::value>>(
             Policy::kSmemBytes, grid, dim3(Traits::kCtaThreads), stream, p, ma, mb);
     };
-    if (p.batch > 1 && p.a_batch_stride > 0 && p.b_batch_stride > 0)
-        launch_rank(std::true_type{}, std::true_type{});
-    else if (p.batch > 1 && p.a_batch_stride > 0)
-        launch_rank(std::true_type{}, std::false_type{});
-    else if (p.batch > 1 && p.b_batch_stride > 0)
-        launch_rank(std::false_type{}, std::true_type{});
-    else
-        launch_rank(std::false_type{}, std::false_type{});
+    with_tma_ranks(p.batch > 1 && p.a_batch_stride > 0, p.batch > 1 && p.b_batch_stride > 0,
+                   launch_rank);
     return true;
 }
-
 
 } // namespace gemm
 } // namespace astrai

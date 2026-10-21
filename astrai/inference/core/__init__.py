@@ -7,6 +7,7 @@ detokenizes and never runs consumer callbacks.
 """
 
 from astrai.inference.core.engine_core import EngineCore
+from astrai.inference.core.planner import StepPlanner
 from astrai.inference.core.request import (
     GenerationResult,
     Request,
@@ -15,7 +16,6 @@ from astrai.inference.core.request import (
     StreamDecoder,
 )
 from astrai.inference.core.scheduler import OutputEventSink, Scheduler
-from astrai.inference.core.stepper import SchedulerStep
 
 __all__ = [
     "EngineCore",
@@ -25,6 +25,6 @@ __all__ = [
     "RequestManager",
     "RequestStatus",
     "Scheduler",
-    "SchedulerStep",
+    "StepPlanner",
     "StreamDecoder",
 ]

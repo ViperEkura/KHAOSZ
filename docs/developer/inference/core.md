@@ -4,41 +4,39 @@
 It runs in the same process as the model and trainer. The frontend receives
 token-ID events; model execution consumes neutral data contracts.
 
-## Driver versus scheduler
+## Driver and scheduler
 
-`EngineCore` coordinates the busy loop, in-flight execution, result draining,
-shutdown and the shared operation boundary. `Scheduler` retains the public
-facade used by serving and rollout, owns the request queues and KV manager,
-and supplies scheduling and result-application operations.
+`EngineCore` owns the execution loop, tokenized request execution and scoring
+entry points, pending execution handles, policy version boundary, `Scheduler` and
+`GPUModelRunner`. `Scheduler` owns request queues, logical KV state, planning
+and result application. It never holds or invokes `EngineCore` or the model
+runner. `StepPlanner` only builds execution entries and reports KV extension
+failures; `EngineCore` submits plans and drains results.
 
 ```mermaid
 classDiagram
     direction TB
     class EngineCore {
-        loop and lifecycle
-        in-flight executions
-        drain before resource release
-        shared policy operation lock
+        start() / stop()
+        execute_requests() / score_ids()
+        tick() / drain()
+        policy operation lock
     }
     class Scheduler {
-        schedule()
-        update_from_output()
         add_request() / add_requests()
         cancel_request()
-        run_batch() / score_ids()
-        start() / stop()
+        schedule() / update_from_output()
     }
-    class SchedulerStep {
-        compatibility and scheduling helper
+    class StepPlanner {
+        plan(requests)
+    }
+    class GPUModelRunner {
+        execute_model(plan)
+        execute_score()
     }
     class RequestManager {
         waiting / running
         request lookup
-    }
-    class Request {
-        request identity and status
-        prompt and committed output
-        scheduling progress
     }
     class KVCacheManager {
         alloc_slots() / extend_slots_batch()
@@ -51,14 +49,12 @@ classDiagram
         apply_weight_update()
     }
 
-    Scheduler *-- EngineCore
-    EngineCore --> Scheduler : schedule and apply
-    Scheduler *-- SchedulerStep
+    EngineCore *-- Scheduler
+    EngineCore *-- GPUModelRunner
+    EngineCore *-- PolicyVersionGuard
+    Scheduler *-- StepPlanner
     Scheduler *-- RequestManager
-    RequestManager o-- Request
     Scheduler *-- KVCacheManager
-    Scheduler *-- PolicyVersionGuard
-    EngineCore --> PolicyVersionGuard : operation boundary
 ```
 
 The mutable `Request` belongs to the core. Planning captures an execution
@@ -67,9 +63,10 @@ output. Result application validates execution/request identity and policy
 version, then advances the corresponding live request. Reapplying a result
 must not append the same token twice.
 
-`SchedulerStep` is retained for internal compatibility. It does not justify
-passing `Request` objects through the worker boundary, nor may it create a
-second result-application path that bypasses request lifecycle rules.
+`astrai.trainer.backend.run_batch` is the synchronous token-ID API used by
+training rollout. It validates and formats the batch, then calls
+`EngineCore.execute_requests` to use the same `Scheduler.schedule()` and
+submit/drain path as serving.
 
 ## Execution and event ordering
 
@@ -138,5 +135,5 @@ backend's mutation boundary **before** copying weights, rather than copying
 first and validating the version afterward.
 
 No process boundary or model copy is added for colocated rollout. Existing
-`run_batch` token/logprob results and the policy-version API remain the
+Rollout token/logprob results and the policy-version API remain the
 training-facing interface.

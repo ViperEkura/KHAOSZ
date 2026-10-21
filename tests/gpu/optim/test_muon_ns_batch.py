@@ -9,7 +9,7 @@ from torch import nn
 from astrai.extension.backend.newton_schulz import newton_schulz
 from astrai.extension.kernel.newton_schulz import is_available
 from astrai.extension.policy import newton_schulz as plan
-from astrai.optim.muon_adamw import MuonAdamW
+from astrai.optimization.optimizer.muon import MuonAdamW
 
 CUDA_AVAILABLE = torch.cuda.is_available() and is_available()
 pytestmark = pytest.mark.skipif(

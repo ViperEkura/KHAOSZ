@@ -40,7 +40,6 @@ def _clean_fp8_state():
     gemm = _gemm()
     clear_slots()
     gemm.fp8_reset()
-    gemm.fp8_debug_reset_stats()
     gemm.fp8_set_act_cache(True)
     yield
     gemm.fp8_reset()
@@ -70,7 +69,7 @@ def test_slot_rebind_keeps_the_rings_and_drops_the_stale_weight_cast():
     first = _meta(w, 0)
     assert (first["slot"], first["slot_name"]) == (0, "layers.0.q_proj")
     assert first["role"] == "layers.*.q_proj"
-    assert gemm.fp8_debug_stats()["metas"] == 1
+    assert len(gemm.fp8_state_dict()["entries"]) == 1
     idx_before = first["w"]["idx"]
 
     # The module is the same, its weight tensor is not (TP/FSDP swap). The
@@ -80,7 +79,9 @@ def test_slot_rebind_keeps_the_rings_and_drops_the_stale_weight_cast():
     w_new = _bf16(16, 16)
     out = _call(x, w_new, slot=0)
 
-    assert gemm.fp8_debug_stats()["metas"] == 1, "rebind must not rebuild the meta"
+    assert len(gemm.fp8_state_dict()["entries"]) == 1, (
+        "rebind must not rebuild the meta"
+    )
     second = _meta(w_new, 0)
     assert second["w"]["initialized"], "the ring survived the replacement"
     assert second["w"]["idx"] == (idx_before + 1) % HIST, "history kept advancing"
@@ -231,7 +232,7 @@ def test_region_entry_repairs_a_swapped_weight():
     assert table.slot_of(model.proj.weight) == slot_id
     meta = _meta(model.proj.weight, -1)
     assert (meta["slot"], meta["slot_name"]) == (slot_id, "proj")
-    assert _gemm().fp8_debug_stats()["metas"] == 1
+    assert len(_gemm().fp8_state_dict()["entries"]) == 1
 
 
 @skip_no_fp8
@@ -247,5 +248,5 @@ def test_unslotted_calls_keep_the_address_keyed_semantics():
     assert torch.equal(first, second)
     meta = _meta(w, -1)
     assert (meta["slot"], meta["slot_name"], meta["role"]) == (-1, "", "")
-    assert gemm.fp8_debug_stats()["metas"] == 1
+    assert len(gemm.fp8_state_dict()["entries"]) == 1
     assert [e["slot_name"] for e in fp8_state_dict()["entries"]] == [""]

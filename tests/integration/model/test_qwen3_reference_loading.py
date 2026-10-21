@@ -5,9 +5,9 @@ import json
 import pytest
 import torch
 
-from astrai.config import TrainConfig
-from astrai.model import AutoModel, AutoRegressiveLM
-from astrai.trainer.train_context import TrainContextBuilder
+from astrai.config import ComponentSpec, TrainConfig
+from astrai.model import AutoModel
+from astrai.trainer.context import TrainContextBuilder
 
 
 @pytest.mark.parametrize("tied", [False, True])
@@ -74,11 +74,17 @@ def test_qwen3_explicit_head_and_qk_norm_match_hf_masked_logits(
     native = AutoModel.from_pretrained(tmp_path, strict=True).eval()
     assert native.config.head_dim == 16
     cfg = TrainConfig(
-        model_fn=lambda: AutoRegressiveLM(native.config),
-        dataset=torch.utils.data.TensorDataset(torch.ones(2, 4, dtype=torch.long)),
-        optimizer_fn=lambda model: torch.optim.SGD(model.parameters(), lr=0.0),
-        scheduler_fn=lambda optimizer: torch.optim.lr_scheduler.LambdaLR(
-            optimizer, lambda _: 1.0
+        model=ComponentSpec(
+            type="autoregressive_lm", params={"config": native.config.to_dict()}
+        ),
+        dataset=ComponentSpec(
+            type="tests.support.rollout:RandomTokenDataset",
+            params={"length": 2, "max_length": 4, "vocab_size": 128},
+        ),
+        optimizer=ComponentSpec(type="torch.optim:SGD", params={"lr": 0.0}),
+        scheduler=ComponentSpec(
+            type="torch.optim.lr_scheduler:StepLR",
+            params={"step_size": 1, "gamma": 1.0},
         ),
         strategy="seq",
         device_type="cpu",

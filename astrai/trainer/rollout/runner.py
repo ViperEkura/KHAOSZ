@@ -1,6 +1,6 @@
 """Score, cache, and evaluate online training rollouts."""
 
-from typing import Callable, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, Iterator, Optional, Tuple
 
 import torch
 from torch import Tensor
@@ -14,6 +14,9 @@ from astrai.trainer.rollout.types import (
     SamplingParams,
     T,
 )
+
+if TYPE_CHECKING:
+    from astrai.trainer.rollout.async_round import AsyncRoundCoordinator
 
 
 class RolloutRunner:
@@ -40,11 +43,18 @@ class RolloutRunner:
 
     def __init__(
         self,
-        generator: RolloutGenerator,
-        reward_model: BaseRewardModel,
+        generator: Optional[RolloutGenerator] = None,
+        reward_model: Optional[BaseRewardModel] = None,
         rollout_interval: int = 512,
         max_policy_lag: Optional[int] = None,
+        coordinator: Optional["AsyncRoundCoordinator"] = None,
     ):
+        if (coordinator is None and (generator is None or reward_model is None)) or (
+            coordinator is not None
+            and (generator is not None or reward_model is not None)
+        ):
+            raise ValueError("provide either generator and reward_model or coordinator")
+        self.coordinator = coordinator
         if rollout_interval <= 0:
             raise ValueError("rollout_interval must be positive")
         if max_policy_lag is not None and max_policy_lag < 0:
@@ -62,21 +72,41 @@ class RolloutRunner:
 
     @property
     def policy_version(self) -> int:
-        return self.generator.policy_version
+        return (
+            self.coordinator.policy_version
+            if self.coordinator is not None
+            else self.generator.policy_version
+        )
 
     def update_weights(self, policy_version: int) -> int:
         """Publish the shared policy's new version to the rollout backend."""
+        if self.coordinator is not None:
+            raise RuntimeError("async rollout publishes weights during optimizer step")
         return self.generator.update_weights(policy_version)
 
     def apply_weight_update(
         self, policy_version: Optional[int], update: Callable[[int], T]
     ) -> T:
         """Apply a model update and publish its version as one operation."""
+        if self.coordinator is not None:
+            return self.coordinator.apply_weight_update(policy_version, update)
         return self.generator.apply_weight_update(policy_version, update)
 
     def step(self):
         """Advance the internal counter (call once per optimizer step)."""
-        self._steps_since_rollout += 1
+        if self.coordinator is None:
+            self._steps_since_rollout += 1
+
+    def iter_rounds(
+        self, batches, stop_requested: Callable[[], bool]
+    ) -> Iterator[RolloutResult]:
+        if self.coordinator is None:
+            raise RuntimeError("iter_rounds requires an async rollout coordinator")
+        return self.coordinator.iter_rounds(batches, stop_requested)
+
+    def close(self) -> None:
+        if self.coordinator is not None:
+            self.coordinator.close()
 
     def clear_cache(self):
         """Force next call to re-run rollout."""
@@ -101,19 +131,7 @@ class RolloutRunner:
 
     def _score(self, raw: RawRollout) -> RolloutResult:
         rewards = _score_rewards(self.reward_model, raw)
-        device = raw.prompts.device
-        return RolloutResult(
-            prompts=raw.prompts,
-            prompt_mask=raw.prompt_mask,
-            responses=raw.responses,
-            response_mask=raw.response_mask,
-            rewards=rewards.to(device=device),
-            logprobs_old=raw.logprobs_old,
-            policy_version=raw.policy_version,
-            prompt_texts=raw.prompt_texts,
-            response_texts=raw.response_texts,
-            finish_reasons=raw.finish_reasons,
-        )
+        return RolloutResult.from_raw(raw, rewards.to(device=raw.prompts.device))
 
     def _validate_policy_version(
         self, result: RawRollout, *, live_version: Optional[int] = None
@@ -144,6 +162,8 @@ class RolloutRunner:
         policy snapshot, so a concurrent commit, refresh, or cache clear
         can never hand out an object the snapshot has already invalidated.
         """
+        if self.coordinator is not None:
+            raise RuntimeError("async rollouts use iter_rounds")
         cache_key = self._batch_key(batch)
 
         def reuse(live_version: int) -> Optional[Tuple[RolloutResult, bool]]:
@@ -191,6 +211,8 @@ class RolloutRunner:
         overrides the generator's training sampling defaults for this
         call only.
         """
+        if self.coordinator is not None:
+            raise RuntimeError("async validation is unsupported")
         raw = self.generator.generate(batch, params)
         self._validate_policy_version(raw)
         scored = self._score(raw)

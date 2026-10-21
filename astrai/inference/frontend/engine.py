@@ -11,6 +11,7 @@ import asyncio
 import gc
 import logging
 import time
+import warnings
 from pathlib import Path
 from typing import (
     Any,
@@ -25,8 +26,9 @@ from typing import (
 import torch
 import torch.nn as nn
 
-from astrai.extension import ATTN_BACKEND, AttentionBackend, get_backend
+from astrai.extension.runtime.context import OpSelection
 from astrai.inference.core.cache.pool import BlockPool
+from astrai.inference.core.engine_core import EngineCore
 from astrai.inference.core.events import RequestError, TokenDelta
 from astrai.inference.core.scheduler import Scheduler
 from astrai.inference.frontend.core_client import EngineCoreClient, InprocClient
@@ -57,27 +59,25 @@ class InferenceEngine:
         max_seq_len: Optional[int] = None,
         cache: Optional[BlockPool] = None,
         enable_cuda_graph: bool = True,
-        backend: Optional[Union[str, ATTN_BACKEND, AttentionBackend, type]] = None,
         enable_overlap: bool = False,
+        core_client: Optional[EngineCoreClient] = None,
     ):
         self.model = model
         self.tokenizer = tokenizer
-        self.scheduler = Scheduler(
-            model=self.model,
-            tokenizer=self.tokenizer,
-            max_batch_size=max_batch_size,
-            max_seq_len=max_seq_len,
-            cache=cache,
-            enable_cuda_graph=enable_cuda_graph,
-            backend=backend,
-            enable_overlap=enable_overlap,
-        )
-        # Frontend plumbing: id minting, event queues, output folding.
-        # All core access goes through the EngineCoreClient seam (T0:
-        # in-process direct calls; T1 swaps in a transport client).
-        self._core: EngineCoreClient = InprocClient(self.scheduler)
+        if core_client is None:
+            core = EngineCore(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                max_batch_size=max_batch_size,
+                max_seq_len=max_seq_len,
+                cache=cache,
+                enable_cuda_graph=enable_cuda_graph,
+                enable_overlap=enable_overlap,
+            )
+            core_client = InprocClient(core)
+        self._core = core_client
         self._tracker = RequestTracker()
-        self.scheduler.set_event_sink(self._tracker.sink)
+        self._core.set_event_sink(self._tracker.sink)
         resolved_len = max_seq_len
         if resolved_len is None:
             cfg_len = getattr(model.config, "max_position_embeddings", None)
@@ -85,7 +85,19 @@ class InferenceEngine:
         self._max_seq_len = int(resolved_len)
         self._input_processor = InputProcessor(tokenizer, int(resolved_len))
 
-        self.scheduler.start()
+        self._core.start()
+
+    @property
+    def scheduler(self) -> Scheduler:
+        warnings.warn(
+            "InferenceEngine.scheduler is deprecated; use EngineCoreClient "
+            "for request, scoring, status and lifecycle operations",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if not isinstance(self._core, InprocClient):
+            raise AttributeError("The injected core client has no local scheduler")
+        return self._core.scheduler
 
     def __enter__(self):
         return self
@@ -106,7 +118,6 @@ class InferenceEngine:
         top_k: int,
         frequency_penalty: float,
         rep_window: int,
-        backend: Optional[AttentionBackend],
     ) -> ProcessedInput:
         """Tokenize + submit one prompt; the id exists before the core does."""
         processed = self._input_processor.process(prompt)
@@ -122,7 +133,6 @@ class InferenceEngine:
                 rep_window=rep_window,
                 request_id=processed.request_id,
                 prompt_ids=processed.prompt_ids,
-                backend=backend,
             )
         except BaseException:
             self._release_requests([processed.request_id])
@@ -207,7 +217,7 @@ class InferenceEngine:
             reaching the engine's ``max_seq_len``).
 
         Note:
-            Synchronous and not re-entrant: like ``run_batch`` it drives the
+            Synchronous and not re-entrant: like rollout batch execution it drives the
             executor on the calling thread, so do not overlap it with
             generation on the same engine.
         """
@@ -252,11 +262,11 @@ class InferenceEngine:
 
         # The executor holds max_batch_size worth of fixed-shape buffers, so
         # split a long batch here rather than failing deep in the executor.
-        chunk = max(1, self.scheduler.max_batch_size)
+        chunk = max(1, self._core.max_batch_size)
         results: List[Any] = []
         for start in range(0, len(prompts), chunk):
             results.extend(
-                self.scheduler.score_ids(
+                self._core.score_ids(
                     prompts[start : start + chunk],
                     conts[start : start + chunk],
                     per_token=per_token,
@@ -320,9 +330,6 @@ class InferenceEngine:
         ``finish_reason``.  Protocol adapters consume this instead of
         re-tokenizing text to count tokens.
         """
-        # Capture the caller's backend, but defer submission until consumption:
-        # closing a never-started generator cannot run its finally block.
-        backend = get_backend(use_default=False)
 
         async def _agen():
             processed = self._submit_prompt(
@@ -333,7 +340,6 @@ class InferenceEngine:
                 top_k=top_k,
                 frequency_penalty=frequency_penalty,
                 rep_window=rep_window,
-                backend=backend,
             )
             request_id = processed.request_id
             tracker = self._tracker
@@ -463,7 +469,6 @@ class InferenceEngine:
         # each request's events accumulate until then.
         processed = self._input_processor.process_batch(prompts)
         request_ids = [item.request_id for item in processed]
-        backend = get_backend(use_default=False)
 
         def submit():
             for rid in request_ids:
@@ -479,7 +484,6 @@ class InferenceEngine:
                     rep_window=rep_window,
                     request_ids=request_ids,
                     prompts_ids=[item.prompt_ids for item in processed],
-                    backend=backend,
                 )
             except BaseException:
                 self._release_requests(request_ids)
@@ -527,12 +531,12 @@ class InferenceEngine:
         return self._core.stats()
 
     @property
-    def backend_name(self) -> str:
-        return self.scheduler.backend_name
+    def op_selection(self) -> OpSelection:
+        return self._core.op_selection
 
     @property
     def cuda_graph_enabled(self) -> bool:
-        return self.scheduler.cuda_graph_enabled
+        return self._core.cuda_graph_enabled
 
     def shutdown(self):
         self._core.shutdown()
@@ -556,7 +560,7 @@ def build_engine(
 
     Loads model and tokenizer from *param_path*, or accepts preloaded
     objects, places the model, and returns a started InferenceEngine.
-    Extra *engine_kwargs* (cache, enable_cuda_graph, backend, enable_overlap)
+    Extra *engine_kwargs* (cache, enable_cuda_graph, enable_overlap)
     pass through to InferenceEngine. Placement parts left as None are skipped.
     """
     if param_path is not None:

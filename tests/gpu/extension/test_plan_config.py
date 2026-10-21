@@ -278,14 +278,14 @@ class TestModelRule:
         (2048, 28672, 8192),
     )
 
-    # planning.cpp kMainloopBytesPerCellTile / kMmaArmBytesPerInstr
+    # gemm/plan/planner.cpp kMainloopBytesPerCellTile / kMmaArmBytesPerInstr
     # (both fitted on the 2026-09-16 grid, RTX 5090, bf16 out).
     MAINLOOP_BYTES_PER_CELL_TILE = 8
     MMA_ARM_BYTES_PER_INSTR = 64
 
     @classmethod
     def _cost(cls, entry, m, n, k, facts):
-        """cost_of mirrored from planning.cpp, or None when the ring is not
+        """cost_of mirrored from gemm/plan/planner.cpp, or None when the ring is not
         resident on this device at all — the only way to assert the rule
         from Python. Both staging forms: the planner branches on the
         device's cc (TMA needs sm_90+), so on an sm_89 part (L20/4090)
