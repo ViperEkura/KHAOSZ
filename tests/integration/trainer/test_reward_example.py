@@ -14,7 +14,6 @@ import yaml
 
 from astrai.config import TrainConfig
 from astrai.model import AutoRegressiveLM
-from astrai.trainer.optional_extras import checkpoint_extras
 from examples.rl_reward.data import load_splits
 from examples.rl_reward.publication import (
     dependency_versions,
@@ -26,7 +25,12 @@ from examples.rl_reward.rewards import (
     countdown_score,
     gsm8k_score,
 )
-from examples.rl_reward.run import Recipe, build_training, restore_runner_rng
+from examples.rl_reward.run import (
+    Recipe,
+    build_training,
+    restore_runner_rng,
+    snapshot_runner_rng,
+)
 from tests.support.models import make_tiny_config
 from tests.support.tokenizers import CHAT_TEMPLATE, build_test_tokenizer
 
@@ -91,14 +95,22 @@ def test_reward_keeps_every_failed_response_and_rejects_incomplete_groups():
 
 
 def test_resume_selects_each_learner_rng_and_rejects_topology_changes():
+    import random
+
+    import numpy as np
+
     states, expected = [], []
     for seed in (23, 71):
         torch.manual_seed(seed)
-        states.append(checkpoint_extras()["rng_state"])
-        expected.append(torch.rand(5))
+        random.seed(seed)
+        np.random.seed(seed)
+        states.append(snapshot_runner_rng())
+        expected.append((torch.rand(5), random.random(), np.random.rand(5)))
     for rank in (0, 1):
         restore_runner_rng(states, rank, 2)
-        torch.testing.assert_close(torch.rand(5), expected[rank], rtol=0, atol=0)
+        torch.testing.assert_close(torch.rand(5), expected[rank][0], rtol=0, atol=0)
+        assert random.random() == expected[rank][1]
+        np.testing.assert_array_equal(np.random.rand(5), expected[rank][2])
     with pytest.raises(ValueError, match="same topology"):
         restore_runner_rng(states, 0, 3)
 
@@ -313,3 +325,33 @@ def test_public_records_drop_environment_identity_and_unknown_provenance(tmp_pat
         "/" not in value and " @ " not in value
         for value in dependency_versions().values()
     )
+
+
+def test_batch_sampling_order_survives_new_request_identifiers(monkeypatch):
+    from types import SimpleNamespace
+
+    from astrai.trainer import backend
+    from tests.support.inference import make_cpu_model, make_cpu_scheduler
+
+    with torch.random.fork_rng(devices=[]):
+        model = make_cpu_model()
+        results = []
+        for identifiers in (("f", "e", "d"), ("a", "b", "c")):
+            ids = iter(identifiers)
+            monkeypatch.setattr(
+                backend,
+                "uuid",
+                SimpleNamespace(uuid4=lambda: SimpleNamespace(hex=next(ids))),
+            )
+            engine = make_cpu_scheduler(model)
+            try:
+                torch.manual_seed(314159)
+                results.append(
+                    backend.run_batch(
+                        engine, [[10, 20]] * 3, max_tokens=1, temperature=1.0, top_k=0
+                    )
+                )
+            finally:
+                engine.stop()
+        assert len({tuple(tokens) for tokens in results[0]}) > 1
+        assert results[0] == results[1]

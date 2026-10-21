@@ -12,7 +12,7 @@ for the allocation policies.
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import torch
 
@@ -55,9 +55,9 @@ __all__ = [
 
 
 def _is_steady_increment(
-    prev_sig: Optional[tuple],
+    prev_sig: Optional[Tuple],
     prev_vals: Optional[List[int]],
-    cur_sig: tuple,
+    cur_sig: Tuple,
     cur_vals: List[int],
 ) -> bool:
     return (
@@ -74,7 +74,7 @@ def _is_steady_increment(
 class _BindState:
     """Cached bind metadata for steady-state decode increment detection."""
 
-    sig: tuple
+    sig: Tuple
     seq_lens: List[int]
 
 

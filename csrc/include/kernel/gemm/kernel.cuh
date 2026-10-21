@@ -2,11 +2,11 @@
 /* GEMM device entry kernels: cp.async and TMA staging. */
 #include <cuda_runtime.h>
 
-#include <api/gemm_common.h>
+#include <api/native/gemm.h>
 #include <epilogue/writer.cuh>
 #include <kernel/gemm/mainloop.cuh>
 #include <memory/pipeline.cuh>
-#include <policy.cuh>
+#include <policy/gemm.cuh>
 #include <scheduler.cuh>
 
 namespace astrai {
@@ -115,7 +115,6 @@ __global__ void __launch_bounds__(Policy::kCtaThreads, Policy::kMinCtas)
     __syncthreads();
     Epilogue(smem, p, blk.x, blk.y, threadIdx.x).run(acc, out);
 }
-
 
 } // namespace gemm
 } // namespace astrai

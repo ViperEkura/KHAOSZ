@@ -65,58 +65,39 @@ KVCache
 
 Attention layers do raw buffer indexing: `k_buffer[layer_id, out_cache_loc] = k` to write, `k_buffer[layer_id, indices]` to gather.
 
-## Attention Backend
+## Attention dispatch
 
-Inference code calls the policy API exported by `astrai.extension`. The
-extension implementation is split into two layers:
+Inference calls `astrai.extension.attention`. Its `AttentionDispatcher` builds
+an `AttentionSpec` and selects a function from the CUDA, FlashAttention, or
+torch modules. The `kernel` package contains exact CUDA wrappers and does not
+choose fallbacks.
 
-- `astrai.extension.backend` owns capability checks, backend selection,
-  fallback, and KV cache I/O.
-- `astrai.extension.kernel` contains direct wrappers around compiled CUDA kernels;
-  these wrappers raise if a kernel is unavailable and do not fall back.
-
-Attention computation (cache I/O + SDPA/kernel dispatch) is decoupled from the model via `AttentionBackend` ABC:
-
-```
-AttentionBackend (ABC)
-  ├── CudaBackend          CUDA kernel dispatch (default on GPU)
-  ├── FlashAttnBackend     Optional flash-attn dispatch (fallback)
-  └── TorchNativeBackend   SDPA + indirect KV cache gather (always-available fallback)
-```
-
-Default priority is cuda > flash > torch. Automatic selection may choose a
-compatible fallback for a particular call. Set
-`set_op("attention", "cuda"|"torch_native"|"flash")` to override the default
-process-wide (the `ASTR_BACKEND` env var is a deprecated startup seed);
-an explicit `attn_backend(...)` context still takes precedence over the env
-override.
-
-Select via context manager (mirrors `torch.nn.attention.sdpa_kernel`):
+Automatic selection tries CUDA, FlashAttention, then torch. Set a soft process
+default with `set_op("attention", "cuda")` or `ASTR_OPS=attention=cuda`. A
+`with op_backend(attention="cuda")` scope is strict: an unsupported call raises.
 
 ```python
-from astrai.extension import attn_backend, ATTN_BACKEND
+from astrai.extension import op_backend
+from astrai.inference.frontend.engine import build_engine
 
-with attn_backend(ATTN_BACKEND.CUDA):
-    engine.generate("hello")
+with op_backend(attention="cuda"):
+    engine = build_engine(param_path="path/to/weights")
 ```
 
-Environment and context selections are strict: if the selected backend cannot
-handle the call, inference raises an error rather than silently switching.
+The scheduler snapshots the selection when it is created and installs it in
+its worker. Select the scope around engine construction; requests do not carry
+an attention choice. CUDA Graph eligibility and capture are decided in the
+inference worker using that selection.
 
-`CudaBackend` decode path: writes K/V via `new_k`/`new_v` while calling `attn_paged_decode` — the `req_to_token` table serves directly as the page table (conceptually a single-token "page" per slot, i.e. `page_size=1`; the op itself takes no `page_size` argument). No explicit K/V gather needed.
+CUDA decode writes K/V via `new_k`/`new_v` and calls
+`attn_paged_decode`. The `req_to_token` table is its page table with one token
+per slot. CUDA prefill writes K/V and calls `attn_paged_prefill`, using
+`qo_indptr` and `kv_indptr` for ragged requests. If automatic CUDA selection
+cannot handle a call, FlashAttention is tried next, then torch SDPA.
 
-`CudaBackend` prefill path: writes K/V, then calls `attn_paged_prefill` — a ragged-batch (paged) prefill kernel that reads K/V directly from the flat pool via `req_to_token`, addressing each request's `q_len`/`kv_len` through `qo_indptr` and `kv_indptr`. No explicit K/V gather needed.
-
-The scheduler packs requests with the same prefix-cache start position and
-attention backend into one prefill forward even when their prompt lengths differ.
-Requests with different prefix hit lengths remain separate batches.
-
-Fallback: when `CudaBackend` cannot handle an input (wrong dtype or head_dim), `FlashAttnBackend` is tried next (if installed), then `TorchNativeBackend`.
-
-This fallback is performed by the public `attention(...)` policy entry point
-only when no backend was explicitly selected. Import from
-`astrai.extension.kernel` only for direct kernel tests or when failure on a missing
-kernel is the intended behavior.
+The scheduler groups prefill requests by prefix-cache start position, even
+when prompt lengths differ. Requests with different prefix hit lengths
+remain separate batches.
 
 ### Rotary Embedding Backend
 
@@ -127,8 +108,7 @@ Rotary embedding is applied via `apply_rotary_emb` in `astrai/extension/backend/
 
 `RotaryEmbedding` stores a cos/sin table `freqs_cis` of shape
 `[max_len, dim/2, 2]` (f32 — `[cos, sin]` pairs) and `forward()` returns
-a `[batch, seq_len, dim/2, 2]` slice indexed by `position_ids`. Both
-attention backends share the same rotary dispatch — it is backend-agnostic.
+a `[batch, seq_len, dim/2, 2]` slice indexed by `position_ids`. Rotary dispatch is independent of attention selection.
 
 ## Continuous Batching
 

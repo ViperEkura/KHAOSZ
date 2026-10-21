@@ -24,7 +24,6 @@ def _call(x, weight):
 def _clean_fp8_state():
     gemm = _gemm()
     gemm.fp8_reset()
-    gemm.fp8_debug_reset_stats()
     gemm.fp8_set_act_cache(True)
     yield
     gemm.fp8_reset()
@@ -43,13 +42,10 @@ def test_shared_input_cast_is_reused_with_bitwise_gradients():
     (y1.float().sum() + y2.float().sum()).backward()
     torch.cuda.synchronize()
 
-    stats = _gemm().fp8_debug_stats()
-    assert stats["act_miss"] == 1 and stats["act_hit"] == 1, stats
-    assert stats["quantize"] == 5, stats  # 3 forward casts, 2 backward gradient casts
     m1 = _gemm().fp8_debug_meta(w1)
     m2 = _gemm().fp8_debug_meta(w2)
     assert m1["x"]["idx"] == m2["x"]["idx"] == 1
-    assert torch.equal(m1["x"]["state"], m2["x"]["state"])
+    assert m1["x"]["state"].data_ptr() == m2["x"]["state"].data_ptr()
     assert x.grad is not None and w1.grad is not None and w2.grad is not None
     assert torch.isfinite(x.grad).all()
 
@@ -97,17 +93,19 @@ def test_cache_key_uses_tensor_identity_and_version():
 
     _call(x, w1)
     _call(x.clone(), w2)  # same values, different TensorImpl: must miss
-    assert gemm.fp8_debug_stats()["act_hit"] == 0
-    assert gemm.fp8_debug_stats()["act_miss"] == 2
+    first = gemm.fp8_debug_meta(w1)["x"]["state"]
+    other = gemm.fp8_debug_meta(w2)["x"]["state"]
+    assert first.data_ptr() != other.data_ptr()
 
     gemm.fp8_clear_act_cache()
-    gemm.fp8_debug_reset_stats()
     _call(x, w1)
     with torch.no_grad():
         x.add_(0.01)  # same TensorImpl, bumped version: stale cast must miss
     _call(x, w2)
-    stats = gemm.fp8_debug_stats()
-    assert stats["act_hit"] == 0 and stats["act_miss"] == 2, stats
+    assert (
+        gemm.fp8_debug_meta(w1)["x"]["state"].data_ptr()
+        != gemm.fp8_debug_meta(w2)["x"]["state"].data_ptr()
+    )
 
 
 @skip_no_fp8
@@ -119,9 +117,7 @@ def test_dynamic_scaling_does_not_use_activation_cache():
     w2 = torch.randn(32, 64, device="cuda", dtype=torch.bfloat16)
     for weight in (w1, w2):
         gemm.fp8_linear(x, weight, None, True, False, True, 16, 0, FMT_A, FMT_B)
-    stats = gemm.fp8_debug_stats()
-    assert stats["act_hit"] == 0 and stats["act_miss"] == 0, stats
-    assert stats["act_entries"] == 0, stats
+    assert gemm.fp8_state_dict()["entries"] == []
 
 
 @skip_no_fp8
@@ -137,14 +133,11 @@ def test_cache_is_bounded_and_evicts_least_recently_used_entry():
     for x, weight in zip(inputs, weights, strict=True):
         _call(x, weight)
 
-    stats = gemm.fp8_debug_stats()
-    assert stats["act_entries"] == 8, stats
-    assert stats["act_cache_bytes"] <= 64 << 20, stats
-
-    gemm.fp8_debug_reset_stats()
+    # The newest entry is reused; the oldest entry must fold again after eviction.
+    _call(inputs[-1], weights[-1])
+    assert gemm.fp8_debug_meta(weights[-1])["x"]["idx"] == 1
     _call(inputs[0], weights[0])
-    stats = gemm.fp8_debug_stats()
-    assert stats["act_hit"] == 0 and stats["act_miss"] == 1, stats
+    assert gemm.fp8_debug_meta(weights[0])["x"]["idx"] == 2
 
 
 @skip_no_fp8
@@ -158,10 +151,32 @@ def test_cache_is_cleared_when_autocast_region_exits():
     with fp8_autocast(enabled=True):
         F.linear(x, w1)
         F.linear(x, w2)
-    assert gemm.fp8_debug_stats()["act_hit"] == 1
-
-    gemm.fp8_debug_reset_stats()
+    assert gemm.fp8_debug_meta(w1)["x"]["idx"] == 1
+    assert (
+        gemm.fp8_debug_meta(w1)["x"]["state"].data_ptr()
+        == gemm.fp8_debug_meta(w2)["x"]["state"].data_ptr()
+    )
     with fp8_autocast(enabled=True):
         F.linear(x, w1)
-    stats = gemm.fp8_debug_stats()
-    assert stats["act_hit"] == 0 and stats["act_miss"] == 1, stats
+    assert gemm.fp8_debug_meta(w1)["x"]["idx"] == 2
+
+
+@skip_no_fp8
+def test_cache_invalidates_when_input_moves_device_without_version_change():
+    if torch.cuda.device_count() < 2:
+        pytest.skip("needs two CUDA devices")
+    gemm = _gemm()
+    x = torch.ones(16, 64, device="cuda:0", dtype=torch.bfloat16)
+    w0 = torch.ones(32, 64, device="cuda:0", dtype=torch.bfloat16)
+    w1 = w0.to("cuda:1")
+    _call(x, w0)
+    version = x._version
+    identity = x._cdata
+    x.data = x.to("cuda:1")
+    assert x._version == version and x._cdata == identity
+    out = _call(x, w1)
+    assert out.device == x.device
+    assert gemm.fp8_debug_meta(w1)["x"]["state"].device == x.device
+    gemm.fp8_set_act_cache(False)
+    ref = _call(x.clone(), w1.clone())
+    assert torch.equal(out, ref)

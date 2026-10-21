@@ -1,44 +1,96 @@
-from dataclasses import field
-from typing import Any, Callable, Dict, List, Optional
+import json
+from dataclasses import (
+    asdict,
+    field,
+    fields,
+    is_dataclass,
+)
+from dataclasses import (
+    dataclass as plain_dataclass,
+)
+from math import isfinite
+from typing import Any, Callable, Dict, List, Literal, Optional, Type
 
-import torch.nn as nn
 from pydantic import ConfigDict, field_validator, model_validator
 from pydantic.dataclasses import dataclass
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LRScheduler
-from torch.utils.data import Dataset
 
 from astrai.config.base import BaseConfig
 from astrai.model.components.lora import LoRAConfig
 
-TRAIN_TYPES = frozenset(
-    {"seq", "sft", "dpo", "grpo", "online_grpo", "online_dpo", "online_ppo"}
-)
+
+@plain_dataclass(frozen=True, kw_only=True)
+class ComponentSpec:
+    """Serializable component target and constructor parameters."""
+
+    type: str
+    params: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.type:
+            raise ValueError("Component type must not be empty")
+        try:
+            json.dumps(self.params, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Component params must contain only JSON values") from exc
+
+
+@plain_dataclass(frozen=True)
+class StrategyCapabilities:
+    """Configuration requirements declared by a training strategy."""
+
+    online: bool = False
+    reference_model: bool = False
+    old_model: bool = False
+    initialize_old_model: bool = False
+    critic: bool = False
+    async_round: bool = False
+    min_group_size: int = 1
+
+
+# StrategyFactory populates this when its implementations are imported.
+_STRATEGY_CAPABILITIES: Dict[str, StrategyCapabilities] = {}
+
+
 # Data-parallel gradient-sync strategies.
 DP_MODES = frozenset({"none", "ddp", "fsdp"})
 BACKENDS = frozenset({"nccl", "gloo"})
 START_METHODS = frozenset({"spawn", "fork", "forkserver"})
 _COMPILE_MODES = frozenset({"default", "reduce-overhead", "max-autotune"})
+ROLLOUT_MODES = frozenset({"sync", "async_round"})
 
 
-@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+@plain_dataclass(frozen=True)
+class _TrainRuntimeDependencies:
+    reward_model_fn: Optional[Callable]
+    critic_model_fn: Optional[Callable]
+    critic_optimizer_fn: Optional[Callable]
+
+    @classmethod
+    def capture(cls, config: "TrainConfig") -> "_TrainRuntimeDependencies":
+        return cls(
+            **{item.name: getattr(config, item.name, None) for item in fields(cls)}
+        )
+
+
+@dataclass(config=ConfigDict(arbitrary_types_allowed=True, extra="forbid"))
 class TrainConfig(BaseConfig):
     """Training configuration.
 
-    Combines hyperparameters with runtime objects (model_fn, dataset, etc.).
+    Combines normalized settings with serializable component specifications.
     Only JSON-serializable fields are written to checkpoint meta via to_dict().
 
     Args:
-        model_fn (Callable[[], nn.Module]): Model factory for training.
+        model (ComponentSpec): Serializable model target and parameters.
         strategy (str): Training strategy (seq, sft, dpo, grpo, online_*).
-        dataset (Dataset): Dataset for training.
-        optimizer_fn (Callable[[nn.Module], Optimizer]): Optimizer factory for training.
+        dataset (ComponentSpec): Serializable data constructor and parameters.
+        optimizer (ComponentSpec): Serializable optimizer target and parameters.
         optimizer_name (Optional[str]): Serializable built-in optimizer identifier. Defaults to None.
         optimizer_hyperparameters (Dict[str, Any]): Serializable optimizer settings. Defaults to {}.
-        scheduler_fn (Callable[[Optimizer], LRScheduler]): Scheduler factory for training.
+        scheduler (ComponentSpec): Serializable scheduler target and parameters.
         n_epoch (int): Number of epochs for training. Defaults to 1.
         batch_per_device (int): Batch size per device. Defaults to 4.
         grad_accum_steps (int): Number of iterations between optimizer steps. Defaults to 1.
+        epoch_tail_policy (Literal["drop", "flush"]): Drop an incomplete epoch-end optimizer window, or commit it using the batches actually available. Async rollout updates by round and does not use this policy. Defaults to "drop".
         max_grad_norm (Optional[float]): Maximum gradient norm. None disables clipping. Defaults to 1.0.
         gradient_checkpointing_modules (List[type]): Module types to enable activation checkpointing for. Defaults to [].
         compile_mode (Optional[str]): torch.compile mode: 'default', 'reduce-overhead', 'max-autotune', or None. Defaults to None.
@@ -52,9 +104,7 @@ class TrainConfig(BaseConfig):
         random_seed (int): Random seed. Defaults to 3407.
         num_workers (int): Number of workers for dataloader. Defaults to 0.
         prefetch_factor (Optional[int]): Prefetch factor for dataloader. Defaults to None.
-        persistent_workers (bool): Keep DataLoader workers alive between epochs. Defaults to False.
         pin_memory (bool): Pin memory for dataloader. Defaults to False.
-        collate_fn (Optional[Callable[[List[Any]], Any]]): Collate function for dataloader (e.g. dpo_collate_fn). Defaults to None.
         dp_size (int): Data-parallel replicas; total training processes (``nprocs``) are derived as ``dp_size * cp_size * tp_size``. Defaults to 1.
         cp_size (int): Context-parallel group size: shards the sequence across contiguous ranks (seq pretraining, torch-native attention only). Defaults to 1.
         tp_size (int): Tensor-parallel group size: shards Linear projections over features (attention heads / ffn channels) using the default plan over the standard module layout. Defaults to 1.
@@ -62,15 +112,15 @@ class TrainConfig(BaseConfig):
         backend (str): Distributed training backend. Defaults to "nccl".
         master_addr (str): Master address for distributed training. Defaults to "localhost".
         master_port (str): Master port for distributed training. Defaults to "29500".
+        process_group_timeout (Optional[float]): Seconds a stalled collective may block before the run aborts, which also bounds how long a dead rank goes unnoticed. Defaults to the backend default (10 minutes for NCCL).
         start_method (str): Multiprocessing start method: spawn/fork/forkserver. Defaults to "spawn".
         device_type (str): Device type for distributed training. Defaults to "cuda".
-        val_dataset (Optional[Dataset]): Dataset for validation. Defaults to None.
         val_split (Optional[float]): Ratio to split from training dataset for validation, e.g. 0.05. Defaults to None.
         val_step (int): Number of optimizer steps between validation runs. Defaults to 1000.
         neftune_alpha (float): NEFTune noise alpha, 0=disabled, typical: 5.0. Defaults to 0.0.
         moe_aux_loss_coef (float): Weight applied to the MoE load-balancing loss. Defaults to 0.01.
         rollout_interval (int): Number of optimizer steps between online rollouts. Defaults to 512.
-        rollout_max_policy_lag (Optional[int]): Maximum accepted gap between rollout and live policy versions. None derives ``rollout_interval - 1``. Defaults to None.
+        rollout_max_policy_lag (Optional[int]): Maximum accepted gap between rollout and live policy versions. None derives ``rollout_interval - 1`` for sync and normalizes to 1 for async_round. Defaults to None.
         rollout_temperature (float): Sampling temperature for online rollout. Defaults to 0.7.
         rollout_top_k (int): Top-k filtering for online rollout, 0=disable. Defaults to 0.
         rollout_top_p (float): Top-p (nucleus) filtering for online rollout. Defaults to 0.9.
@@ -82,31 +132,44 @@ class TrainConfig(BaseConfig):
         rollout_val_group_size (Optional[int]): Validation responses per prompt override. None inherits the strategy's ``group_size``. Defaults to None.
         rollout_pool_seq_len (Optional[int]): Sequence budget per rollout request when sizing the rollout scheduler's KV pool. None uses the model's ``max_position_embeddings``. Must cover the longest prompt plus ``rollout_max_tokens`` or ``run_batch`` rejects the request. Right-sizing pays off: the pool holds ``2 × layers × (batch_capacity × seq) × kv_heads × head_dim`` bytes — for the 1B policy (24 layers, 4 KV heads, head_dim 64, bf16) the default 32768 context allocates ~3.2 GB against ~400 MB at 4096. Defaults to None.
         rollout_device (Optional[str]): Device for the training rollout backend, e.g. ``"cuda:1"``. None keeps the in-process colocated backend (generation shares the training model object; weight updates are free). Setting it builds a frozen replica whose weights are copied to inside the policy-version lock every optimizer step — the copy is a full state transfer (e.g. ~2GB/step for 1B bf16), so pay it only when backend isolation is worth it. Defaults to None.
+        rollout_mode (str): "sync" retains the existing backend; "async_round" overlaps each learner with its assigned isolated rollout processes. Scripts using async_round must guard Trainer.train() with ``if __name__ == "__main__":``. Defaults to "sync".
+        rollout_devices (List[str]): One or more distinct CUDA devices for async_round, separate from all learner devices. Defaults to [].
+        rollout_worker_timeout_s (float): Maximum seconds to wait for generation in one async rollout round. Defaults to 600.
+        rollout_startup_timeout_s (float): Deadline for initializing async workers. Defaults to 300.
+        rollout_weight_timeout_s (float): NCCL and weight ACK deadline. Defaults to 600.
+        async_train_microbatch_prompts (int): Prompts per learner backward pass in async_round; all microbatches accumulate into one optimizer step. Defaults to 1.
         rollout_val_device (Optional[str]): Device for a dedicated validation rollout backend. None shares the training backend; setting it builds a separate replica so validation generation never touches the training scheduler's KV pool. Defaults to None.
-        rl_update_epochs (int): Learner passes over one collected online rollout round (classic PPO-style multiple epochs per batch). Each pass recomputes the loss against the round's fixed rewards/logprobs_old and takes its own optimizer steps. Values >1 trade on-policy freshness for sample efficiency; watch ``clip_fraction`` for stale-ratio blowup. Requires ``grad_accum_steps=1`` online. Defaults to 1.
-        rl_minibatch_prompts (Optional[int]): Prompts per learner update within one rollout round; None updates on the whole round at once. Slicing always keeps prompt groups intact, and PPO's rollout-pinned advantages are shared views, so targets never shift between updates. Each minibatch update is a full optimizer step (and a weight publication). Defaults to None.
+        rl_update_epochs (int): Learner passes over one collected online rollout window. Each pass recomputes the loss against the window's fixed rewards/logprobs_old and takes its own optimizer steps. Values >1 trade on-policy freshness for sample efficiency; watch ``clip_fraction`` for stale-ratio blowup. Defaults to 1.
+        rl_minibatch_prompts (Optional[int]): Global prompts per learner update within one rollout window; None updates on the whole window at once. Slicing keeps prompt groups intact, and PPO's rollout-pinned advantages are shared views. Each minibatch update is a full optimizer step and weight publication. Defaults to None.
         gradient_chunked_logprobs (bool): Compute training-path log-probs through the checkpointed chunked lm_head instead of materializing the full ``[N, S, V]`` logits (gradients identical up to GEMM tiling noise; peak memory drops by the logits tensor). Off keeps the historical full-tensor path. Defaults to False.
         save_reference_model (bool): Persist the frozen reference model as a ``reference_model`` checkpoint extra whenever the strategy has one (DPO/GRPO/PPO KL anchor). Resuming without it would silently re-anchor the KL target to the resumed actor. Adds one extra weight copy per checkpoint. Defaults to True.
         allow_reference_reanchor (bool): Escape hatch for resuming a reference-model strategy from a checkpoint saved without ``reference_model``: False (default) fails the resume explicitly, True proceeds with the reference re-anchored to the resumed actor and logs a warning. Defaults to False.
         reward_model_fn (Optional[Callable]): Factory for reward model, required for online RL strategies. Defaults to None.
         critic_model_fn (Optional[Callable]): Factory for the value (critic) model, required for online_ppo. Defaults to None.
-        critic_optimizer_fn (Optional[Callable]): Factory for the critic optimizer; None reuses optimizer_fn. Defaults to None.
+        critic_optimizer_fn (Optional[Callable]): Factory for the critic optimizer; None reuses the configured optimizer. Defaults to None.
         executor_kwargs (Dict[str, Any]): Extra kwargs passed to ExecutorFactory.create(). Defaults to {}.
         strategy_kwargs (Dict[str, Any]): Extra strategy arguments. Defaults to {}.
     """
 
-    model_fn: Callable[[], nn.Module]
     strategy: str
-    dataset: Dataset
-    optimizer_fn: Callable[[nn.Module], Optimizer]
-    scheduler_fn: Callable[[Optimizer], LRScheduler]
+    dataset: ComponentSpec
+    model: ComponentSpec
+    optimizer: ComponentSpec
+    scheduler: ComponentSpec
+    model_dtype: Optional[str] = None
+
+    reward_model_fn: Optional[Callable] = None
+    critic_model_fn: Optional[Callable] = None
+    critic_optimizer_fn: Optional[Callable] = None
     optimizer_name: Optional[str] = None
     optimizer_hyperparameters: Dict[str, Any] = field(default_factory=dict)
+    load_state_dict: Dict[str, bool] = field(default_factory=dict)
     n_epoch: int = 1
     batch_per_device: int = 4
     grad_accum_steps: int = 1
+    epoch_tail_policy: Literal["drop", "flush"] = "drop"
     max_grad_norm: Optional[float] = 1.0
-    gradient_checkpointing_modules: List[type] = field(default_factory=list)
+    gradient_checkpointing_modules: List[Type] = field(default_factory=list)
     compile_mode: Optional[str] = None
 
     start_epoch: int = 0
@@ -122,9 +185,7 @@ class TrainConfig(BaseConfig):
     random_seed: int = 3407
     num_workers: int = 0
     prefetch_factor: Optional[int] = None
-    persistent_workers: bool = False
     pin_memory: bool = False
-    collate_fn: Optional[Callable[[List[Any]], Any]] = None
 
     dp_size: int = 1
     cp_size: int = 1
@@ -133,10 +194,10 @@ class TrainConfig(BaseConfig):
     backend: str = "nccl"
     master_addr: str = "localhost"
     master_port: str = "29500"
+    process_group_timeout: Optional[float] = None
     start_method: str = "spawn"
 
     device_type: str = "cuda"
-    val_dataset: Optional[Dataset] = None
     val_split: Optional[float] = None
     val_step: int = 1000
     neftune_alpha: float = 0.0
@@ -155,24 +216,45 @@ class TrainConfig(BaseConfig):
     rollout_val_group_size: Optional[int] = None
     rollout_pool_seq_len: Optional[int] = None
     rollout_device: Optional[str] = None
+    rollout_mode: str = "sync"
+    rollout_devices: List[str] = field(default_factory=list)
+    rollout_worker_timeout_s: float = 600.0
+    rollout_startup_timeout_s: float = 300.0
+    rollout_weight_timeout_s: float = 600.0
+    async_train_microbatch_prompts: int = 1
     rollout_val_device: Optional[str] = None
     rl_update_epochs: int = 1
     rl_minibatch_prompts: Optional[int] = None
     gradient_chunked_logprobs: bool = False
     save_reference_model: bool = True
     allow_reference_reanchor: bool = False
-    reward_model_fn: Optional[Callable] = None
-    critic_model_fn: Optional[Callable] = None
-    critic_optimizer_fn: Optional[Callable] = None
-
     executor_kwargs: Dict[str, Any] = field(default_factory=dict)
     strategy_kwargs: Dict[str, Any] = field(default_factory=dict)
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Capture checkpoint settings without copying runtime dependencies."""
+        runtime_names = {item.name for item in fields(_TrainRuntimeDependencies)}
+        values = {}
+        for item in fields(self):
+            value = getattr(self, item.name)
+            if item.name in runtime_names and value is not None:
+                continue
+            if is_dataclass(value):
+                value = asdict(value)
+            elif isinstance(value, tuple):
+                value = list(value)
+            try:
+                json.dumps(value)
+            except (TypeError, ValueError):
+                continue
+            values[item.name] = value
+        return values
+
     @field_validator("strategy")
     def _validate_strategy(cls, v: str) -> str:
-        if v not in TRAIN_TYPES:
+        if v not in _STRATEGY_CAPABILITIES:
             raise ValueError(
-                f"strategy must be one of {sorted(TRAIN_TYPES)}, got {v!r}"
+                f"strategy must be one of {sorted(_STRATEGY_CAPABILITIES)}, got {v!r}"
             )
         return v
 
@@ -217,6 +299,22 @@ class TrainConfig(BaseConfig):
             raise ValueError(f"backend must be one of {sorted(BACKENDS)}, got {v!r}")
         return v
 
+    @field_validator("load_state_dict")
+    def _validate_load_state_dict(cls, value: Dict[str, bool]) -> Dict[str, bool]:
+        unknown = set(value) - {"model", "optimizer", "scheduler"}
+        if unknown:
+            raise ValueError(f"Unknown load_state_dict components: {sorted(unknown)}")
+        return value
+
+    def state_dict_load_options(self, resume: bool = False) -> Dict[str, bool]:
+        """Resolve omitted component flags for a new stage or a full resume."""
+        return {
+            "model": True,
+            "optimizer": True,
+            "scheduler": resume,
+            **self.load_state_dict,
+        }
+
     @field_validator("start_method")
     def _validate_start_method(cls, v: str) -> str:
         if v not in START_METHODS:
@@ -243,6 +341,7 @@ class TrainConfig(BaseConfig):
         "rollout_interval",
         "rollout_max_tokens",
         "rl_update_epochs",
+        "async_train_microbatch_prompts",
     )
     def _validate_positive_int(cls, v: int) -> int:
         if v <= 0:
@@ -251,8 +350,8 @@ class TrainConfig(BaseConfig):
 
     @field_validator("rollout_temperature")
     def _validate_positive_float(cls, v: float) -> float:
-        if v <= 0:
-            raise ValueError(f"must be positive, got {v}")
+        if not isfinite(v) or v <= 0:
+            raise ValueError(f"must be finite and positive, got {v}")
         return v
 
     @field_validator("rollout_top_p")
@@ -279,7 +378,7 @@ class TrainConfig(BaseConfig):
     def _validate_rollout_val_temperature(cls, v: Optional[float]) -> Optional[float]:
         # 0.0 is legal here (unlike rollout_temperature): validation may
         # want greedy decode while training keeps a positive temperature.
-        if v is not None and v < 0:
+        if v is not None and (not isfinite(v) or v < 0):
             raise ValueError(f"rollout_val_temperature must be non-negative, got {v}")
         return v
 
@@ -322,6 +421,22 @@ class TrainConfig(BaseConfig):
             raise ValueError("rollout device must be a device string or None")
         return v
 
+    @field_validator("rollout_mode")
+    def _validate_rollout_mode(cls, v: str) -> str:
+        if v not in ROLLOUT_MODES:
+            raise ValueError(f"rollout_mode must be one of {sorted(ROLLOUT_MODES)}")
+        return v
+
+    @field_validator(
+        "rollout_worker_timeout_s",
+        "rollout_startup_timeout_s",
+        "rollout_weight_timeout_s",
+    )
+    def _validate_rollout_worker_timeout(cls, v: float) -> float:
+        if not isfinite(v) or v <= 0:
+            raise ValueError("rollout timeouts must be finite and positive")
+        return v
+
     def rollout_val_overrides(self) -> Dict[str, Any]:
         """Only the validation sampling fields explicitly set by the user.
 
@@ -353,17 +468,106 @@ class TrainConfig(BaseConfig):
             raise ValueError(f"val_split must be in (0, 1) or None, got {v}")
         return v
 
+    @field_validator("strategy_kwargs")
+    def _validate_strategy_kwargs(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        reserved = {
+            "moe_aux_loss_coef",
+            "rl_update_epochs",
+            "rl_minibatch_prompts",
+            "gradient_chunked_logprobs",
+        }
+        duplicates = sorted(reserved.intersection(values))
+        if duplicates:
+            raise ValueError(
+                f"set these parameters on TrainConfig, not strategy_kwargs: {', '.join(duplicates)}"
+            )
+        if "group_size" in values:
+            group_size = values["group_size"]
+            if (
+                isinstance(group_size, bool)
+                or not isinstance(group_size, int)
+                or group_size < 1
+            ):
+                raise ValueError("group_size must be a positive integer")
+        return values
+
     @model_validator(mode="after")
     def _validate_online_strategy(self) -> "TrainConfig":
-        if self.strategy.startswith("online_"):
+        if self.model_dtype not in (None, "float32", "float16", "bfloat16"):
+            raise ValueError("model_dtype must be float32, float16, or bfloat16")
+
+        capabilities = _STRATEGY_CAPABILITIES[self.strategy]
+        if self.strategy_kwargs.get("group_size", 4) < capabilities.min_group_size:
+            raise ValueError(
+                f"{self.strategy} group_size must be >= {capabilities.min_group_size}"
+            )
+        if self.rollout_mode == "async_round":
+            if not capabilities.async_round:
+                raise ValueError("async_round currently supports online_grpo only")
+            if (
+                self.device_type != "cuda"
+                or (self.nprocs == 1 and self.dp_mode != "none")
+                or (self.nprocs > 1 and self.dp_mode != "ddp")
+            ):
+                raise ValueError(
+                    "async_round requires one CUDA learner with dp_mode='none' "
+                    "or multiple CUDA learners with dp_mode='ddp'"
+                )
+            if self.tp_size != 1 or self.cp_size != 1:
+                raise ValueError("async_round does not support TP or CP")
+            if self.rollout_device is not None or self.rollout_val_device is not None:
+                raise ValueError(
+                    "async_round uses rollout_devices, not rollout_device "
+                    "or rollout_val_device"
+                )
+            if not self.rollout_devices:
+                raise ValueError("async_round requires at least one rollout device")
+            if any(
+                not device.startswith("cuda:") or not device[5:].isdigit()
+                for device in self.rollout_devices
+            ):
+                raise ValueError(
+                    "async_round rollout_devices must be indexed CUDA devices"
+                )
+            if len({int(device[5:]) for device in self.rollout_devices}) != len(
+                self.rollout_devices
+            ):
+                raise ValueError("async_round requires distinct rollout_devices")
+            if len(self.rollout_devices) < self.nprocs:
+                raise ValueError(
+                    "async_round requires at least one rollout device per learner"
+                )
+            if {int(device[5:]) for device in self.rollout_devices}.intersection(
+                range(self.nprocs)
+            ):
+                raise ValueError("rollout_devices must exclude all learner devices")
+            if self.rollout_interval != 1 or self.rl_update_epochs != 1:
+                raise ValueError(
+                    "async_round requires rollout_interval=1 and rl_update_epochs=1"
+                )
+            if self.rl_minibatch_prompts is not None or self.grad_accum_steps != 1:
+                raise ValueError(
+                    "async_round uses async_train_microbatch_prompts and "
+                    "requires grad_accum_steps=1"
+                )
+            if self.rollout_max_policy_lag not in (None, 1):
+                raise ValueError("async_round requires rollout_max_policy_lag=1")
+            if self.rollout_max_policy_lag is None:
+                self.rollout_max_policy_lag = 1
+            if (
+                self.dataset.params.get("val_path") is not None
+                or self.val_split is not None
+            ):
+                raise ValueError("async_round validation is not supported yet")
+        if capabilities.online:
             if self.reward_model_fn is None:
                 raise ValueError(
                     f"reward_model_fn is required for online RL strategy "
                     f"{self.strategy!r}"
                 )
-            if self.strategy == "online_ppo" and self.critic_model_fn is None:
+            if capabilities.critic and self.critic_model_fn is None:
                 raise ValueError(
-                    "critic_model_fn is required for online RL strategy 'online_ppo'"
+                    f"critic_model_fn is required for strategy {self.strategy!r}"
                 )
             if self.nprocs > 1 and self.dp_mode != "ddp":
                 raise ValueError(

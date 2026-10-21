@@ -5,7 +5,7 @@ import torch
 from torch import nn
 
 from astrai.extension.kernel.newton_schulz import is_available
-from astrai.optim.muon_adamw import MuonAdamW
+from astrai.optimization.optimizer.muon import MuonAdamW
 
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available() or not is_available(),

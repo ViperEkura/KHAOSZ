@@ -1,5 +1,6 @@
 import os
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import torch
@@ -9,13 +10,16 @@ from torch import nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import Dataset
 
-import astrai.parallel.executor as executor_module
-from astrai.config import TrainConfig
+import astrai.parallel.executor.base as executor_module
+from astrai.config import ComponentSpec, TrainConfig
 from astrai.model.autoregressive_lm import AutoRegressiveLM
 from astrai.parallel import get_rank
 from astrai.parallel.executor import DDPExecutor, FSDPExecutor, NoneExecutor
-from astrai.trainer import train_context
-from astrai.trainer.train_context import TrainContextBuilder
+from astrai.trainer.backend import run_batch
+from astrai.trainer.context import TrainContextBuilder
+from astrai.trainer.context import builder as train_context_builder
+from astrai.trainer.rollout.setup import configure_rollout, resolve_async_rollout
+from astrai.trainer.rollout.types import SamplingParams
 from tests.support.inference import make_cpu_scheduler
 from tests.support.models import make_rollout_config
 from tests.support.tokenizers import FakeTokenizer
@@ -56,17 +60,23 @@ def _optimizer_fn(model):
     return torch.optim.SGD(model.parameters(), lr=1e-3)
 
 
-def _scheduler_fn(optimizer):
+def _scheduler_fn(optimizer, _dataset_len):
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lambda _step: 1.0)
 
 
 def _online_train_config(dp_mode):
     return TrainConfig(
         strategy="online_grpo",
-        model_fn=_ConfigModel,
-        dataset=_ConfigDataset(),
-        optimizer_fn=_optimizer_fn,
-        scheduler_fn=_scheduler_fn,
+        model=ComponentSpec(type=__name__ + ":_ConfigModel"),
+        dataset=ComponentSpec(
+            type="tests.integration.trainer.test_rollout_executor_boundary:_ConfigDataset",
+            params={},
+        ),
+        optimizer=ComponentSpec(type="torch.optim:SGD", params={"lr": 1e-3}),
+        scheduler=ComponentSpec(
+            type="torch.optim.lr_scheduler:StepLR",
+            params={"step_size": 1, "gamma": 1.0},
+        ),
         dp_size=2,
         dp_mode=dp_mode,
         reward_model_fn=object,
@@ -88,6 +98,7 @@ def _init_single_rank_process_group(tmp_path, backend):
 def _rollout_config(*, compile_mode=None):
     return SimpleNamespace(
         strategy="online_grpo",
+        rollout_mode="sync",
         compile_mode=compile_mode,
         batch_per_device=1,
         rollout_max_tokens=4,
@@ -133,13 +144,13 @@ def test_train_context_passes_ddp_inference_view_to_rollout(tmp_path, monkeypatc
     _init_single_rank_process_group(tmp_path, "gloo")
     captured = {}
 
-    class _Scheduler:
+    class _EngineCore:
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr(train_context, "Scheduler", _Scheduler)
+    monkeypatch.setattr(train_context_builder, "EngineCore", _EngineCore)
     monkeypatch.setattr(
-        train_context.AutoTokenizer,
+        train_context_builder.AutoTokenizer,
         "from_pretrained",
         lambda _param_path: FakeTokenizer(),
     )
@@ -155,7 +166,8 @@ def test_train_context_passes_ddp_inference_view_to_rollout(tmp_path, monkeypatc
         assert captured["max_seq_len"] == 32
         assert captured["max_batch_size"] == 2
         assert (
-            context.strategy.runner.generator.backend.scheduler.__class__ is _Scheduler
+            context.strategy.runner.generator.backend.engine_core.__class__
+            is _EngineCore
         )
     finally:
         dist.destroy_process_group()
@@ -163,7 +175,7 @@ def test_train_context_passes_ddp_inference_view_to_rollout(tmp_path, monkeypatc
 
 def test_online_rollout_rejects_torch_compile_before_scheduler(monkeypatch):
     monkeypatch.setattr(
-        train_context.AutoTokenizer,
+        train_context_builder.AutoTokenizer,
         "from_pretrained",
         lambda _param_path: pytest.fail("tokenizer should not be loaded"),
     )
@@ -250,7 +262,8 @@ def _multi_rank_rollout_then_train_worker():
     scheduler = make_cpu_scheduler(
         inference_model, FakeTokenizer(), max_batch_size=1, max_seq_len=64
     )
-    result = scheduler.run_batch(
+    result = run_batch(
+        scheduler,
         [[5 + rank, 6 + rank, 7 + rank]],
         max_tokens=2 + rank,
         temperature=0,
@@ -282,7 +295,183 @@ def _multi_rank_rollout_then_train_worker():
     # generation agrees across replicas after invalidating stale KV state.
     scheduler.update_weights(1)
     inference_model.eval()
-    post_update = scheduler.run_batch([[11, 12, 13]], max_tokens=3, temperature=0)
+    post_update = run_batch(scheduler, [[11, 12, 13]], max_tokens=3, temperature=0)
     gathered = [None] * dist.get_world_size()
     dist.all_gather_object(gathered, post_update)
     assert all(tokens == gathered[0] for tokens in gathered)
+
+
+def _config(**overrides):
+    values = dict(
+        model=ComponentSpec(
+            type="torch.nn:Linear", params={"in_features": 2, "out_features": 2}
+        ),
+        dataset=ComponentSpec(
+            type="tests.support.rollout:RandomTokenDataset", params={"length": 5}
+        ),
+        optimizer=ComponentSpec(type="torch.optim:SGD", params={"lr": 0.0}),
+        scheduler=ComponentSpec(
+            type="torch.optim.lr_scheduler:StepLR", params={"step_size": 1}
+        ),
+        strategy="online_grpo",
+        reward_model_fn=Mock(),
+        rollout_mode="async_round",
+        rollout_devices=["cuda:1", "cuda:2"],
+        rollout_interval=1,
+    )
+    values.update(overrides)
+    return TrainConfig(**values)
+
+
+@pytest.mark.parametrize("name", ["learner_device", "group_size", "rollout_devies"])
+def test_unknown_training_fields_fail(name):
+    with pytest.raises(ValueError, match=name):
+        _config(**{name: 2})
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("rl_update_epochs", 3),
+        ("rl_minibatch_prompts", 2),
+        ("gradient_chunked_logprobs", True),
+        ("moe_aux_loss_coef", 0.5),
+    ],
+)
+def test_strategy_kwargs_cannot_override_owned_fields(name, value):
+    with pytest.raises(ValueError, match="not strategy_kwargs"):
+        _config(strategy_kwargs={name: value})
+
+
+@pytest.mark.parametrize("value", [0, 1, True, 1.5, "4"])
+def test_invalid_grpo_group_size_fails_before_startup(value):
+    with pytest.raises(ValueError, match="group_size"):
+        _config(strategy_kwargs={"group_size": value})
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "rollout_temperature",
+        "rollout_val_temperature",
+        "rollout_worker_timeout_s",
+        "rollout_startup_timeout_s",
+        "rollout_weight_timeout_s",
+    ],
+)
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+def test_nonfinite_sampling_and_timeout_fields_fail(name, value):
+    with pytest.raises(ValueError):
+        _config(**{name: value})
+
+
+def test_runtime_world_size_rejected_before_loading_models(monkeypatch):
+    builder = TrainContextBuilder(_config())
+    load = Mock()
+    builder._load_preloaded_state = load
+    monkeypatch.setattr("astrai.trainer.context.builder.get_world_size", lambda: 2)
+    with pytest.raises(ValueError, match="world_size must match configured nprocs"):
+        builder.build()
+    load.assert_not_called()
+
+
+def test_effective_grpo_defaults_and_all_worker_parameters(monkeypatch):
+    cfg = _config(
+        batch_per_device=5,
+        rollout_startup_timeout_s=73,
+        rollout_worker_timeout_s=91,
+        rollout_weight_timeout_s=123,
+        random_seed=42,
+        rollout_temperature=0.8,
+        rollout_top_k=7,
+        rollout_top_p=0.75,
+        rollout_max_tokens=16,
+    )
+    model = SimpleNamespace(
+        config=SimpleNamespace(ffn_type="mlp", max_position_embeddings=256),
+        parameters=lambda: iter(
+            [SimpleNamespace(device=torch.device("cuda:0"), dtype=torch.bfloat16)]
+        ),
+    )
+    context = SimpleNamespace(
+        model=model,
+        executor=SimpleNamespace(model_for_inference=lambda m: m),
+        strategy=SimpleNamespace(
+            group_size=4, supports_online=lambda: True, set_rollout_runner=Mock()
+        ),
+        consumed_samples=10,
+        checkpoint=None,
+        optimizer_step=2,
+    )
+    coordinator = Mock()
+    monkeypatch.setattr(
+        "astrai.trainer.rollout.setup.AsyncRoundCoordinator", coordinator
+    )
+    monkeypatch.setattr("torch.cuda.device_count", lambda: 3)
+    configure_rollout(
+        context, cfg, "tokenizer", {}, Mock(), lambda _: None, Mock(), Mock()
+    )
+    values = coordinator.call_args.kwargs
+    assert values["params"] == SamplingParams(
+        group_size=4, max_tokens=16, temperature=0.8, top_k=7, top_p=0.75
+    )
+    assert values["max_batch_size"] == 12
+    assert values["max_prompts_per_worker"] == 3
+    assert values["startup_timeout_s"] == 73
+    assert values["worker_timeout_s"] == 91
+    assert values["weight_timeout_s"] == 123
+    assert values["random_seed"] == 42
+    assert values["sample_cursor"] == 10
+    assert cfg.rollout_max_policy_lag == values["max_policy_lag"] == 1
+    assert values["model_dtype"] == torch.bfloat16
+    assert values["devices"] == ["cuda:1", "cuda:2"]
+    assert (
+        context.async_rollout is context.strategy.set_rollout_runner.call_args.args[0]
+    )
+    assert context.async_rollout.coordinator is coordinator.return_value
+
+
+@pytest.mark.parametrize("devices", [["cuda:0"], ["cuda:3"]])
+def test_device_conflicts_fail_before_startup(monkeypatch, devices):
+    monkeypatch.setattr("torch.cuda.device_count", lambda: 3)
+    with pytest.raises(ValueError, match="exclude|exceed"):
+        resolve_async_rollout(
+            _config(rollout_devices=devices),
+            torch.device("cuda:0"),
+            SamplingParams(group_size=4),
+            256,
+            0,
+        )
+
+
+def test_ddp_rollout_devices_are_partitioned_by_learner_rank(monkeypatch):
+    monkeypatch.setattr("torch.cuda.device_count", lambda: 8)
+    config = _config(
+        dp_size=2,
+        dp_mode="ddp",
+        rollout_devices=["cuda:2", "cuda:3", "cuda:4", "cuda:5"],
+        batch_per_device=5,
+    )
+    resolved = [
+        resolve_async_rollout(
+            config,
+            torch.device(f"cuda:{rank}"),
+            SamplingParams(group_size=4),
+            256,
+            12,
+            rank=rank,
+            world_size=2,
+        )
+        for rank in range(2)
+    ]
+    assert resolved[0].devices == ("cuda:2", "cuda:4")
+    assert resolved[1].devices == ("cuda:3", "cuda:5")
+    assert all(item.sample_cursor == 6 for item in resolved)
+    assert all(item.max_prompts_per_worker == 3 for item in resolved)
+
+
+def test_ddp_rollout_rejects_shared_or_missing_worker_devices():
+    with pytest.raises(ValueError, match="exclude all learner devices"):
+        _config(dp_size=2, dp_mode="ddp", rollout_devices=["cuda:1", "cuda:2"])
+    with pytest.raises(ValueError, match="at least one rollout device per learner"):
+        _config(dp_size=2, dp_mode="ddp", rollout_devices=["cuda:2"])

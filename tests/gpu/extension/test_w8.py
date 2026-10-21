@@ -9,7 +9,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from astrai.extension import plan, quantize_act_int8, quantize_weight_int8
+from astrai.extension import plan, quantize
 from astrai.extension.kernel.gemm import quant_gemm
 from tests.support.capabilities import skip_no_kernel
 
@@ -27,8 +27,15 @@ def _rand(m, n, k, seed=0):
     return x, w
 
 
+def _quant_rows(x):
+    rows = x.detach().float().reshape(-1, x.shape[-1])
+    scale = rows.abs().amax(dim=-1).clamp_min(1e-12) / 127.0
+    out, _, _ = quantize(x, scale.reciprocal().reshape(-1, 1), dtype=torch.int8)
+    return out, scale
+
+
 def _quant_weight(w):
-    w8, ws = quantize_weight_int8(w)
+    w8, ws = _quant_rows(w)
     w_ref = (w8.float() * ws.unsqueeze(1)).to(torch.bfloat16)
     return w8, ws, w_ref
 
@@ -80,7 +87,7 @@ class TestQuantGemm:
     def test_w8a8(self, m, n, k):
         x, w = _rand(m, n, k)
         w8, ws, w_ref = _quant_weight(w)
-        x8, xs = quantize_act_int8(x)
+        x8, xs = _quant_rows(x)
         x_ref = (x8.float() * xs.unsqueeze(1)).reshape(x.shape).to(torch.bfloat16)
         out = quant_gemm(x8.reshape(m, k), w8, a_scale=xs, b_scale=ws)
         ref = F.linear(x_ref, w_ref)
@@ -90,7 +97,7 @@ class TestQuantGemm:
         x, w = _rand(m, n, k)
         w8, ws, w_ref = _quant_weight(w)
         s = (x.float().abs().amax() / 127.0).reshape(1).float()
-        x8 = torch.round(x.float() / s.item()).clamp_(-127, 127).to(torch.int8)
+        x8, _, _ = quantize(x, s.reciprocal(), dtype=torch.int8)
         x_ref = (x8.float() * s.item()).to(torch.bfloat16)
         out = quant_gemm(x8, w8, a_scale=s, b_scale=ws)
         ref = F.linear(x_ref, w_ref)
@@ -200,19 +207,19 @@ class TestQuantGemmValidation:
 class TestQuantizers:
     def test_weight_quantizer_contract(self):
         w = (torch.randn(64, 128, device="cuda") * 0.5).to(torch.bfloat16)
-        w8, ws = quantize_weight_int8(w)
+        w8, ws = _quant_rows(w)
         assert w8.dtype == torch.int8 and w8.shape == w.shape
         assert w8.is_contiguous()
         assert ws.dtype == torch.float32 and ws.shape == (64,)
         deq = w8.float() * ws.unsqueeze(1)
         # round-to-nearest per channel: every element sits within half a
-        # quantization step (plus fp32 division slop) of its source.
+        # quantization step (plus fp32 multiplier slop) of its source.
         err = (deq - w.float()).abs()
         assert bool((err <= ws.unsqueeze(1) * 0.5 * 1.001 + 1e-9).all())
 
     def test_act_quantizer_contract(self):
         x = (torch.randn(3, 5, 64, device="cuda") * 0.5).to(torch.bfloat16)
-        q, s = quantize_act_int8(x)
+        q, s = _quant_rows(x)
         assert q.dtype == torch.int8 and q.shape == x.shape
         assert s.dtype == torch.float32 and s.shape == (15,)
         assert q.int().abs().max().item() <= 127

@@ -3,12 +3,14 @@
 import threading
 import time
 import uuid
+from typing import Dict
 from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
 
-from astrai.inference import Scheduler
+from astrai.extension.runtime.context import use_op_selection
+from astrai.inference import EngineCore
 from astrai.inference.contracts import SchedulerOutput
 from astrai.inference.core.events import RequestFinished, TokenDelta
 from astrai.inference.core.request import Request
@@ -16,6 +18,7 @@ from astrai.inference.worker.pending import (
     PendingExecution,
 )
 from astrai.model.autoregressive_lm import AutoRegressiveLM
+from astrai.trainer.backend import run_batch
 from tests.support.models import make_rollout_config
 from tests.support.scheduler import (
     _make_contract_scheduler,
@@ -54,7 +57,7 @@ def test_submit_decode_returns_pending_without_touching_tasks(device):
     scheduler, _tok, _model = _make_real_scheduler(device)
     try:
         prompts = [[10, 20, 30, 40]]
-        scheduler.run_batch(prompts, max_tokens=2, temperature=0.7)
+        run_batch(scheduler, prompts, max_tokens=2, temperature=0.7)
         requests = [
             Request(
                 request_id=f"probe_{uuid.uuid4().hex[:8]}",
@@ -64,26 +67,28 @@ def test_submit_decode_returns_pending_without_touching_tasks(device):
             )
         ]
         request = requests[0]
-        if not scheduler._kv_manager.alloc_slots(
+        if not scheduler.scheduler.kv_manager.alloc_slots(
             request.request_id, request.prompt_ids
         ):
             pytest.skip("KV allocation failed")
         request.input_tokens = len(request.prompt_ids)
         # Prefill through the real stepper path so KV state is complete.
-        with scheduler._backend_context():
-            scheduler._stepper.step([request])
+        with use_op_selection(scheduler.op_selection):
+            scheduler.execute_synchronously([request])
             assert request.prefill_complete
-            plan = scheduler.schedule([request])
-            pending = scheduler._executor.submit_decode(list(plan.requests), plan=plan)
+            plan = scheduler.scheduler.schedule([request])
+            pending = scheduler.model_runner.submit_decode(
+                list(plan.requests), plan=plan
+            )
         assert pending is not None
         try:
             n_prefilled = len(request.output_ids)
             assert request.output_tokens == n_prefilled
-            scheduler.engine_core.resolve(pending)
+            scheduler.resolve(pending)
             assert len(request.output_ids) == n_prefilled + 1
             assert request.output_tokens == n_prefilled + 1
         finally:
-            scheduler._kv_manager.free_slots(request.request_id)
+            scheduler.scheduler.kv_manager.free_slots(request.request_id)
     finally:
         scheduler.stop()
 
@@ -100,7 +105,7 @@ def test_online_loop_overlap_generates_and_admits_midstream(device):
     cfg = make_rollout_config(max_position_embeddings=64)
     model = AutoRegressiveLM(cfg).to(device=device, dtype=torch.bfloat16).eval()
     tok = FakeTokenizer()
-    scheduler = Scheduler(
+    scheduler = EngineCore(
         model=model,
         tokenizer=tok,
         max_batch_size=8,
@@ -108,12 +113,12 @@ def test_online_loop_overlap_generates_and_admits_midstream(device):
         enable_overlap=True,
     )
 
-    scheduler._requests.tokenizer = _UnwrappingTokenizer(tok)
+    scheduler.scheduler._requests.tokenizer = _UnwrappingTokenizer(tok)
 
-    token_counts: dict = {"first": 0, "second": 0}
-    done: dict = {"first": threading.Event(), "second": threading.Event()}
+    token_counts: Dict = {"first": 0, "second": 0}
+    done: Dict = {"first": threading.Event(), "second": threading.Event()}
     tag_by_prompt = {"a" * 8: "first", "b" * 8: "second"}
-    sink_rids: dict = {}
+    sink_rids: Dict = {}
 
     def sink(events):
         for event in events:
@@ -146,7 +151,7 @@ def test_online_loop_overlap_generates_and_admits_midstream(device):
         # executor slot (the step launched past the terminal one) for one
         # more iteration. Wait for the drain instead of racing it.
         deadline = time.time() + 5
-        while scheduler._executor.peek_pending() is not None:
+        while scheduler.model_runner.peek_pending() is not None:
             if time.time() > deadline:
                 pytest.fail("overlap loop left a step pending after finish")
             time.sleep(0.01)
@@ -172,7 +177,7 @@ def test_overlap_loop_matches_synchronous_tokens(device):
     cfg = make_rollout_config(max_position_embeddings=64)
     model = AutoRegressiveLM(cfg).to(device=device, dtype=torch.bfloat16).eval()
     tokenizer = FakeTokenizer()
-    scheduler = Scheduler(
+    scheduler = EngineCore(
         model=model,
         tokenizer=tokenizer,
         max_batch_size=8,
@@ -180,7 +185,7 @@ def test_overlap_loop_matches_synchronous_tokens(device):
         enable_overlap=True,
     )
 
-    scheduler._requests.tokenizer = _UnwrappingTokenizer(tokenizer)
+    scheduler.scheduler._requests.tokenizer = _UnwrappingTokenizer(tokenizer)
 
     prompts = ["a" * 8, "b" * 8, "c" * 8]
     scheduler.start()
@@ -189,15 +194,18 @@ def test_overlap_loop_matches_synchronous_tokens(device):
         # random model may sample a stop id (FakeTokenizer: eos=2) mid-stream,
         # so accept an early stop-token termination on either side of the
         # comparison; what must match is the committed token stream itself.
-        reference = scheduler.run_batch(
-            [[ord(c) for c in p] for p in prompts], max_tokens=12, temperature=0
+        reference = run_batch(
+            scheduler,
+            [[ord(c) for c in p] for p in prompts],
+            max_tokens=12,
+            temperature=0,
         )
-        stop_ids = set(scheduler.stop_ids)
+        stop_ids = set(scheduler.scheduler.stop_ids)
         assert all(len(ids) == 12 or (ids and ids[-1] in stop_ids) for ids in reference)
 
         # Collect the committed token stream through the event sink before
         # release_finished discards the finished requests.
-        stream: dict = {}
+        stream: Dict = {}
         lock = threading.Lock()
 
         def sink(events):
@@ -218,7 +226,7 @@ def test_overlap_loop_matches_synchronous_tokens(device):
                     len(stream.get(tid, [])) >= 12
                     or (
                         stream.get(tid, [None])[-1] in stop_ids
-                        and not scheduler._requests.get_request(tid)
+                        and not scheduler.scheduler._requests.get_request(tid)
                     )
                     for tid in request_ids
                 )
@@ -227,7 +235,9 @@ def test_overlap_loop_matches_synchronous_tokens(device):
             time.sleep(0.01)
         # Let the loop's release path drain fully before asserting.
         deadline = time.time() + 5
-        while time.time() < deadline and scheduler._executor.peek_pending() is not None:
+        while (
+            time.time() < deadline and scheduler.model_runner.peek_pending() is not None
+        ):
             time.sleep(0.01)
 
         by_task = {tid: stream.get(tid, []) for tid in request_ids}
@@ -236,7 +246,7 @@ def test_overlap_loop_matches_synchronous_tokens(device):
                 f"request {i} overlap stream {by_task[tid]} != reference "
                 f"{list(reference[i])}"
             )
-        assert scheduler._executor.peek_pending() is None
+        assert scheduler.model_runner.peek_pending() is None
     finally:
         scheduler.stop()
 
@@ -251,12 +261,12 @@ def test_stop_leaves_state_intact_when_loop_does_not_drain():
     and the request state, and start() refuses to spawn a second loop.
     """
     scheduler = _make_contract_scheduler()
-    scheduler.engine_core.loop_thread = MagicMock()
-    scheduler._loop_thread.is_alive.return_value = True
+    scheduler.loop_thread = MagicMock()
+    scheduler.loop_thread.is_alive.return_value = True
     scheduler.release_finished = MagicMock()
 
     assert scheduler.stop() is False
-    assert scheduler._loop_thread is not None
+    assert scheduler.loop_thread is not None
     scheduler.release_finished.assert_not_called()
 
     with patch("astrai.inference.core.engine_core.threading.Thread") as TH:
@@ -268,14 +278,14 @@ def test_stop_clears_state_when_loop_drains_normally():
     """After a clean drain the handle resets and terminal cleanup runs."""
     scheduler = _make_contract_scheduler()
     scheduler.add_request("waiting", max_tokens=8)
-    scheduler.engine_core.loop_thread = MagicMock()
-    scheduler._loop_thread.is_alive.return_value = True
+    scheduler.loop_thread = MagicMock()
+    scheduler.loop_thread.is_alive.return_value = True
 
     def join_side_effect(timeout=None):
-        scheduler._loop_thread.is_alive.return_value = False
+        scheduler.loop_thread.is_alive.return_value = False
 
-    scheduler._loop_thread.join.side_effect = join_side_effect
+    scheduler.loop_thread.join.side_effect = join_side_effect
     assert scheduler.stop() is True
-    assert scheduler._loop_thread is None
-    assert not scheduler._requests.has_requests()
-    assert not scheduler._states
+    assert scheduler.loop_thread is None
+    assert not scheduler.scheduler._requests.has_requests()
+    assert not scheduler.scheduler._states

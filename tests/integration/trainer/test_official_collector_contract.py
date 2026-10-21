@@ -6,7 +6,11 @@ import pytest
 import torch
 
 from astrai.trainer.rollout import RawRollout
-from examples.rl_reward.qualify_collector import compare_pairs, validate_episode
+from examples.rl_reward.qualify_collector import (
+    assert_drained,
+    compare_pairs,
+    validate_episode,
+)
 
 
 def _episode():
@@ -60,3 +64,22 @@ def test_official_qualification_cannot_pass_incomplete_or_synthetic_length_only(
         raw.responses = raw.responses[:-1]
     with pytest.raises(ValueError):
         validate_episode(raw, 32, 8, 6, {9})
+
+
+def test_collector_drain_check_tracks_current_engine_owners():
+    from astrai.trainer.backend import run_batch
+    from tests.support.inference import make_cpu_model, make_cpu_scheduler
+
+    with torch.random.fork_rng(devices=[]):
+        engine = make_cpu_scheduler(make_cpu_model())
+        try:
+            assert_drained(engine)
+            assert len(run_batch(engine, [[10, 20]], max_tokens=2)) == 1
+            assert_drained(engine)
+            engine.add_request("pending", prompt_ids=[10, 20], max_tokens=2)
+            engine.scheduler.admit_requests()
+            with pytest.raises(RuntimeError, match="did not drain"):
+                assert_drained(engine)
+        finally:
+            engine.stop()
+        assert_drained(engine)

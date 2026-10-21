@@ -1,12 +1,13 @@
 """Tests for scheduler concurrency."""
 
 from types import SimpleNamespace
+from typing import List
 from unittest.mock import MagicMock, patch
 
+import pytest
 import torch
 
-from astrai.extension import CudaBackend, TorchNativeBackend, get_backend
-from astrai.inference import Scheduler
+from astrai.inference import EngineCore
 from astrai.inference.contracts import SchedulerOutput
 from astrai.inference.core.request import Request
 from astrai.inference.worker.model_runner import (
@@ -18,6 +19,7 @@ from astrai.inference.worker.pending import (
     ResultRing,
 )
 from astrai.model.autoregressive_lm import AutoRegressiveLM
+from astrai.trainer.backend import run_batch
 from tests.support.models import make_rollout_config
 from tests.support.scheduler import (
     _make_contract_scheduler,
@@ -27,41 +29,32 @@ from tests.support.scheduler import (
 from tests.support.tokenizers import FakeTokenizer
 
 
-def test_step_splits_decode_batch_by_request_backend():
+def test_step_batches_decode_requests_under_one_attention_selection():
     scheduler = _make_contract_scheduler()
     observed = []
 
     def submit(requests, return_logprobs=False, *, plan):
-        observed.append(
-            (type(get_backend()), [request.request_id for request in requests])
-        )
+        observed.append([request.request_id for request in requests])
         return PendingExecution(
             snapshot=plan,
             sampled_identities=tuple(r.identity for r in requests),
             tokens=torch.tensor([7] * len(requests), dtype=torch.long),
         )
 
-    scheduler._executor.submit_decode = MagicMock(side_effect=submit)
-
-    torch_task = Request("torch", [1], backend=TorchNativeBackend())
-    cuda_task = Request("cuda", [1], backend=CudaBackend())
-    for request in (torch_task, cuda_task):
+    scheduler.model_runner.submit_decode = MagicMock(side_effect=submit)
+    first, second = Request("first", [1]), Request("second", [1])
+    for request in (first, second):
         request.input_tokens = 1
         request.output_ids = [1]
         request.num_computed_tokens = 1
-        scheduler._metrics.register(request.request_id)
+        scheduler.scheduler.metrics.register(request.request_id)
 
-    produced, aborted = scheduler._stepper.step([torch_task, cuda_task])
-
+    produced, aborted = scheduler.execute_synchronously([first, second])
     assert aborted == []
-    assert produced == [torch_task, cuda_task]
-    assert torch_task.output_ids == [1, 7]
-    assert cuda_task.output_ids == [1, 7]
-    assert not scheduler._planned
-    assert observed == [
-        (TorchNativeBackend, ["torch"]),
-        (CudaBackend, ["cuda"]),
-    ]
+    assert produced == [first, second]
+    assert first.output_ids == [1, 7]
+    assert second.output_ids == [1, 7]
+    assert observed == [["first", "second"]]
 
 
 def test_step_batches_ragged_prefill_with_shared_cache_start():
@@ -78,16 +71,16 @@ def test_step_batches_ragged_prefill_with_shared_cache_start():
             tokens=torch.tensor([11, 12], dtype=torch.long),
         )
 
-    scheduler._executor.execute_prefill = MagicMock(side_effect=prefill)
+    scheduler.model_runner.execute_prefill = MagicMock(side_effect=prefill)
 
-    produced, aborted = scheduler._stepper.step([short, long])
+    produced, aborted = scheduler.execute_synchronously([short, long])
 
     assert aborted == []
     # ``produced`` is now the live set (callers drive it): same members,
     # caller order, not just the requests that sampled this step.
     assert set(produced) == {long, short}
     assert produced == [short, long]
-    args, kwargs = scheduler._executor.execute_prefill.call_args
+    args, kwargs = scheduler.model_runner.execute_prefill.call_args
     assert [r.identity for r in args[0]] == [short.identity, long.identity]
     assert kwargs["start_pos"] == 0
     assert kwargs["num_tokens"] == [3, 5]
@@ -258,7 +251,7 @@ def test_steady_decode_submit_path_is_sync_free(device):
         # First run_batch call warms everything the steady state touches
         # (prefill, first decode, sampling-info build) so the instrumented
         # second batch enters steady state from its first step.
-        scheduler.run_batch(prompts, max_tokens=2, temperature=0.7, top_k=10)
+        run_batch(scheduler, prompts, max_tokens=2, temperature=0.7, top_k=10)
         torch.manual_seed(1234)
 
         banned = (
@@ -266,7 +259,7 @@ def test_steady_decode_submit_path_is_sync_free(device):
             torch.Tensor.any,
             torch.Tensor.all,
         )
-        calls: list = []
+        calls: List = []
 
         def _spy(name, orig):
             def _impl(self, *a, **k):
@@ -280,7 +273,7 @@ def test_steady_decode_submit_path_is_sync_free(device):
             for name, orig in zip(("item", "any", "all"), banned)
         )
         with _MultiPatch(patched):
-            scheduler.run_batch(prompts, max_tokens=2, temperature=0.7, top_k=10)
+            run_batch(scheduler, prompts, max_tokens=2, temperature=0.7, top_k=10)
         assert not calls, f"steady decode resolved device predicates on host: {calls}"
     finally:
         scheduler.stop()
@@ -301,8 +294,8 @@ def test_run_batch_greedy_reproducible_across_calls(device):
     scheduler, _tok, _model = _make_real_scheduler(device)
     try:
         prompts = [[10, 20, 30, 40], [7, 8, 9]]
-        first = scheduler.run_batch(prompts, max_tokens=6, temperature=0)
-        second = scheduler.run_batch(prompts, max_tokens=6, temperature=0)
+        first = run_batch(scheduler, prompts, max_tokens=6, temperature=0)
+        second = run_batch(scheduler, prompts, max_tokens=6, temperature=0)
         assert first == second
         assert all(len(ids) == 6 for ids in first)
     finally:
@@ -313,7 +306,7 @@ def test_paged_pool_selected_via_scheduler_kwargs(device):
     """page_size/kv_tokens reach the BlockPool: paged strategy + prefix cache."""
     cfg = make_rollout_config(max_position_embeddings=64)
     model = AutoRegressiveLM(cfg).to(device=device, dtype=torch.bfloat16).eval()
-    scheduler = Scheduler(
+    scheduler = EngineCore(
         model=model,
         tokenizer=FakeTokenizer(),
         max_batch_size=2,
@@ -323,11 +316,13 @@ def test_paged_pool_selected_via_scheduler_kwargs(device):
         kv_tokens=128,
     )
     try:
-        assert not scheduler._cache.contiguous
-        assert scheduler._cache.page_size == 4
-        assert scheduler._cache.n_tokens == 128
+        assert not scheduler.scheduler.cache.contiguous
+        assert scheduler.scheduler.cache.page_size == 4
+        assert scheduler.scheduler.cache.n_tokens == 128
         # End-to-end: generation works on the paged path.
-        out = scheduler.run_batch([[10, 11, 12, 13, 14]], max_tokens=3, temperature=0.0)
+        out = run_batch(
+            scheduler, [[10, 11, 12, 13, 14]], max_tokens=3, temperature=0.0
+        )
         assert len(out[0]) == 3
     finally:
         scheduler.stop()
@@ -357,7 +352,7 @@ def test_chunked_prefill_matches_whole_prompt_greedy_tokens(device):
 
     prompts = [[10, 11, 12, 13, 14, 15, 16, 17], [40, 41, 42, 43], [5, 6, 7]]
 
-    ref_sched = Scheduler(
+    ref_sched = EngineCore(
         model=model,
         tokenizer=tokenizer,
         max_batch_size=8,
@@ -365,7 +360,7 @@ def test_chunked_prefill_matches_whole_prompt_greedy_tokens(device):
         enable_cuda_graph=False,
     )
     fwd_calls = []
-    orig_prefill = ref_sched._executor.execute_prefill
+    orig_prefill = ref_sched.model_runner.execute_prefill
 
     def counting_prefill(requests, **kw):
         fwd_calls.append(
@@ -373,15 +368,15 @@ def test_chunked_prefill_matches_whole_prompt_greedy_tokens(device):
         )
         return orig_prefill(requests, **kw)
 
-    ref_sched._executor.execute_prefill = counting_prefill
+    ref_sched.model_runner.execute_prefill = counting_prefill
     try:
-        reference = ref_sched.run_batch(
-            [list(p) for p in prompts], max_tokens=5, temperature=0.0
+        reference = run_batch(
+            ref_sched, [list(p) for p in prompts], max_tokens=5, temperature=0.0
         )
     finally:
         ref_sched.stop()
 
-    chunked = Scheduler(
+    chunked = EngineCore(
         model=model,
         tokenizer=tokenizer,
         max_batch_size=8,
@@ -391,9 +386,9 @@ def test_chunked_prefill_matches_whole_prompt_greedy_tokens(device):
     )
     try:
         # Sanity: budget must actually be in force.
-        assert chunked._stepper._token_budget == 3
-        chunked_result = chunked.run_batch(
-            [list(p) for p in prompts], max_tokens=5, temperature=0.0
+        assert chunked.scheduler._planner._token_budget == 3
+        chunked_result = run_batch(
+            chunked, [list(p) for p in prompts], max_tokens=5, temperature=0.0
         )
     finally:
         chunked.stop()
@@ -413,7 +408,7 @@ def test_chunked_prefill_budget_caps_forward_tokens(device):
     # truncate the exact-length assert on some torch builds.
     tokenizer = FakeTokenizer()
     tokenizer.stop_ids = []
-    scheduler = Scheduler(
+    scheduler = EngineCore(
         model=model,
         tokenizer=tokenizer,
         max_batch_size=8,
@@ -422,16 +417,19 @@ def test_chunked_prefill_budget_caps_forward_tokens(device):
         token_budget=4,
     )
     seen = []
-    orig = scheduler._executor.execute_prefill
+    orig = scheduler.model_runner.execute_prefill
 
     def spy(requests, **kw):
         seen.append(sum(kw.get("num_tokens") or []))
         return orig(requests, **kw)
 
-    scheduler._executor.execute_prefill = spy
+    scheduler.model_runner.execute_prefill = spy
     try:
-        out = scheduler.run_batch(
-            [[10, 11, 12, 13, 14, 15, 16, 17, 18, 19]], max_tokens=2, temperature=0.0
+        out = run_batch(
+            scheduler,
+            [[10, 11, 12, 13, 14, 15, 16, 17, 18, 19]],
+            max_tokens=2,
+            temperature=0.0,
         )
         assert len(out[0]) == 2
     finally:
@@ -439,3 +437,34 @@ def test_chunked_prefill_budget_caps_forward_tokens(device):
     assert seen, "no prefill forwards observed"
     assert max(seen) <= 4, seen
     assert len(seen) >= 3, f"expected multiple chunks, got {seen}"
+
+
+def test_scheduler_seeds_survive_batching_and_request_completion():
+    scheduler, _, _ = _make_real_scheduler("cpu")
+    prompts = [[1, 2], [3, 4, 5]]
+    first = run_batch(
+        scheduler, prompts, seeds=[11, 22], max_tokens=6, top_k=0, return_details=True
+    )
+    torch.manual_seed(999)
+    reordered = run_batch(
+        scheduler,
+        list(reversed(prompts)),
+        seeds=[22, 11],
+        max_tokens=6,
+        top_k=0,
+        return_details=True,
+    )
+    individual = run_batch(
+        scheduler, [prompts[1]], seeds=[22], max_tokens=6, top_k=0, return_details=True
+    )
+    assert [r.token_ids for r in first] == [r.token_ids for r in reversed(reordered)]
+    assert individual[0].token_ids == first[1].token_ids
+    assert all(r.error_reason is None for r in first + reordered + individual)
+
+
+@pytest.mark.parametrize("seeds", [[], [True], [-1], [2**63]])
+def test_bad_request_seeds_fail_before_allocating_cache(seeds):
+    scheduler, _, _ = _make_real_scheduler("cpu")
+    with pytest.raises(ValueError, match="seeds"):
+        run_batch(scheduler, [[1, 2]], seeds=seeds)
+    assert not scheduler.scheduler._planned

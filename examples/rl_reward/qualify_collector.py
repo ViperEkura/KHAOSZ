@@ -11,7 +11,8 @@ from pathlib import Path
 import torch
 import yaml
 
-from astrai.inference.core.scheduler import Scheduler
+from astrai.extension import op_backend
+from astrai.inference.core.engine_core import EngineCore
 from astrai.model import AutoModel
 from astrai.tokenize import AutoTokenizer
 from astrai.trainer.backend import ColocatedBackend
@@ -61,15 +62,16 @@ def validate_episode(raw, concurrency, group, response_cap, stop_ids):
     }
 
 
-def assert_drained(scheduler):
+def assert_drained(engine):
+    scheduler = engine.scheduler
     if (
-        scheduler.engine_core.pending
+        engine.pending
         or scheduler._planned
         or scheduler._pending_order
         or scheduler._ready
         or scheduler._states
         or scheduler._kv_manager.request_count
-        or any(slot["in_use"] for slot in scheduler._executor._result_ring._slots)
+        or any(slot["in_use"] for slot in engine.model_runner._result_ring._slots)
     ):
         raise RuntimeError("collector did not drain execution, request and KV owners")
 
@@ -188,17 +190,17 @@ def main():
             for graphs in (False, True):
                 paired = {}
                 for overlap in (False, True):
-                    scheduler = Scheduler(
-                        model,
-                        tokenizer,
-                        max_batch_size=concurrency,
-                        max_seq_len=recipe.prompt_cap + recipe.response_cap,
-                        enable_overlap=overlap,
-                        enable_cuda_graph=graphs,
-                        backend="cuda",
-                    )
+                    with op_backend(attention="cuda"):
+                        engine = EngineCore(
+                            model,
+                            tokenizer,
+                            max_batch_size=concurrency,
+                            max_seq_len=recipe.prompt_cap + recipe.response_cap,
+                            enable_overlap=overlap,
+                            enable_cuda_graph=graphs,
+                        )
                     generator = RolloutGenerator(
-                        ColocatedBackend(scheduler),
+                        ColocatedBackend(engine),
                         tokenizer,
                         SamplingParams(
                             group_size=8,
@@ -210,16 +212,16 @@ def main():
                         ),
                     )
                     depths = []
-                    submit = scheduler.engine_core.submit
+                    submit = engine.submit
 
                     def observe(plan):
-                        depths.append(len(scheduler.engine_core.pending))
+                        depths.append(len(engine.pending))
                         return submit(plan)
 
-                    scheduler.engine_core.submit = observe
+                    engine.submit = observe
                     try:
                         generator.generate(batch)
-                        assert_drained(scheduler)
+                        assert_drained(engine)
                         for seed in (3407, 3408, 3409):
                             depths.clear()
                             torch.cuda.synchronize()
@@ -239,7 +241,7 @@ def main():
                                 recipe.response_cap,
                                 set(tokenizer.stop_ids),
                             )
-                            assert_drained(scheduler)
+                            assert_drained(engine)
                             if (1 in depths) != overlap:
                                 raise ValueError(
                                     "collector did not dispatch the declared overlap pipeline"
@@ -254,7 +256,7 @@ def main():
                                 )
                             else:
                                 paired[seed] = (raw, scores)
-                            captured = len(scheduler._executor._graph_ctx._graphs)
+                            captured = len(engine.model_runner._graph_ctx._graphs)
                             if graphs and not captured:
                                 raise ValueError(
                                     "requested CUDA graphs were not captured"
@@ -288,8 +290,8 @@ def main():
                                 }
                             )
                     finally:
-                        scheduler.stop()
-                        del generator, scheduler
+                        engine.stop()
+                        del generator, engine
                         gc.collect()
                         torch.cuda.empty_cache()
         summary = {

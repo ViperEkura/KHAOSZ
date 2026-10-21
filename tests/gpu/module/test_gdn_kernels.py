@@ -117,8 +117,6 @@ def test_gated_deltanet_bwd_matches_autograd(device):
     v_new = (rnd(batch, heads, seq_len, dim) * 0.1).to(device, torch.bfloat16)
     do = (rnd(batch, heads, seq_len, dim) * 0.1).to(device, torch.bfloat16)
 
-    gb = gh.reshape(batch, heads, chunks, chunk)
-    decay = (gb.unsqueeze(-1) - gb.unsqueeze(-2)).tril().exp().tril()
     qr = qh.to(torch.bfloat16).float().requires_grad_(True)
     kr = kh.to(torch.bfloat16).float().requires_grad_(True)
     vr = v_new.float().clone().requires_grad_(True)

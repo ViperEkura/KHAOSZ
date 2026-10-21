@@ -10,7 +10,9 @@ from astrai.trainer.backend import ColocatedBackend, P2PCopyPublisher
 
 @pytest.mark.parametrize("training", [False, True])
 @pytest.mark.parametrize("fail", [False, True])
-def test_colocated_mode_changes_stay_inside_policy_snapshot(training, fail):
+def test_colocated_mode_changes_stay_inside_policy_snapshot(
+    training, fail, monkeypatch
+):
     state = {"locked": False}
     calls = []
 
@@ -35,7 +37,7 @@ def test_colocated_mode_changes_stay_inside_policy_snapshot(training, fail):
         finally:
             state["locked"] = False
 
-    def run_batch(prompts, **kwargs):
+    def fake_run_batch(_core, prompts, **kwargs):
         assert state["locked"]
         assert model.training is False
         assert prompts == [[1, 2]]
@@ -44,8 +46,9 @@ def test_colocated_mode_changes_stay_inside_policy_snapshot(training, fail):
             raise RuntimeError("generation failed")
         return [[4, 5, 6]]
 
+    monkeypatch.setattr("astrai.trainer.backend.run_batch", fake_run_batch)
     backend = ColocatedBackend(
-        SimpleNamespace(model=model, with_policy_snapshot=snapshot, run_batch=run_batch)
+        SimpleNamespace(model=model, with_policy_snapshot=snapshot)
     )
     if fail:
         with pytest.raises(RuntimeError, match="generation failed"):

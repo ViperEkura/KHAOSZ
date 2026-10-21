@@ -17,7 +17,7 @@ This guide walks you through installing AstrAI, downloading a model, running inf
 ## Prerequisites
 
 - **Python 3.12+**
-- **PyTorch 2.11.0** (the exact version pinned by AstrAI; CUDA 12.8 build recommended for GPU support)
+- **PyTorch 2.13.0** (the exact version pinned by AstrAI; CUDA 13.0 build recommended for GPU support)
 - NVIDIA GPU with CUDA for training, `scripts/tools/generate.py`, generation evaluations, and demos. The HTTP server and direct-scoring evaluations can run on CPU where their CLI exposes a CPU device.
 
 ## 1. Install
@@ -39,10 +39,10 @@ pip install -e .
 > **CUDA kernels** build automatically when `nvcc` is on `PATH` and
 > `torch.cuda.is_available()` returns `True`; set `CSRC_KERNELS=false` to skip
 > them, or `CSRC_KERNELS=true` to force them (required when building in an
-> isolated environment with `--no-build-isolation`). Once built, `CudaBackend`
-> is the default attention backend on GPU (cuda > flash > torch priority).
-> Override via `set_op("attention", ...)` / the `attn_backend()` context
-> manager (the `ASTR_BACKEND` env var is a deprecated seed).
+> isolated environment with `--no-build-isolation`). Attention automatically
+> tries CUDA, FlashAttention, then torch for each compatible call.
+> Select with `with op_backend(attention="cuda")` or set a soft process
+> default with `set_op("attention", "cuda")` / `ASTR_OPS=attention=cuda`.
 > Fused rotary embedding kernel is auto-dispatched when available. Skip for
 > CPU-only usage.
 

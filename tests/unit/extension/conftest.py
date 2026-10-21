@@ -2,7 +2,7 @@
 
 import pytest
 
-import astrai.extension.runtime.dispatch as dispatch
+import astrai.extension.runtime.context as context
 from astrai.extension import kernel
 from astrai.extension.runtime.loader import is_available
 
@@ -11,16 +11,16 @@ from astrai.extension.runtime.loader import is_available
 def _reset_dispatch_state():
     """Isolate the process-level dispatch/planner state per test.
 
-    set_op selections, cached record lists and the gemm planner
+    set_op selections and the gemm planner
     configuration are process state; without this a test that touches
     them leaks into the next one.
     """
-    previous_selection = dispatch._selection
+    previous_selection = context._process_choices
     try:
         yield
     finally:
-        dispatch._selection = previous_selection
-        dispatch.invalidate()
+        context._process_choices = previous_selection
+        context.invalidate_selection_cache()
         if is_available("gemm"):
             kernel.gemm.set_table("")
             kernel.gemm.set_planner("")  # back to the shipped default

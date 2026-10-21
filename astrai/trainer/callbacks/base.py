@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from astrai.factory import BaseFactory
 
 if TYPE_CHECKING:
-    from astrai.trainer.train_context import TrainContext
+    from astrai.trainer.context import TrainContext
 
 
 @runtime_checkable
@@ -40,8 +40,13 @@ class TrainCallback(Protocol):
     def after_optimizer_step(self, context: TrainContext):
         """Called after the optimizer and scheduler step (sync step only)."""
 
-    def on_error(self, context: TrainContext):
-        """Called when an error occurs during training."""
+    def on_shutdown(self, context: TrainContext):
+        """Called once when the run ends, before ``on_train_end``.
+
+        Persist whatever must survive the process: a graceful stop and a
+        failure both arrive here.  The callbacks must be idempotent, because a
+        normal end also passes through it.
+        """
 
 
 class CallbackFactory(BaseFactory[TrainCallback]):

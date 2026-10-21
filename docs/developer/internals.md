@@ -2,6 +2,8 @@
 
 Mathematical foundations and internal algorithms for AstrAI's training, inference, and preprocessing pipelines. For practical usage guides, see [Training](../guides/training.md), [Inference](../guides/inference.md), and [Preprocessing](../guides/preprocessing.md).
 
+For training component ownership, startup and failure cleanup, see [Trainer internals](trainer/README.md).
+
 ## Contents
 
 - [Autoregression & Causal Masking](#autoregression--causal-masking)
@@ -156,8 +158,8 @@ would double-count.
 | `on_batch_end` | Every batch | — |
 | `after_optimizer_step` | Every accumulation window, after `optimizer.step()` and `scheduler.step()` | `CheckpointCallback` |
 | `on_epoch_end` | End of each epoch | `MetricCallback`, `ProgressBarCallback` |
-| `on_error` | On exception during training | `CheckpointCallback`, `MetricCallback` |
-| `on_train_end` | Training exits after `on_train_begin` completes (via `finally`) | `GradientCheckpointingCallback`, `CheckpointCallback`, `MetricCallback` |
+| `on_error` | On exception after context construction, or requested stop | `CheckpointCallback`, `MetricCallback` |
+| `on_train_end` | Session teardown after context construction, including a failed start callback | `GradientCheckpointingCallback`, `CheckpointCallback`, `MetricCallback` |
 
 Default callbacks (in order): `gradient_checkpointing` (activation checkpointing, optional), `checkpoint` (safetensors, rank-0), `metric` (JSONL + validation, rank-0), `progress_bar` (tqdm, rank-0), `gradient_clipping`. The gradient-clipping callback is always registered and always calls `executor.clip_grad_norm()` with the numeric `max_grad_norm` value.
 
@@ -188,38 +190,33 @@ Three-layer separation (SGLang-inspired):
 
 `bind_tasks()` returns a `KVCache` dataclass with `kv_indptr`, a prefix-sum index over sequence lengths computed once per step and shared across layers. Attention layers access buffers directly — no methods, no abstraction.
 
-### Attention Backend
+### Attention dispatch
 
-The extension package separates mechanism from policy:
+The extension separates runtime choice, per-operator policy, and exact kernels:
 
-- `astrai/extension/runtime/loader.py` discovers and lazily loads the compiled kernel modules (`.so` name = module name = pybind name).
-- `astrai/extension/kernel/` contains stateless adapters — one file per compiled kernel module — that call their kernel directly and fail when it is unavailable.
-- `astrai/extension/backend/` owns capability checks, implementation selection, fallback, and KV cache I/O (`dispatch.py` is the family-agnostic selection core it registers into).
-- `astrai/extension/quantize.py` holds every quantization scheme (int8 strategies, fp8 recipes and autocast); its `aten::linear` override installs lazily on the first fp8 activation, so plain imports stay dispatcher-neutral.
-- Model and inference code use the stable `astrai.extension` API instead of selecting ops directly.
+- `runtime/context.py` owns nested `op_backend(...)` scopes and snapshots.
+- `runtime/operation.py` defines `OpSpec` and `OpDispatcher`.
+- `backend/attention/dispatcher.py` selects CUDA, FlashAttention, or torch
+  functions according to the call's `AttentionSpec`.
+- `kernel/` adapters invoke one compiled kernel and raise if it is unavailable.
 
-Attention computation is decoupled from the model via `AttentionBackend` ABC (`astrai/extension/backend/attention/`):
-
-- **`CudaBackend`** (default when supported): decode path uses `attn_paged_decode` with `page_size=1` (the `req_to_token` table serves as the page table, each token slot is a single-token "page"); prefill path uses the ragged-batch `attn_paged_prefill` (addresses each request via `qo_indptr` + `kv_indptr` directly against the flat pool).
-- **`FlashAttnBackend`**: optional flash-attn dispatch; inference paths gather flat K/V from the pool via `req_to_token` and call `flash_attn_varlen_func` over the ragged batch (fp16/bf16 only); dense mask-free training calls use `flash_attn_func`.
-- **`TorchNativeBackend`** (always-available fallback): writes K/V to cache, gathers via `req_to_token` indirect indexing, calls `F.scaled_dot_product_attention`.
-- The `attention(...)` entry point uses cuda > flash > torch priority and chooses another compatible backend when an automatically selected backend cannot handle a call.
-- Resolution precedence is: explicit `attn_backend(...)` context > `ASTR_BACKEND` env > default. An explicit `attn_backend(...)` selection is strict (incompatible calls raise); `ASTR_BACKEND` is a default-level override that falls back to a compatible backend when incapable. Training calls (`fwd=None`, no KV cache) resolve by capability: the CUDA cache kernels cannot run without a cache, so they fall back to flash (mask-free/causal calls only) and finally to torch SDPA.
-
-Rotary embedding is applied via `apply_rotary_emb` in `astrai/extension/backend/rotary.py`, which auto-dispatches to the fused CUDA kernel (`rotary_emb.cu`) during inference or torch complex multiply during training (for autograd compatibility). Both attention backends share the same rotary dispatch.
-
-Backend selection is thread-safe via `contextvars`, mirroring `torch.nn.attention.sdpa_kernel`:
+CUDA attention writes and reads the paged KV cache for supported inference
+prefill and decode calls. FlashAttention supports compatible inference and
+training calls; torch SDPA is the reference fallback. Automatic selection
+tries CUDA, FlashAttention, then torch. Explicit arguments and contexts are
+strict; `ASTR_OPS` and `set_op` are soft process defaults.
 
 ```python
-from astrai.extension import attn_backend, ATTN_BACKEND
+from astrai.extension import attention, op_backend
 
-with attn_backend(ATTN_BACKEND.CUDA):
-    engine.generate("hello")
+with op_backend(attention="torch"):
+    output = attention(q, k, v)
 ```
 
-Layout convention: all q/k/v are `[batch, seq_len, n_heads, head_dim]` (blhd). Scale is always `1/sqrt(head_dim)`.
-
-Direct imports from `astrai.extension.kernel` are reserved for low-level kernel tests and code that intentionally requires a specific compiled implementation. They do not provide fallback.
+Create an inference scheduler inside the desired scope to capture that choice
+for its worker. Rotary embedding dispatches independently and uses torch
+autograd whenever backward is needed. CUDA Graph eligibility is checked in
+the inference worker against its captured attention choice.
 
 ## Mask Algorithm Internals
 

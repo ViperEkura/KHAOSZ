@@ -5,7 +5,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        CUDA_TAG: ${CUDA_TAG:-cu128}
+        CUDA_TAG: ${CUDA_TAG:-cu130}
         USER_UID: ${ASTRAI_UID:-1000}
         USER_GID: ${ASTRAI_GID:-1000}
     user: "${ASTRAI_UID:-1000}:${ASTRAI_GID:-1000}"
@@ -38,7 +38,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        CUDA_TAG: ${CUDA_TAG:-cu128}
+        CUDA_TAG: ${CUDA_TAG:-cu130}
         USER_UID: ${ASTRAI_UID:-1000}
         USER_GID: ${ASTRAI_GID:-1000}
     user: "${ASTRAI_UID:-1000}:${ASTRAI_GID:-1000}"
@@ -62,7 +62,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        CUDA_TAG: ${CUDA_TAG:-cu128}
+        CUDA_TAG: ${CUDA_TAG:-cu130}
         USER_UID: ${ASTRAI_UID:-1000}
         USER_GID: ${ASTRAI_GID:-1000}
     init: true

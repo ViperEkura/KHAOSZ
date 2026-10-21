@@ -22,17 +22,15 @@ import torch
 import torch.distributed as dist
 import yaml
 
-from astrai.config import ConfigFactory, TrainConfig
+from astrai.config import ComponentSpec, ConfigFactory, TrainConfig
 from astrai.model import AutoRegressiveLM
-from astrai.optim import OptimizerFactory
+from astrai.optimization import OptimizerFactory
 from astrai.serialization import adapt_config, load_json
 from astrai.tokenize import AutoTokenizer
 from astrai.trainer import Trainer
 from astrai.trainer.callbacks.checkpoint import CheckpointCallback
-from astrai.trainer.optional_extras import checkpoint_extras, restore_checkpoint_extras
 from astrai.trainer.rollout import SamplingParams
 from examples.rl_reward.data import (
-    PromptDataset,
     collate_prompts,
     load_splits,
     sha256_file,
@@ -219,6 +217,7 @@ def scheduler_factory(optimizer):
 
 def save_runner_extra(context):
     extra = CheckpointCallback.save_extra(context)
+    extra["rng_state"] = context.kwargs["reward_rng_by_rank"][context.rank]
     monitor = context.kwargs["reward_monitor"]
     extra["reward_runner"] = {
         "recipe": asdict(monitor.recipe),
@@ -230,24 +229,47 @@ def save_runner_extra(context):
     return extra
 
 
+def snapshot_runner_rng():
+    """Keep strict same-topology replay local to this reward experiment.
+
+    Upstream training no longer persists global RNG by default; this runner's
+    frozen resume protocol still requires every learner's original RNG state.
+    """
+    import numpy as np
+
+    state = {
+        "python": random.getstate(),
+        "torch": torch.get_rng_state(),
+        "numpy": np.random.get_state(),
+    }
+    if torch.cuda.is_available():
+        state["torch_cuda"] = torch.cuda.get_rng_state_all()
+    return state
+
+
 def restore_runner_rng(states, rank, world_size):
     if not isinstance(states, list) or len(states) != world_size:
         raise ValueError(
             "resume requires one RNG snapshot per learner rank and the same topology"
         )
-    restore_checkpoint_extras({"rng_state": states[rank]})
+    import numpy as np
+
+    state = states[rank]
+    random.setstate(state["python"])
+    torch.set_rng_state(state["torch"])
+    if "torch_cuda" in state and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(state["torch_cuda"][: torch.cuda.device_count()])
+    if "numpy" in state:
+        np.random.set_state(state["numpy"])
 
 
 class RewardCheckpoint(CheckpointCallback):
     """Save after consumed_samples advances, at a complete round boundary."""
 
-    def after_optimizer_step(self, context):
-        pass
-
     def _save_checkpoint(self, context):
         if next(context.model.parameters()).is_cuda:
             torch.cuda.synchronize()
-        local_rng = checkpoint_extras()["rng_state"]
+        local_rng = snapshot_runner_rng()
         if dist.is_initialized():
             states = [None] * context.world_size
             dist.all_gather_object(states, local_rng)
@@ -256,7 +278,7 @@ class RewardCheckpoint(CheckpointCallback):
         context.kwargs["reward_rng_by_rank"] = states
         super()._save_checkpoint(context)
 
-    def on_batch_end(self, context):
+    def after_optimizer_step(self, context):
         if context.optimizer_step - self.last_ckpt_step >= self.interval:
             self._save_checkpoint(context)
 
@@ -343,6 +365,10 @@ class Monitor:
         def timed_generate(*args, **kwargs):
             self.sync()
             start = time.perf_counter()
+            if self.phase == "train":
+                self.round_started = start
+                if self.recipe.device_type == "cuda":
+                    torch.cuda.reset_peak_memory_stats()
             raw = generate(*args, **kwargs)
             self.sync()
             self.collection_seconds = time.perf_counter() - start
@@ -376,13 +402,6 @@ class Monitor:
         self.write("runtime", runtime)
         self.memory("post_load")
         self.evaluate("dev")
-
-    def on_batch_begin(self, context):
-        self.phase = "train"
-        self.sync()
-        self.round_started = time.perf_counter()
-        if self.recipe.device_type == "cuda":
-            torch.cuda.reset_peak_memory_stats()
 
     def record_rewards(self, records, responses, rewards, formats, scoring_seconds):
         self.last_rewards = rewards
@@ -492,7 +511,7 @@ class Monitor:
         )
         self.phase = "train"
 
-    def on_batch_end(self, context):
+    def after_optimizer_step(self, context):
         self.sync()
         self.write(
             "round_metrics",
@@ -585,16 +604,25 @@ def build_training(recipe, splits, records_by_prompt, data_hashes, started):
     monitor = Monitor(recipe, splits, data_hashes, started)
     train_config = TrainConfig(
         **features,
-        model_fn=partial(model_factory, config.to_dict(), recipe.dtype),
+        model=ComponentSpec(
+            type="examples.rl_reward.run:model_factory",
+            params={"config": config.to_dict(), "dtype": recipe.dtype},
+        ),
         strategy="online_grpo",
-        dataset=PromptDataset(splits["train"]),
-        collate_fn=collate_prompts,
-        optimizer_fn=partial(
-            optimizer_factory, name=recipe.optimizer, options=recipe.optimizer_kwargs
+        dataset=ComponentSpec(
+            type="examples.rl_reward.data:PromptDataset",
+            params={
+                "records": splits["train"],
+                "collate": "examples.rl_reward.data:collate_prompts",
+            },
+        ),
+        optimizer=ComponentSpec(
+            type="examples.rl_reward.run:optimizer_factory",
+            params={"name": recipe.optimizer, "options": recipe.optimizer_kwargs},
         ),
         optimizer_name=recipe.optimizer,
         optimizer_hyperparameters=recipe.optimizer_kwargs,
-        scheduler_fn=scheduler_factory,
+        scheduler=ComponentSpec(type="examples.rl_reward.run:scheduler_factory"),
         reward_model_fn=partial(TaskReward, records_by_prompt, recipe.task),
         n_epoch=math.ceil(recipe.updates / (len(splits["train"]) // global_prompts)),
         batch_per_device=recipe.batch_per_device,

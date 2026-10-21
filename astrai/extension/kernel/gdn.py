@@ -10,7 +10,7 @@ Raises ``RuntimeError`` when the kernel is not built; callers fall back to the
 torch path.
 """
 
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 
@@ -25,7 +25,7 @@ def gdn_fwd(
     beta: torch.Tensor,
     eps: float = 1e-6,
     chunk: int = 64,
-) -> Optional[tuple]:
+) -> Optional[Tuple]:
     """Normalize, transpose and gate-scan in one pass.
 
     Args:

@@ -5,11 +5,11 @@ it renders prompts, expands groups, pads and decodes.  Where the
 prefill/decode loop executes, on which model object and device, is a
 backend concern:
 
-- :class:`ColocatedBackend` wraps an :class:`Scheduler` that
+- :class:`ColocatedBackend` wraps an :class:`EngineCore` that
   shares the *training* model object in-process (the historical rollout
   path; weight updates are free because there is only one model).
 - :class:`ReplicaBackend` owns a frozen copy of the policy on its own
-  device with its own scheduler and KV pool.  Fresh weights arrive via a
+  device with its own engine core and KV pool.  Fresh weights arrive via a
   :class:`P2PCopyPublisher` invoked inside the policy-version lock, so a
   replica generation can never observe new-version weights that are
   actually stale.
@@ -19,13 +19,16 @@ generate given tokenized prompts and expose the policy-version protocol
 can serve as a rollout backend.
 """
 
+import uuid
 from contextlib import nullcontext
-from typing import Callable, List, Optional, Protocol, TypeVar
+from typing import Any, Callable, List, Optional, Protocol, TypeVar
 
 import torch
 from torch import nn
 
-from astrai.inference.core.scheduler import Scheduler
+from astrai.inference.core.engine_core import EngineCore
+from astrai.inference.core.events import FINISH_STOP_TOKEN
+from astrai.inference.core.request import GenerationResult, Request
 from astrai.parallel.executor import strip_compile_prefix
 
 T = TypeVar("T")
@@ -34,16 +37,99 @@ T = TypeVar("T")
 def _device_context(device):
     """Pin CUDA work to ``device``; a no-op on CPU.
 
-    CUDA graph capture/replay binds to the calling thread's current
-    device (``CUDAGraphRunner`` uses a bare ``torch.cuda.CUDAGraph()``),
-    so a scheduler living on a non-current device must be constructed
-    and driven under ``torch.cuda.device``.
+    CUDA graph replay and scheduler work use the calling thread's current
+    device, so a scheduler living on another GPU must be constructed and
+    driven under ``torch.cuda.device``.
     """
     if isinstance(device, torch.device) and device.type == "cuda":
         return torch.cuda.device(device)
     if isinstance(device, str) and device.startswith("cuda"):
         return torch.cuda.device(torch.device(device))
     return nullcontext()
+
+
+def run_batch(
+    engine_core: EngineCore,
+    prompt_ids_list: List[List[int]],
+    *,
+    max_tokens: Optional[int] = None,
+    temperature: float = 1.0,
+    top_p: float = 1.0,
+    top_k: int = 50,
+    frequency_penalty: float = 0.0,
+    rep_window: int = 64,
+    return_logprobs: bool = False,
+    return_details: bool = False,
+    seeds: Optional[List[int]] = None,
+) -> List[Any]:
+    """Generate a rollout batch and restore its original request order."""
+    if seeds is not None and (
+        len(seeds) != len(prompt_ids_list)
+        or any(
+            isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2**63
+            for seed in seeds
+        )
+    ):
+        raise ValueError("seeds must contain one integer in [0, 2**63) per request")
+    requests, errors = [], []
+    batch_id = uuid.uuid4().hex
+    for index, ids in enumerate(prompt_ids_list):
+        error = None
+        if not ids:
+            error = "prompt_empty"
+        elif len(ids) >= engine_core.max_seq_len:
+            error = "prompt_too_long"
+        limit = (
+            engine_core.max_seq_len - len(ids)
+            if max_tokens is None
+            else min(max_tokens, engine_core.max_seq_len - len(ids))
+        )
+        if error is None and limit <= 0:
+            error = "max_tokens_non_positive"
+        request = None
+        if error is None:
+            request = Request(
+                f"batch_{batch_id}_{index:08d}",
+                ids,
+                limit,
+                temperature,
+                top_p,
+                top_k,
+                frequency_penalty,
+                rep_window,
+                seed=None if seeds is None else seeds[index],
+            )
+        requests.append(request)
+        errors.append(error)
+    engine_core.execute_requests(
+        [request for request in requests if request is not None],
+        return_logprobs=return_logprobs,
+    )
+    details = []
+    for request, error in zip(requests, errors):
+        if request is None:
+            details.append(GenerationResult([], [], "rejected", error))
+        else:
+            reason = (
+                "rejected"
+                if request.error_reason
+                else "stop"
+                if request.finish_reason == FINISH_STOP_TOKEN
+                else "length"
+            )
+            details.append(
+                GenerationResult(
+                    list(request.output_ids),
+                    list(request.output_logprobs),
+                    reason,
+                    request.error_reason,
+                )
+            )
+    if return_details:
+        return details
+    if return_logprobs:
+        return [(result.token_ids, result.logprobs) for result in details]
+    return [result.token_ids for result in details]
 
 
 class RolloutBackend(Protocol):
@@ -58,7 +144,7 @@ class RolloutBackend(Protocol):
         """Version of the weights used for subsequent generations."""
 
     def generate(self, prompt_ids_list: List[List[int]], **kwargs):
-        """Run prefill+decode to completion; see ``run_batch`` for kwargs."""
+        """Run prefill+decode to completion with rollout sampling arguments."""
 
     def update_weights(self, policy_version: int) -> int:
         """Acknowledge externally applied weights and invalidate KV."""
@@ -73,53 +159,53 @@ class RolloutBackend(Protocol):
 
 
 class ColocatedBackend:
-    """Scheduler wrapping the training model object itself (the default).
+    """EngineCore wrapping the training model object itself (the default).
 
     Weight updates mutate the shared object in place, so publishing a
     version is bookkeeping only.  Generation toggles the shared model to
     eval mode and restores its prior mode afterwards.
     """
 
-    def __init__(self, scheduler: Scheduler):
-        self.scheduler = scheduler
+    def __init__(self, engine_core: EngineCore):
+        self.engine_core = engine_core
 
     @property
     def device(self):
-        return self.scheduler.device
+        return self.engine_core.device
 
     @property
     def policy_version(self) -> int:
-        return self.scheduler.policy_version
+        return self.engine_core.policy_version
 
     def generate(self, prompt_ids_list: List[List[int]], **kwargs):
         def generate_with_snapshot(_version):
-            model = self.scheduler.model
+            model = self.engine_core.model
             was_training = model.training
             model.eval()
             try:
-                return self.scheduler.run_batch(prompt_ids_list, **kwargs)
+                return run_batch(self.engine_core, prompt_ids_list, **kwargs)
             finally:
                 model.train(was_training)
 
-        return self.scheduler.with_policy_snapshot(generate_with_snapshot)
+        return self.engine_core.with_policy_snapshot(generate_with_snapshot)
 
     def update_weights(self, policy_version: int) -> int:
-        return self.scheduler.update_weights(policy_version)
+        return self.engine_core.update_weights(policy_version)
 
     def apply_weight_update(
         self, policy_version: Optional[int], update: Callable[[int], T]
     ) -> T:
-        return self.scheduler.apply_weight_update(policy_version, update)
+        return self.engine_core.apply_weight_update(policy_version, update)
 
     def with_policy_snapshot(self, inspect: Callable[[int], T]) -> T:
-        return self.scheduler.with_policy_snapshot(inspect)
+        return self.engine_core.with_policy_snapshot(inspect)
 
 
 class ReplicaBackend:
-    """Frozen policy copy on its own device, with its own scheduler/KV pool.
+    """Frozen policy copy on its own device, with its own core/KV pool.
 
     The model is expected to be already placed on ``device`` and frozen
-    (see :func:`astrai.trainer.train_context.create_ref_model`); it never
+    (see :func:`astrai.trainer.components.create_ref_model`); it never
     toggles out of eval mode.  All scheduler work — construction (CUDA
     graph capture) and generation — runs pinned to ``device``.
     """
@@ -136,7 +222,7 @@ class ReplicaBackend:
     ):
         model.eval()
         with _device_context(device):
-            self.scheduler = Scheduler(
+            self.engine_core = EngineCore(
                 model=model,
                 tokenizer=tokenizer,
                 max_batch_size=max_batch_size,
@@ -150,22 +236,22 @@ class ReplicaBackend:
 
     @property
     def policy_version(self) -> int:
-        return self.scheduler.policy_version
+        return self.engine_core.policy_version
 
     def generate(self, prompt_ids_list: List[List[int]], **kwargs):
         with _device_context(self.device):
-            return self.scheduler.run_batch(prompt_ids_list, **kwargs)
+            return run_batch(self.engine_core, prompt_ids_list, **kwargs)
 
     def update_weights(self, policy_version: int) -> int:
-        return self.scheduler.update_weights(policy_version)
+        return self.engine_core.update_weights(policy_version)
 
     def apply_weight_update(
         self, policy_version: Optional[int], update: Callable[[int], T]
     ) -> T:
-        return self.scheduler.apply_weight_update(policy_version, update)
+        return self.engine_core.apply_weight_update(policy_version, update)
 
     def with_policy_snapshot(self, inspect: Callable[[int], T]) -> T:
-        return self.scheduler.with_policy_snapshot(inspect)
+        return self.engine_core.with_policy_snapshot(inspect)
 
 
 class WeightPublisher(Protocol):

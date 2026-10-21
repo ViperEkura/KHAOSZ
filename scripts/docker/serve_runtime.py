@@ -11,13 +11,14 @@ import argparse
 import re
 import shlex
 from pathlib import Path
+from typing import Dict
 
 import yaml
 
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-def _mapping(value, name: str) -> dict:
+def _mapping(value, name: str) -> Dict:
     if value is None:
         return {}
     if not isinstance(value, dict):
@@ -42,7 +43,7 @@ def _port(value, name: str) -> int:
     return value
 
 
-def load_runtime(config_path: str) -> dict[str, str]:
+def load_runtime(config_path: str) -> Dict[str, str]:
     path = Path(config_path).resolve()
     with path.open(encoding="utf-8") as file:
         config = yaml.safe_load(file) or {}
@@ -110,7 +111,7 @@ def load_runtime(config_path: str) -> dict[str, str]:
         "SERVE_PARAM_DIR": _path(paths.get("param", "./params"), "param", path.parent),
         "SERVE_GPU_ENABLED": "true" if gpu_enabled else "false",
         "SERVE_DEVICE": device,
-        "CUDA_TAG": str(container.get("cuda_tag", "cu128")),
+        "CUDA_TAG": str(container.get("cuda_tag", "cu130")),
     }
     if visible_devices is not None:
         values["CUDA_VISIBLE_DEVICES"] = visible_devices
@@ -124,7 +125,7 @@ def load_runtime(config_path: str) -> dict[str, str]:
     return values
 
 
-def shell_exports(runtime: dict[str, str]) -> str:
+def shell_exports(runtime: Dict[str, str]) -> str:
     return "\n".join(
         f"export {name}={shlex.quote(value)}"
         for name, value in runtime.items()

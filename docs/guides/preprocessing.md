@@ -272,6 +272,22 @@ When `sources` is set, `sections` is ignored.
 | `max_packed_len` | int | `8192` | Maximum length of a packed bin |
 | `truncation_mode` | str | `"keep_start"` | How to truncate sequences: `"keep_start"` or `"keep_end"` |
 
+### Tokenizer parallelism
+
+Batch inputs passed to AutoTokenizer.encode use the Rust tokenizers backend.
+Enable its Rayon thread pool before starting preprocessing with:
+
+```bash
+TOKENIZERS_PARALLELISM=true RAYON_NUM_THREADS=2 \
+python scripts/tools/preprocess.py data/part-000.jsonl -o output/ -c configs/pretrain.json
+```
+
+RAYON_NUM_THREADS limits threads per process. In a job that also uses
+multiple worker processes, each process can create its own Rayon pool;
+start with a small thread limit and tune the process-count times
+thread-count against available CPU capacity. Set these variables before
+launching the job; they do not reconfigure already-running workers.
+
 ### `output`
 
 | Field | Type | Default | Description |

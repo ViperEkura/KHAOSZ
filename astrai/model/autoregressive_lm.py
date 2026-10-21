@@ -7,7 +7,7 @@ from torch import Tensor
 
 from astrai.config.model_config import AutoRegressiveLMConfig
 from astrai.model.automodel import AutoModel, ModelFactory
-from astrai.model.components.linear import Linear
+from astrai.model.components.linear import LinearCrossEntropyHead
 from astrai.model.kv_cache import KVCache
 from astrai.model.transformer import TransformerModel, init_module_weights
 
@@ -19,7 +19,7 @@ class AutoRegressiveLM(AutoModel):
     def __init__(self, config: AutoRegressiveLMConfig):
         super().__init__(config)
         self.model = TransformerModel(config)
-        self.lm_head = Linear(config.hidden_size, config.vocab_size)
+        self.lm_head = LinearCrossEntropyHead(config.hidden_size, config.vocab_size)
 
         if self.config.tie_word_embeddings is True:
             self.lm_head.weight = self.model.embed_tokens.weight

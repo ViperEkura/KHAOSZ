@@ -1,13 +1,13 @@
 import json
 import time
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Dict, List, Optional
 
 import click
 import torch
 
 from astrai.config import BaseModelConfig, ConfigFactory
-from astrai.extension import ATTN_BACKEND, AttentionBackendFactory, attn_backend
+from astrai.extension.runtime.context import op_backend
 from astrai.inference.core.cache import BlockPool, KVCacheManager
 from astrai.inference.frontend.engine import InferenceEngine
 from astrai.inference.worker.graph import CUDAGraphRunner
@@ -18,7 +18,7 @@ from astrai.tokenize import AutoTokenizer
 
 _DTYPES = ["bfloat16", "float16", "float32"]
 _CACHES = ["contiguous", "paged"]
-_BACKENDS = AttentionBackendFactory.list_registered()
+_BACKENDS = ("cuda", "flash", "torch")
 
 
 def _parse_kv_windows(value: Optional[str]) -> List[int]:
@@ -57,7 +57,7 @@ class BenchmarkResult:
         seq_len: int,
         tokens_per_second: float,
         latency_ms: float,
-        metadata: Optional[dict] = None,
+        metadata: Optional[Dict] = None,
     ):
         self.name = name
         self.batch_size = batch_size
@@ -75,7 +75,7 @@ class GenerationBenchmark:
         device: str = "cuda",
         dtype: torch.dtype = torch.bfloat16,
         cache_type: str = "contiguous",
-        backend: Union[str, ATTN_BACKEND] = ATTN_BACKEND.CUDA,
+        backend: str = "cuda",
         cuda_graph: bool = False,
         tokenizer: Optional[AutoTokenizer] = None,
     ):
@@ -134,7 +134,7 @@ class GenerationBenchmark:
         workspace: InferenceWorkspace,
         skip_lm_head: bool = False,
         prefill_chunk_size: Optional[int] = None,
-    ) -> list:
+    ) -> List:
         token_ids = torch.randint(
             0,
             self.config.vocab_size,
@@ -147,7 +147,7 @@ class GenerationBenchmark:
         for tid in request_ids:
             task_cache.alloc_slots(tid, list(range(prompt_len)))
 
-        with torch.inference_mode(), attn_backend(self.backend):
+        with torch.inference_mode(), op_backend(attention=self.backend):
             for start_pos in range(0, prompt_len, chunk_size):
                 end_pos = min(start_pos + chunk_size, prompt_len)
                 kv_cache = task_cache.bind(
@@ -173,7 +173,7 @@ class GenerationBenchmark:
         self,
         pool: BlockPool,
         task_cache: KVCacheManager,
-        request_ids: list,
+        request_ids: List,
         seq_len: int,
         workspace: InferenceWorkspace,
     ):
@@ -187,7 +187,7 @@ class GenerationBenchmark:
         for tid in request_ids:
             task_cache.extend_slots(tid, seq_len)
         kv_cache = task_cache.bind(request_ids, workspace, self.device)
-        with torch.inference_mode(), attn_backend(self.backend):
+        with torch.inference_mode(), op_backend(attention=self.backend):
             self.model(
                 input_ids,
                 kv_cache=kv_cache,
@@ -220,7 +220,7 @@ class GenerationBenchmark:
         kv_cache = task_cache.bind(request_ids, workspace, self.device, start_pos=0)
 
         for _ in range(3):
-            with torch.inference_mode(), attn_backend(self.backend):
+            with torch.inference_mode(), op_backend(attention=self.backend):
                 self.model(
                     input_ids,
                     kv_cache=kv_cache,
@@ -231,7 +231,7 @@ class GenerationBenchmark:
         torch.cuda.synchronize()
         t0 = time.perf_counter()
         for _ in range(num_trials):
-            with torch.inference_mode(), attn_backend(self.backend):
+            with torch.inference_mode(), op_backend(attention=self.backend):
                 self.model(
                     input_ids,
                     kv_cache=kv_cache,
@@ -272,16 +272,16 @@ class GenerationBenchmark:
         prompt_tokens = len(self.tokenizer.encode(prompt))
         max_seq_len = prompt_tokens + gen_length
         pool = self._make_pool(batch_size, max_seq_len)
-        engine = InferenceEngine(
-            model=self.model,
-            tokenizer=self.tokenizer,
-            max_batch_size=batch_size,
-            max_seq_len=max_seq_len,
-            cache=pool,
-            enable_cuda_graph=self.cuda_graph,
-            backend=self.backend,
-            enable_overlap=overlap,
-        )
+        with op_backend(attention=self.backend):
+            engine = InferenceEngine(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                max_batch_size=batch_size,
+                max_seq_len=max_seq_len,
+                cache=pool,
+                enable_cuda_graph=self.cuda_graph,
+                enable_overlap=overlap,
+            )
         prompts = [prompt] * batch_size
 
         try:
@@ -329,7 +329,10 @@ class GenerationBenchmark:
                 "decode_ms_per_step_excl_prefill": decode_ms_total / steps,
                 "prefill_ms_per_trial": prefill_ms,
                 "overlap": overlap,
-                "backend": engine.backend_name,
+                "op_selection": {
+                    op: engine.op_selection.choice(op)[0] or "auto"
+                    for op in ("attention", "rotary", "swiglu", "syrk", "symm")
+                },
                 "cuda_graph": engine.cuda_graph_enabled,
             },
         )
@@ -378,7 +381,7 @@ class GenerationBenchmark:
             if not all(task_cache.extend_slots_batch(request_ids, [seq_len] * b)):
                 raise RuntimeError("failed to extend KV slots for fixed-KV benchmark")
             kv_cache = task_cache.bind(request_ids, workspace, self.device)
-            with torch.inference_mode(), attn_backend(self.backend):
+            with torch.inference_mode(), op_backend(attention=self.backend):
                 if start_event is not None:
                     start_event.record()
                 gctx.forward(
@@ -456,7 +459,7 @@ class GenerationBenchmark:
                 task_cache.extend_slots(tid, seq_len)
             kv_cache = task_cache.bind(request_ids, workspace, self.device)
 
-            with torch.inference_mode(), attn_backend(self.backend):
+            with torch.inference_mode(), op_backend(attention=self.backend):
                 return gctx.forward(
                     self.model,
                     key=graph_key,
@@ -563,7 +566,7 @@ def print_benchmark_result(result: BenchmarkResult) -> None:
 @click.option(
     "--compare",
     is_flag=True,
-    help="Run both backends and print side-by-side speed comparison.",
+    help="Compare available attention choices side by side.",
 )
 @click.option("--batch_size", type=int, default=4, help="Batch size.")
 @click.option("--prompt_length", type=int, default=512, help="Prompt length.")
@@ -630,7 +633,7 @@ def benchmark_command(
     config_path: Optional[Path],
 ) -> None:
     """Benchmark model throughput and latency."""
-    dtype_map: dict[str, torch.dtype] = {
+    dtype_map: Dict[str, torch.dtype] = {
         "bfloat16": torch.bfloat16,
         "float16": torch.float16,
         "float32": torch.float32,

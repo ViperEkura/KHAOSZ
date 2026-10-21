@@ -32,6 +32,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 FUNCTION_RE = re.compile(r"^\s*Function\s*:\s*(\S+)\s*$")
 SASS_LINE_RE = re.compile(r"^\s*/\*[0-9a-f]{4,}\*/")
@@ -65,7 +66,7 @@ def find_cuobjdump() -> str:
     raise SystemExit("cuobjdump not found; set CUOBJDUMP=/path/to/cuobjdump")
 
 
-def run(cmd: list[str]) -> str:
+def run(cmd: List[str]) -> str:
     result = subprocess.run(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     )
@@ -74,10 +75,10 @@ def run(cmd: list[str]) -> str:
     return result.stdout
 
 
-def split_functions(text: str) -> dict[str, list[str]]:
+def split_functions(text: str) -> Dict[str, List[str]]:
     """Split a `cuobjdump -sass` dump into mangled name -> its SASS lines."""
-    functions: dict[str, list[str]] = {}
-    current: str | None = None
+    functions: Dict[str, List[str]] = {}
+    current: Optional[str] = None
     for line in text.splitlines():
         match = FUNCTION_RE.match(line)
         if match is not None:
@@ -89,10 +90,10 @@ def split_functions(text: str) -> dict[str, list[str]]:
     return functions
 
 
-def parse_res_usage(text: str) -> dict[str, int]:
+def parse_res_usage(text: str) -> Dict[str, int]:
     """Map mangled name -> REG count from a `cuobjdump -res-usage` dump."""
-    registers: dict[str, int] = {}
-    current: str | None = None
+    registers: Dict[str, int] = {}
+    current: Optional[str] = None
     for line in text.splitlines():
         match = FUNCTION_RE.match(line)
         if match is not None:
@@ -104,8 +105,8 @@ def parse_res_usage(text: str) -> dict[str, int]:
     return registers
 
 
-def mnemonic_histogram(lines: list[str]) -> dict[str, int]:
-    histogram: dict[str, int] = {}
+def mnemonic_histogram(lines: List[str]) -> Dict[str, int]:
+    histogram: Dict[str, int] = {}
     for line in lines:
         match = MNEMONIC_RE.search(line)
         if match is None:
@@ -115,11 +116,11 @@ def mnemonic_histogram(lines: list[str]) -> dict[str, int]:
     return histogram
 
 
-def digest_object(cuobjdump: str, obj: Path) -> dict[str, dict]:
+def digest_object(cuobjdump: str, obj: Path) -> Dict[str, Dict]:
     sass = split_functions(run([cuobjdump, "-sass", str(obj)]))
     registers = parse_res_usage(run([cuobjdump, "-res-usage", str(obj)]))
 
-    records: dict[str, dict] = {}
+    records: Dict[str, Dict] = {}
     for name, lines in sass.items():
         body = "\n".join(lines)
         records[name] = {
@@ -131,7 +132,7 @@ def digest_object(cuobjdump: str, obj: Path) -> dict[str, dict]:
     return records
 
 
-def project_objects(build_dir: Path) -> list[Path]:
+def project_objects(build_dir: Path) -> List[Path]:
     """Every project object under a build dir, in a path-stable order.
 
     CMake's compiler-identification probes are excluded: they are throwaway
@@ -145,7 +146,7 @@ def project_objects(build_dir: Path) -> list[Path]:
     return sorted(objects)
 
 
-def collect(cuobjdump: str, build_dir: Path) -> dict:
+def collect(cuobjdump: str, build_dir: Path) -> Dict:
     objects = project_objects(build_dir)
     if not objects:
         raise SystemExit(f"no project .o files under {build_dir}; build it first")
@@ -154,13 +155,13 @@ def collect(cuobjdump: str, build_dir: Path) -> dict:
     # (the fp8 quantize kernels live in quantize.cu and in the gemm module).
     # Key the gate on the SET of per-copy hashes, so the result cannot depend
     # on which object happened to be walked first.
-    per_symbol: dict[str, list[tuple[str, dict]]] = {}
+    per_symbol: Dict[str, List[Tuple[str, Dict]]] = {}
     for obj in objects:
         for name, record in digest_object(cuobjdump, obj).items():
             per_symbol.setdefault(name, []).append((obj.name, record))
 
-    functions: dict[str, dict] = {}
-    multi_copy: list[str] = []
+    functions: Dict[str, Dict] = {}
+    multi_copy: List[str] = []
     for name, copies in per_symbol.items():
         if len(copies) > 1:
             multi_copy.append(name)
@@ -197,7 +198,7 @@ def normalize_symbol(name: str) -> str:
     return re.sub(r"(_cu_)[0-9a-f]+", r"\1", name)
 
 
-def compare(before: dict, after: dict, normalize: bool = False) -> int:
+def compare(before: Dict, after: Dict, normalize: bool = False) -> int:
     old, new = before["functions"], after["functions"]
     if normalize:
         old = {normalize_symbol(k): v for k, v in old.items()}

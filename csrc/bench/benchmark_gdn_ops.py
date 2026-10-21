@@ -24,7 +24,7 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Dict, Optional, Tuple
 
 import click
 import torch
@@ -124,7 +124,7 @@ def benchmark_train(
     trials: int,
     device: str,
     dtype: torch.dtype,
-) -> dict[str, object]:
+) -> Dict[str, object]:
     gqa, gdn = build_layers(geom, device, dtype)
     x = torch.randn(1, seq_len, geom.hidden, device=device, dtype=dtype)
     freqs = RotaryEmbedding(geom.head_dim, seq_len).to(device)(x)
@@ -163,7 +163,7 @@ def benchmark_train(
         iterations=iterations,
         trials=trials,
     )["gated_deltanet_recurrent"]
-    result: dict[str, object] = {
+    result: Dict[str, object] = {
         "suite": "train",
         "geometry": geom.name,
         "seq_len": seq_len,
@@ -263,11 +263,10 @@ def benchmark_decode(
     trials: int,
     device: str,
     dtype: torch.dtype,
-) -> dict[str, object]:
+) -> Dict[str, object]:
     """One decode step each: Gated DeltaNet steps its fixed state, attention attends the context."""
     gqa, gdn = build_layers(geom, device, dtype)
     token = torch.randn(1, 1, geom.hidden, device=device, dtype=dtype)
-    freqs = RotaryEmbedding(geom.head_dim, context + 1).to(device)(token)
 
     with torch.no_grad():
         _, state = gdn.prefill(token)
@@ -299,7 +298,7 @@ def benchmark_decode(
     samples = measure_operations(
         operations, warmup=warmup, iterations=iterations, trials=trials
     )
-    result: dict[str, object] = {
+    result: Dict[str, object] = {
         "suite": "decode",
         "geometry": geom.name,
         "context": context,
@@ -355,8 +354,8 @@ def benchmark_decode(
 )
 def benchmark_command(
     output: Optional[Path],
-    suites: tuple[str, ...],
-    geometry_values: tuple[str, ...],
+    suites: Tuple[str, ...],
+    geometry_values: Tuple[str, ...],
     chunk_size: int,
     warmup: int,
     iterations: int,

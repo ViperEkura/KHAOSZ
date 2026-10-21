@@ -1,22 +1,12 @@
-"""Public operators, kernel adapters, backend registry, and runtime policy.
-
-``backend`` selects implementations, ``kernel`` calls exact compiled modules,
-``dispatch`` controls priority and train/infer capability, and ``plan`` owns
-the GEMM configuration facade.
-"""
+"""Public extension operators, kernels, and runtime selection."""
 
 from astrai.extension.backend import (
-    ATTN_BACKEND,
-    AttentionBackend,
-    AttentionBackendFactory,
-    CudaBackend,
-    FlashAttnBackend,
-    TorchNativeBackend,
+    AttentionDispatcher,
+    AttentionSpec,
     apply_rotary_emb,
     attention,
-    attn_backend,
-    get_backend,
     newton_schulz,
+    swiglu,
     symm_out,
     syrk_out,
 )
@@ -40,12 +30,18 @@ from astrai.extension.kernel.gemm import (
     tile_vocabulary,
 )
 from astrai.extension.kernel.quantize import (
-    quantize_act_int8,
-    quantize_weight_int8,
+    quantize,
+    quantize_scaled,
 )
-from astrai.extension.policy.gemm import autotune, plan
+from astrai.extension.policy.gemm import autotune as autotune
+from astrai.extension.policy.gemm import plan as plan
 from astrai.extension.policy.gemm.plan import PLANNER_MODES
-from astrai.extension.policy.quantization import autocast, fp8_slots
+from astrai.extension.policy.quantization import (
+    autocast as autocast,
+)
+from astrai.extension.policy.quantization import (
+    fp8_slots as fp8_slots,
+)
 from astrai.extension.policy.quantization.autocast import (
     FP8Recipe,
     fp8_autocast,
@@ -56,41 +52,29 @@ from astrai.extension.policy.quantization.autocast import (
     fp8_reset,
     fp8_state_dict,
 )
-from astrai.extension.runtime import dispatch, loader
-from astrai.extension.runtime.dispatch import (
-    Axes,
-    ExplicitSelectionError,
-    ImplRecord,
-    Resolution,
-    Spec,
-    axis,
-    explain,
-    explain_plan,
+from astrai.extension.runtime import loader as loader
+from astrai.extension.runtime.context import (
+    OpSelection,
     op_backend,
-    register_env_alias,
-    register_family,
-    register_impl,
-    resolve,
-    resolve_plan,
+    op_context,
     set_op,
-    tensor_axes,
-    unregister_impl,
+    snapshot_op_selection,
+    use_op_selection,
 )
 from astrai.extension.runtime.loader import KERNEL_NAMES, is_available
+from astrai.extension.runtime.operation import (
+    ExplicitSelectionError,
+    OpDispatcher,
+    OpSpec,
+)
 
 __all__ = [
     "cross_entropy",
     "linear_cross_entropy",
-    "ATTN_BACKEND",
-    "AttentionBackend",
-    "AttentionBackendFactory",
-    "CudaBackend",
-    "TorchNativeBackend",
-    "FlashAttnBackend",
     "TensorLayout",
+    "AttentionDispatcher",
+    "AttentionSpec",
     "attention",
-    "attn_backend",
-    "get_backend",
     "attn_decode",
     "attn_paged_decode",
     "attn_prefill",
@@ -101,6 +85,7 @@ __all__ = [
     "newton_schulz",
     "symm_out",
     "syrk_out",
+    "swiglu",
     "FP8Recipe",
     "fp8_autocast",
     "fp8_format_pair",
@@ -109,25 +94,17 @@ __all__ = [
     "fp8_load_state_dict",
     "fp8_reset",
     "fp8_state_dict",
-    "quantize_act_int8",
-    "quantize_weight_int8",
-    "Axes",
+    "quantize",
+    "quantize_scaled",
+    "OpSpec",
+    "OpDispatcher",
+    "OpSelection",
+    "op_context",
+    "snapshot_op_selection",
+    "use_op_selection",
     "ExplicitSelectionError",
-    "ImplRecord",
-    "Resolution",
-    "Spec",
-    "axis",
     "set_op",
-    "explain",
-    "explain_plan",
     "op_backend",
-    "register_env_alias",
-    "register_family",
-    "register_impl",
-    "resolve",
-    "resolve_plan",
-    "tensor_axes",
-    "unregister_impl",
     "PLANNER_MODES",
     "plan",
     "facts",

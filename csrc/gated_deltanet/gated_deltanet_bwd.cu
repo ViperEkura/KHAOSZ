@@ -16,7 +16,10 @@
 #include <cuda_bf16.h>
 #include <torch/extension.h>
 
-#include <api/gated_deltanet.h>
+#include <cmath>
+#include <limits>
+
+#include <api/torch/gated_deltanet.h>
 #include <utils/launch.cuh>
 
 namespace {
@@ -253,11 +256,13 @@ std::vector<torch::Tensor> gated_deltanet_bwd(torch::Tensor q,
                                               torch::Tensor g,
                                               torch::Tensor do_grad,
                                               double scale) {
-    const at::cuda::OptionalCUDAGuard device_guard(device_of(q));
-    auto stream = at::cuda::getCurrentCUDAStream();
-
-    TORCH_CHECK(q.is_cuda() && k.is_cuda() && v_new.is_cuda() && h.is_cuda(),
-                "q/k/v_new/h must be on CUDA");
+    TORCH_CHECK(q.is_cuda() && k.is_cuda() && v_new.is_cuda() && h.is_cuda() &&
+                    g.is_cuda() && do_grad.is_cuda(),
+                "q/k/v_new/h/g/do must be on CUDA");
+    TORCH_CHECK(q.device() == k.device() && q.device() == v_new.device() &&
+                    q.device() == h.device() && q.device() == g.device() &&
+                    q.device() == do_grad.device(),
+                "q/k/v_new/h/g/do must be on the same CUDA device");
     TORCH_CHECK(q.scalar_type() == torch::kBFloat16, "q must be bf16");
     TORCH_CHECK(k.scalar_type() == torch::kBFloat16, "k must be bf16");
     TORCH_CHECK(v_new.scalar_type() == torch::kBFloat16, "v_new must be bf16");
@@ -265,20 +270,33 @@ std::vector<torch::Tensor> gated_deltanet_bwd(torch::Tensor q,
     TORCH_CHECK(do_grad.scalar_type() == torch::kBFloat16, "do must be bf16");
     TORCH_CHECK(g.scalar_type() == torch::kFloat32, "g must be fp32");
     TORCH_CHECK(q.dim() == 4 && q.size(3) == kHeadDim, "q must be [B, H, T, ", kHeadDim, "]");
-    TORCH_CHECK(v_new.sizes() == q.sizes(), "v_new must match q");
-    TORCH_CHECK(do_grad.sizes() == q.sizes(), "do must match q");
-    TORCH_CHECK(g.size(2) == q.size(2), "g must be [B, H, T] matching q");
-    TORCH_CHECK(h.dim() == 5, "h must be [B, H, chunks, K, V]");
+    TORCH_CHECK(k.sizes() == q.sizes() && v_new.sizes() == q.sizes() &&
+                    do_grad.sizes() == q.sizes(), "k/v_new/do must match q");
+    TORCH_CHECK(g.dim() == 3 && g.size(0) == q.size(0) &&
+                    g.size(1) == q.size(1) && g.size(2) == q.size(2),
+                "g must be [B, H, T] matching q");
     TORCH_CHECK(q.size(2) % kChunk == 0, "seq must be a multiple of ", kChunk);
+    TORCH_CHECK(h.dim() == 5 && h.size(0) == q.size(0) && h.size(1) == q.size(1) &&
+                    h.size(2) == q.size(2) / kChunk && h.size(3) == kHeadDim &&
+                    h.size(4) == kHeadDim,
+                "h must be [B, H, chunks, K, V] matching q");
+    TORCH_CHECK(q.size(0) > 0 && q.size(1) > 0 && q.size(2) > 0,
+                "batch, heads, and sequence must be positive");
+    TORCH_CHECK(q.numel() <= std::numeric_limits<int>::max(),
+                "GatedDeltaNet input exceeds int32 kernel indexing");
+    TORCH_CHECK(std::isfinite(scale) && scale > 0.0 && std::isfinite(static_cast<float>(scale)) &&
+                    static_cast<float>(scale) > 0.0f, "scale must be finite and positive");
     for (const auto* named : {&q, &k, &v_new, &do_grad}) {
         TORCH_CHECK(named->is_contiguous(), "q/k/v_new/do must be head-major contiguous");
     }
     TORCH_CHECK(h.is_contiguous() && g.is_contiguous(), "h/g must be contiguous");
 
-    const int batch = q.size(0);
-    const int heads = q.size(1);
-    const int seq = q.size(2);
+    const int batch = static_cast<int>(q.size(0));
+    const int heads = static_cast<int>(q.size(1));
+    const int seq = static_cast<int>(q.size(2));
     const int chunks = seq / kChunk;
+    const at::cuda::OptionalCUDAGuard device_guard(device_of(q));
+    auto stream = at::cuda::getCurrentCUDAStream();
 
     auto dq = torch::empty_like(q);
     auto dk = torch::empty_like(k);

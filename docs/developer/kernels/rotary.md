@@ -1,30 +1,24 @@
 # Rotary Embedding
 
-> Kernel `csrc/rotary_emb.cu`; python adapter
-> `astrai/extension/kernel/rotary.py`, dispatch in
-> `astrai/extension/backend/rotary.py`.
+Native kernel: `csrc/rotary_emb.cu`. Python operator: `astrai.extension.kernel.rotary.rotary_emb`. Dispatch: `astrai.extension.backend.rotary.apply_rotary_emb`.
 
-## Kernel
-### Rotary Embedding Kernel
+## Math contract
 
-The `rotary_emb` kernel (`csrc/rotary_emb.cu`) fuses cos/sin lookup and rotation into a single kernel:
+For each adjacent pair `(e, o)` and frequency pair `(c, s)`, forward returns `(ec - os, es + oc)`. Given upstream gradient `(de, do)`, backward returns `(de*c + do*s, do*c - de*s)`. The backward kernel needs the frequency tensor only; autograd does not save the input or forward output.
 
-- One thread per (head, dim-pair), vectorized `__nv_bfloat162` load/store
-- f32 cos/sin input, bf16 compute and output
-- 256-thread blocks, grid-stride loop
-- Auto-dispatched via `apply_rotary_emb` in `astrai/extension/backend/rotary.py` (CUDA when available + inference mode, else torch complex-multiply fallback)
+The CUDA path accepts BF16 packed `[tokens, heads, dim]` or dense `[batch, seq, heads, dim]` input, FP32 frequencies with matching token axes and `[dim/2, 2]` pair axes, and a positive head dimension divisible by four. The innermost input dimension must be contiguous; outer strides may differ, including partial rotary slices. The output and input gradient are contiguous. Forward and backward each use one CUDA launch.
 
-## Backend
+The frequency tensor is treated as fixed. If it requires a gradient, dispatch uses the Torch implementation. Unsupported device, dtype, shape, or input layout also use Torch in auto mode; an explicit `rotary="cuda"` selection raises an error when unsupported. The fused operator provides a first-order gradient for the input.
 
-`astrai/extension/backend/rotary.py` provides `apply_rotary_emb(x, (cos, sin))` with auto-dispatch:
+## RTX 5090 measurement
 
-- **CUDA path**: calls `rotary_emb` kernel directly when available, input is bf16 on CUDA, and `torch.is_grad_enabled()` is `False` (inference)
-- **Torch fallback**: complex multiply (`torch.view_as_complex` → `torch.complex` multiply → `torch.view_as_real`), used during training (supports autograd) or when kernel unavailable
+`CUDA_VISIBLE_DEVICES=4 .venv/bin/python scripts/benchmark/rotary.py --shape 4x2048x16x128 --warmup 10 --iterations 100 --trials 3`
 
-No context-manager switching needed — the dispatch is automatic per call.
+BF16 training forward plus backward, identical input and upstream gradient, interleaved Torch/CUDA trials; medians of CUDA event times. Peak allocation is measured above the preallocated input, frequency, and gradient tensors.
 
-## Wrapper
+| Path | Peak allocation | Eager | CUDA Graph |
+|---|---:|---:|---:|
+| Torch | 168 MiB | 2075.17 µs | 321.91 µs |
+| Fused CUDA | 64 MiB | 1362.12 µs | 78.09 µs |
 
-`astrai/extension/kernel/rotary.py` provides the wrapper for the rotary
-embedding kernel. Fallback to torch complex multiply is handled by
-`backend/rotary.py`.
+The fused path used 61.9% less peak allocated memory in this case. These are operator-level measurements on one RTX 5090, not model throughput.

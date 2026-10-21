@@ -3,7 +3,7 @@ import glob
 import json
 import os
 import statistics
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, FrozenSet, List, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -26,7 +26,7 @@ def _collect_input_files(input_path: str) -> List[str]:
     return sorted(glob.glob(input_path))
 
 
-def _load_items(filepath: str) -> List[dict]:
+def _load_items(filepath: str) -> List[Dict]:
     """Load JSONL or JSON (array / single dict) into a list of dicts."""
     with open(filepath, "r", encoding="utf-8") as f:
         if filepath.lower().endswith(".json"):
@@ -74,7 +74,7 @@ def _compute_batch(
     return token_log_probs, valid[:, 1:].float().cpu()
 
 
-def _token_type(token_id: int, stop_ids: frozenset, decode_fn) -> str:
+def _token_type(token_id: int, stop_ids: FrozenSet, decode_fn) -> str:
     """Classify a token into a coarse type for analysis.
 
     *stop_ids* is a pre-built set of special token IDs.
@@ -211,7 +211,7 @@ class LossAccumulator:
 def process_file(
     model,
     tokenizer: AutoTokenizer,
-    items: List[dict],
+    items: List[Dict],
     text_key: str,
     batch_size: int,
     max_length: int,
@@ -235,7 +235,7 @@ def process_file(
     print(f"  [{label}] {len(texts)} samples, text_key='{text_key}'")
 
     acc = LossAccumulator(stream=not token_level)
-    per_sample: List[dict] = []
+    per_sample: List[Dict] = []
 
     if token_level:
         stop_ids = frozenset(tokenizer.stop_ids)
