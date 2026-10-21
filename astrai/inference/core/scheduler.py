@@ -1,19 +1,12 @@
-"""Request scheduling and result application; EngineCore owns execution."""
+"""Request state, KV accounting, scheduling, and result application."""
 
 import logging
-import uuid
 from collections import deque
-from contextlib import nullcontext
-from functools import wraps
-from typing import Any, Callable, Dict, List, Optional, TypeVar, Union
-
-import torch
+from typing import Any, Dict, List, Optional
 
 from astrai.config.inference_config import InferenceConfig
-from astrai.extension import ATTN_BACKEND, AttentionBackend, attn_backend, get_backend
 from astrai.inference.contracts import ModelRunnerOutput, SchedulerOutput
 from astrai.inference.core.cache.pool import BlockPool, KVCacheManager
-from astrai.inference.core.engine_core import EngineCore
 from astrai.inference.core.events import (
     FINISH_ABORTED,
     FINISH_CANCELLED,
@@ -25,180 +18,90 @@ from astrai.inference.core.events import (
     TokenDelta,
 )
 from astrai.inference.core.metrics import MetricsCollector
-from astrai.inference.core.request import (
-    GenerationResult,
-    Request,
-    RequestManager,
-    RequestStatus,
-)
-from astrai.inference.core.stepper import SchedulerStep
-from astrai.inference.core.versioning import PolicyVersionGuard
-from astrai.inference.worker.model_runner import GPUModelRunner
-from astrai.model.automodel import AutoModel
-from astrai.tokenize.tokenizer import AutoTokenizer
+from astrai.inference.core.planner import StepPlanner
+from astrai.inference.core.request import Request, RequestManager, RequestStatus
 
 logger = logging.getLogger(__name__)
-T = TypeVar("T")
 _config = InferenceConfig()
 
 
-def _with_weight_lock(method):
-    @wraps(method)
-    def synchronized(self, *args, **kwargs):
-        with self._weight_lock:
-            return method(self, *args, **kwargs)
-
-    return synchronized
-
-
-def _synchronous(method):
-    @wraps(method)
-    def synchronized(self, *args, **kwargs):
-        with self.engine_core.exclusive():
-            return method(self, *args, **kwargs)
-
-    return synchronized
-
-
 class OutputEventSink:
-    """Fast, exception-safe outlet for token and exactly-once terminal events."""
+    """Fast, exception-safe outlet for token and terminal events."""
 
     def __call__(self, events: List[Any]) -> None:
         raise NotImplementedError
 
 
 class Scheduler:
-    """Own request/KV scheduling state, not the thread or GPU execution loop."""
+    """Own request and logical KV state; never launch model execution."""
 
     def __init__(
         self,
-        model: AutoModel,
-        tokenizer: AutoTokenizer,
-        max_batch_size: int = 16,
-        max_seq_len: Optional[int] = None,
-        device: Optional[str] = None,
-        dtype: Optional[torch.dtype] = None,
-        cache: Optional[BlockPool] = None,
-        enable_cuda_graph: bool = True,
-        backend: Optional[Union[str, ATTN_BACKEND, AttentionBackend, type]] = None,
-        policy_version: int = 0,
-        enable_overlap: bool = False,
-        page_size: Optional[int] = None,
-        kv_tokens: Optional[int] = None,
+        tokenizer,
+        max_batch_size: int,
+        max_seq_len: int,
+        cache: BlockPool,
         token_budget: Optional[int] = None,
+        policy_version: int = 0,
     ):
-        if (
-            isinstance(policy_version, bool)
-            or not isinstance(policy_version, int)
-            or policy_version < 0
-        ):
-            raise ValueError("policy_version must be a non-negative integer")
-        config = model.config
-        self.max_seq_len = (
-            max_seq_len if max_seq_len is not None else config.max_position_embeddings
-        )
-        if self.max_seq_len is None:
-            raise ValueError("max_seq_len must be provided as argument or model config")
-        self.device = device or next(model.parameters()).device
-        self.dtype = dtype or next(model.parameters()).dtype
-        self._enable_overlap = enable_overlap
-        if cache is None:
-            pool_kwargs = {}
-            if page_size is not None:
-                pool_kwargs["page_size"] = page_size
-            if kv_tokens is not None:
-                pool_kwargs["n_tokens"] = kv_tokens
-            cache = BlockPool(
-                n_layers=config.num_hidden_layers,
-                n_kv_heads=config.num_key_value_heads,
-                head_dim=config.hidden_size // config.num_attention_heads,
-                max_batch_size=max_batch_size,
-                max_seq_len=self.max_seq_len,
-                device=self.device,
-                dtype=self.dtype,
-                **pool_kwargs,
-            )
+        self.max_seq_len = max_seq_len
         self._cache = cache
         self._metrics = MetricsCollector()
         self._kv_manager = KVCacheManager(cache)
         self._requests = RequestManager(
-            tokenizer, max_batch_size, self.max_seq_len, self._metrics
+            tokenizer, max_batch_size, max_seq_len, self._metrics
         )
         self._stop_ids = frozenset(tokenizer.stop_ids)
-        self._backend = None
-        with attn_backend(backend if backend is not None else get_backend()):
-            if backend is not None:
-                self._backend = get_backend()
-            self._backend_name = type(get_backend()).__name__
-            self._executor = GPUModelRunner(
-                model=model,
-                kv_cache=cache,
-                cache_mgr=self._kv_manager,
-                device=self.device,
-                dtype=self.dtype,
-                enable_cuda_graph=enable_cuda_graph,
-            )
         effective_budget = token_budget or _config.max_num_batched_tokens or None
-        self._stepper = SchedulerStep(self, token_budget=effective_budget)
+        self._planner = StepPlanner(self._kv_manager, effective_budget)
         self._event_sink: Optional[OutputEventSink] = None
         self._states: Dict[str, Request] = {}
         self._step_id = 0
-        # Keys are (step id, request incarnation), never mutable object identity.
+        self._policy_version = policy_version
         self._planned = {}
         self._pending_order = {}
         self._ready = {}
-        self._policy_guard = PolicyVersionGuard(
-            policy_version,
-            ensure_ready=self._ensure_weight_update_ready,
-            on_commit=self._kv_manager.invalidate_cache,
-        )
-        self._weight_lock = self._policy_guard.lock
-        self._engine_core = EngineCore(self, self._weight_lock)
-
-    @property
-    def engine_core(self) -> EngineCore:
-        return self._engine_core
-
-    @property
-    def _loop_thread(self):
-        return self.engine_core.loop_thread
-
-    @property
-    def _stop_event(self):
-        return self.engine_core.stop_event
 
     @property
     def stop_ids(self):
         return self._stop_ids
 
     @property
-    def policy_version(self):
-        return self._policy_guard.policy_version
-
-    @property
-    def model(self):
-        return self._executor.model
-
-    @property
     def max_batch_size(self):
         return self._requests.max_batch_size
 
     @property
-    def backend_name(self):
-        return self._backend_name
+    def kv_manager(self):
+        return self._kv_manager
 
     @property
-    def cuda_graph_enabled(self):
-        return self._executor.cuda_graph_enabled
+    def cache(self):
+        return self._cache
 
-    def _backend_context(self):
-        return (
-            attn_backend(self._backend) if self._backend is not None else nullcontext()
-        )
+    @property
+    def metrics(self):
+        return self._metrics
+
+    def has_requests(self):
+        return self._requests.has_requests()
+
+    def wait_for_requests(self, timeout):
+        return self._requests.wait_for_requests(timeout=timeout)
+
+    def wake(self):
+        self._requests.wake()
+
+    def has_outstanding(self):
+        return bool(self._planned)
+
+    def set_policy_version(self, policy_version):
+        self._policy_version = policy_version
+
+    def refresh_stop_ids(self):
+        self._stop_ids = frozenset(self._requests.tokenizer.stop_ids)
 
     def set_event_sink(self, sink):
-        with self._weight_lock:
-            self._event_sink = sink
+        self._event_sink = sink
 
     def _emit_events(self, events):
         if not events or self._event_sink is None:
@@ -208,51 +111,50 @@ class Scheduler:
         except Exception:
             logger.exception("output event sink failed")
 
-    def _ensure_weight_update_ready(self):
-        self.engine_core.ensure_weight_update_ready()
-
-    def update_weights(self, policy_version: int) -> int:
-        return self._policy_guard.update_weights(policy_version)
-
-    def apply_weight_update(
-        self, policy_version: Optional[int], update: Callable[[int], T]
-    ) -> T:
-        return self._policy_guard.apply_weight_update(policy_version, update)
-
-    def with_policy_snapshot(self, inspect: Callable[[int], T]) -> T:
-        return self._policy_guard.with_policy_snapshot(inspect)
-
-    def _remember(self, request):
+    def remember(self, request):
         current = self._states.get(request.request_id)
         if current is not None and current is not request:
             raise ValueError(f"duplicate live request id: {request.request_id}")
         self._states[request.request_id] = request
         request.input_tokens = len(request.prompt_ids)
 
-    @_with_weight_lock
     def add_request(self, prompt: str, **kwargs) -> str:
-        self.engine_core.ensure_accepting()
         rid = self._requests.add_request(prompt, **kwargs)
         request = self._requests.get_request(rid)
-        self._remember(request)
+        self.remember(request)
         if request.max_tokens is not None and request.max_tokens <= 0:
             self.finish(request, FINISH_LENGTH)
             self.release_finished()
         return rid
 
-    @_with_weight_lock
     def add_requests(self, prompts: List[str], **kwargs) -> List[str]:
-        self.engine_core.ensure_accepting()
         ids = self._requests.add_requests(prompts, **kwargs)
         for rid in ids:
             request = self._requests.get_request(rid)
-            self._remember(request)
+            self.remember(request)
             if request.max_tokens is not None and request.max_tokens <= 0:
                 self.finish(request, FINISH_LENGTH)
         self.release_finished()
         return ids
 
-    @_with_weight_lock
+    def enqueue_tokenized_requests(self, requests: List[Request]) -> None:
+        self._requests.enqueue_tokenized_requests(requests)
+        for request in requests:
+            request.emit_events = False
+            self.remember(request)
+
+    def reject_waiting_for_capacity(self) -> None:
+        """End a synchronous batch when no active request can free capacity."""
+        waiting = self._requests.pull_waiting(self._requests.get_stats()["waiting"])
+        for request in waiting:
+            self.finish(
+                request,
+                FINISH_REJECTED,
+                error_reason="kv_cache_allocation_failed",
+            )
+        self._requests.discard_waiting(waiting)
+        self.release_finished()
+
     def cancel_request(self, request_id: str) -> bool:
         request = self._states.get(request_id)
         if request is None or request.terminal_emitted:
@@ -264,11 +166,9 @@ class Scheduler:
             self._requests.wake()
         return cancelled
 
-    @_with_weight_lock
     def get_stats(self):
         stats = self._requests.get_stats()
         stats["kv_cache_tasks"] = self._kv_manager.request_count
-        stats["policy_version"] = self.policy_version
         return stats
 
     def finish_reason(self, request):
@@ -309,8 +209,8 @@ class Scheduler:
             self.finish(request, reason, error=error, events=events)
         self._emit_events(events)
 
-    def release_finished(self):
-        if self.engine_core._shutdown_failed:
+    def release_finished(self, safe_to_release=True):
+        if not safe_to_release:
             return
         for rid, request in list(self._states.items()):
             if not request.terminal_emitted or self._pending_order.get(
@@ -338,7 +238,7 @@ class Scheduler:
             r for r in self._requests.get_running_requests() if not r.terminal_emitted
         ]
 
-    def admit_requests(self):
+    def admit_requests(self, safe_to_release=True):
         available = self.max_batch_size - len(self._requests.get_running_requests())
         if available <= 0:
             return
@@ -347,7 +247,11 @@ class Scheduler:
             if request.terminal_emitted:
                 continue
             if not self._kv_manager.can_ever_fit(len(request.prompt_ids)):
-                self.finish(request, FINISH_REJECTED)
+                self.finish(
+                    request,
+                    FINISH_REJECTED,
+                    error_reason="kv_cache_allocation_failed",
+                )
             elif self._kv_manager.alloc_slots(request.request_id, request.prompt_ids):
                 if not self._requests.activate(request):
                     self.finish(request, FINISH_CANCELLED)
@@ -355,17 +259,36 @@ class Scheduler:
                 failed.append(request)
         if failed:
             self._requests.return_to_waiting(failed)
-        self.release_finished()
+        self.release_finished(safe_to_release)
 
-    @_with_weight_lock
-    def schedule(self, requests=None, *, return_logprobs=False) -> SchedulerOutput:
+    def schedule(
+        self, requests=None, policy_version=None, *, return_logprobs=False
+    ) -> SchedulerOutput:
+        if policy_version is None:
+            policy_version = self._policy_version
         requests = self.active_requests() if requests is None else requests
+        eligible = []
         for request in requests:
-            self._remember(request)
-        entries = self._stepper.plan(requests)
+            self.remember(request)
+            if request.terminal_emitted:
+                continue
+            request.input_tokens = len(request.prompt_ids)
+            if request.is_finished(self.stop_ids):
+                self.finish(request, self.finish_reason(request))
+            elif request.prefill_complete and request.next_pos >= self.max_seq_len:
+                self.finish(request, FINISH_LENGTH)
+            else:
+                eligible.append(request)
+        entries, failed = self._planner.plan(eligible)
+        for request in failed:
+            self.finish(
+                request,
+                FINISH_ABORTED,
+                error_reason="kv_cache_extension_failed",
+            )
         self._step_id += 1
         plan = SchedulerOutput(
-            self._step_id, self.policy_version, tuple(entries), return_logprobs
+            self._step_id, policy_version, tuple(entries), return_logprobs
         )
         for entry in entries:
             key = (plan.step_id, entry.identity)
@@ -374,9 +297,10 @@ class Scheduler:
             self._states[entry.request_id].num_computed_tokens = entry.materialized_end
         return plan
 
-    @_with_weight_lock
-    def update_from_output(self, output: ModelRunnerOutput):
+    def update_from_output(self, output: ModelRunnerOutput, policy_version=None):
         """Apply identity-addressed rows in per-request step order, exactly once."""
+        if policy_version is None:
+            policy_version = self._policy_version
         identities = []
         seen = set()
         for result in output.results:
@@ -412,7 +336,7 @@ class Scheduler:
                 request = self._states.get(identity.request_id)
                 if request is None or request.identity != identity:
                     continue
-                if version != self.policy_version:
+                if version != policy_version:
                     self.finish(
                         request,
                         FINISH_ABORTED,
@@ -485,167 +409,15 @@ class Scheduler:
         for request in self._states.values():
             request.num_computed_tokens = request.num_materialized_tokens
 
-    def run_busy_loop(self):
-        return self.engine_core.run_busy_loop()
+    def reserve_tokenized_request(self, request, register_metrics=False):
+        if not self._kv_manager.alloc_slots(request.request_id, request.prompt_ids):
+            return False
+        request.emit_events = False
+        self.remember(request)
+        if register_metrics:
+            self._metrics.register(request.request_id)
+        return True
 
-    def start(self):
-        self._stop_ids = frozenset(self._requests.tokenizer.stop_ids)
-        return self.engine_core.start()
-
-    def stop(self):
-        return self.engine_core.stop()
-
-    @_synchronous
-    def run_batch(
-        self,
-        prompt_ids_list: List[List[int]],
-        *,
-        max_tokens: Optional[int] = None,
-        temperature: float = 1.0,
-        top_p: float = 1.0,
-        top_k: int = 50,
-        frequency_penalty: float = 0.0,
-        rep_window: int = 64,
-        return_logprobs: bool = False,
-        return_details: bool = False,
-    ) -> List[Any]:
-        self._stop_ids = frozenset(self._requests.tokenizer.stop_ids)
-        requests, errors = [], []
-        backend = get_backend(use_default=False)
-        for ids in prompt_ids_list:
-            error = None
-            if not ids:
-                error = "prompt_empty"
-            elif len(ids) >= self.max_seq_len:
-                error = "prompt_too_long"
-            limit = (
-                self.max_seq_len - len(ids)
-                if max_tokens is None
-                else min(max_tokens, self.max_seq_len - len(ids))
-            )
-            if error is None and limit <= 0:
-                error = "max_tokens_non_positive"
-            request = None
-            if error is None:
-                request = Request(
-                    f"batch_{uuid.uuid4().hex}",
-                    ids,
-                    limit,
-                    temperature,
-                    top_p,
-                    top_k,
-                    frequency_penalty,
-                    rep_window,
-                    backend,
-                )
-                if not self._kv_manager.alloc_slots(
-                    request.request_id, request.prompt_ids
-                ):
-                    request, error = None, "kv_cache_allocation_failed"
-                else:
-                    request.emit_events = False
-                    self._remember(request)
-                    self._metrics.register(request.request_id)
-            requests.append(request)
-            errors.append(error)
-        try:
-            live = [r for r in requests if r is not None]
-            with self._backend_context():
-                while live:
-                    decoded, aborted = self._stepper.step(
-                        live, return_logprobs=return_logprobs
-                    )
-                    for request in aborted:
-                        self.finish(
-                            request,
-                            FINISH_ABORTED,
-                            error_reason="kv_cache_extension_failed",
-                        )
-                        request.error_reason = (
-                            request.error_reason or "kv_cache_extension_failed"
-                        )
-                    live = [
-                        r
-                        for r in decoded
-                        if not r.terminal_emitted and not r.is_finished(self.stop_ids)
-                    ]
-        finally:
-            self.engine_core.drain()
-            for request in requests:
-                if request is not None and not request.terminal_emitted:
-                    self.finish(
-                        request, FINISH_ABORTED, error_reason="execution_failed"
-                    )
-            self.release_finished()
-        details = []
-        for request, error in zip(requests, errors):
-            if request is None:
-                details.append(GenerationResult([], [], "rejected", error))
-            else:
-                reason = (
-                    "rejected"
-                    if request.error_reason
-                    else (
-                        "stop"
-                        if request.finish_reason == FINISH_STOP_TOKEN
-                        else "length"
-                    )
-                )
-                details.append(
-                    GenerationResult(
-                        list(request.output_ids),
-                        list(request.output_logprobs),
-                        reason,
-                        request.error_reason,
-                    )
-                )
-        if return_details:
-            return details
-        if return_logprobs:
-            return [(r.token_ids, r.logprobs) for r in details]
-        return [r.token_ids for r in details]
-
-    @_synchronous
-    def score_ids(self, prompt_ids_list, continuation_ids_list, per_token=False):
-        if len(prompt_ids_list) != len(continuation_ids_list):
-            raise ValueError("prompt and continuation lists must have equal length")
-        requests = []
-        backend = get_backend(use_default=False)
-        for prompt_ids, cont_ids in zip(prompt_ids_list, continuation_ids_list):
-            if (
-                not prompt_ids
-                or not cont_ids
-                or len(prompt_ids) + len(cont_ids) > self.max_seq_len
-            ):
-                requests.append(None)
-                continue
-            request = Request(
-                f"score_{uuid.uuid4().hex}",
-                list(prompt_ids) + list(cont_ids),
-                max_tokens=0,
-                backend=backend,
-            )
-            request.cont_len = len(cont_ids)
-            if not self._kv_manager.alloc_slots(request.request_id, request.prompt_ids):
-                requests.append(None)
-                continue
-            request.emit_events = False
-            self._remember(request)
-            requests.append(request)
-        live = [r for r in requests if r is not None]
-        results = {}
-        try:
-            if live:
-                with self._backend_context():
-                    scored = self._executor.execute_score(
-                        [r.execution("score", 0, len(r.prompt_ids)) for r in live],
-                        per_token=per_token,
-                    )
-                results = {r.request_id: value for r, value in zip(live, scored)}
-        finally:
-            # Score has no PendingExecution, including when forward throws.
-            self.engine_core.fence()
-            for request in live:
-                self._kv_manager.free_slots(request.request_id)
-                self._states.pop(request.request_id, None)
-        return [results.get(r.request_id) if r is not None else None for r in requests]
+    def release_tokenized_request(self, request):
+        self._kv_manager.free_slots(request.request_id)
+        self._states.pop(request.request_id, None)

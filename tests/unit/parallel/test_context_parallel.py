@@ -7,15 +7,18 @@ single-device full-sequence forward and backward of the same tiny GQA
 model.
 """
 
+from contextlib import nullcontext
+from types import SimpleNamespace
+
 import pytest
 import torch
 from pydantic import ValidationError
 
+from astrai.config import ComponentSpec
 from astrai.config.train_config import TrainConfig
-from astrai.parallel.cp import CPStrategy, LossReduction
+from astrai.parallel.cp import CPState, CPStrategy, LossReduction
 from astrai.parallel.topology import ParallelTopology
 from astrai.trainer.strategy import SEQStrategy, SFTStrategy
-from tests.support.rollout import RandomTokenDataset
 
 SEQ_LEN = 64
 BATCH = 2
@@ -49,6 +52,51 @@ def test_cp_strategy_requires_token_mean():
         CPStrategy(_SequenceReducer(), cp=None)
 
 
+def test_cp_normalizer_reuses_loss_collective(monkeypatch):
+    calls = []
+
+    def reduce_stats(stats, **kwargs):
+        calls.append(stats.clone())
+        stats.mul_(2)
+
+    monkeypatch.setattr(torch.distributed, "all_reduce", reduce_stats)
+
+    class FakeCP:
+        size = 2
+        topology = SimpleNamespace(cp_group=None)
+        mean_loss = CPState.mean_loss
+
+        def shard(self, buffers, seq_dims):
+            return nullcontext()
+
+    class Inner:
+        loss_reduction = LossReduction.TOKEN_MEAN
+
+        def prepare_batch(self, batch):
+            return batch
+
+        def shard_spec(self, batch):
+            return [], []
+
+        def forward_tokens(self, batch):
+            return None
+
+        def reduce_loss(self, forward, batch):
+            return SimpleNamespace(
+                loss_sum=torch.tensor(3.0, requires_grad=True),
+                token_count=torch.tensor(4.0),
+            )
+
+        def token_loss_output(self, scaled, mean, forward):
+            return {"loss": scaled, "metrics": {"task_loss": mean.item()}}
+
+    output = CPStrategy(Inner(), FakeCP()).compute_loss_output({})
+    assert len(calls) == 1
+    assert output["normalizer"] == 8.0
+    assert output["metrics"]["task_loss"] == 0.75
+    output["loss"].backward()
+
+
 def test_sft_shard_spec_rejects_packed():
     strategy = SFTStrategy(model=None, device="cpu")
     packed = {
@@ -76,10 +124,17 @@ def test_seq_prepare_batch_synthesizes_positions():
 def _minimal_train_config(**overrides):
     defaults = dict(
         strategy="seq",
-        model_fn=lambda: torch.nn.Linear(2, 2),
-        dataset=RandomTokenDataset(length=2),
-        optimizer_fn=lambda m: torch.optim.SGD(m.parameters(), lr=0.0),
-        scheduler_fn=lambda o: o,
+        model=ComponentSpec(
+            type="torch.nn:Linear", params={"in_features": 2, "out_features": 2}
+        ),
+        dataset=ComponentSpec(
+            type="tests.support.rollout:RandomTokenDataset", params={"length": 2}
+        ),
+        optimizer=ComponentSpec(type="torch.optim:SGD", params={"lr": 0.0}),
+        scheduler=ComponentSpec(
+            type="torch.optim.lr_scheduler:StepLR",
+            params={"step_size": 1, "gamma": 1.0},
+        ),
     )
     defaults.update(overrides)
     return TrainConfig(**defaults)

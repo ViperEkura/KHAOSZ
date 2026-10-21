@@ -14,8 +14,9 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.distributed.tensor import DTensor
 
-from astrai.extension.kernel.cross_entropy import cross_entropy, linear_cross_entropy
 from astrai.extension.kernel.cross_entropy import is_available as ce_available
+from astrai.extension.kernel.cross_entropy import linear_cross_entropy
+from astrai.model.components.linear import LinearCrossEntropyHead
 from astrai.parallel.cp import LossReduction, TokenLoss
 from astrai.trainer.strategy.base import BaseStrategy
 from astrai.trainer.strategy.factory import StrategyFactory
@@ -39,8 +40,8 @@ class _CEStrategy(BaseStrategy):
         **kwargs,
     ):
         super().__init__(model, device, **kwargs)
-        if loss_backend not in ("torch", "cuda_ce", "cuda_linear_ce"):
-            raise ValueError("loss_backend must be torch, cuda_ce, or cuda_linear_ce")
+        if loss_backend not in ("torch", "cuda_linear_ce"):
+            raise ValueError("loss_backend must be torch or cuda_linear_ce")
         if (
             isinstance(loss_chunk_size, bool)
             or not isinstance(loss_chunk_size, int)
@@ -82,21 +83,32 @@ class _CEStrategy(BaseStrategy):
                 chunk_size=self.loss_chunk_size,
             )
         else:
-            # FSDP's head owns its all-gather; use its forward for DTensors.
+            # Enter the FSDP head's forward so it owns the all-gather and
+            # backward reduction even when CE runs on the unsharded weight.
             head = self.model
             while hasattr(head, "_orig_mod") or hasattr(head, "module"):
                 head = getattr(head, "_orig_mod", None) or head.module
-            logits = (
-                head.lm_head(hidden)
-                if isinstance(weight, DTensor)
-                else F.linear(hidden, weight, bias)
-            )
-            loss_sum = F.cross_entropy(
-                logits.flatten(0, 1).float(),
-                targets.flatten(),
-                label_smoothing=self.label_smoothing,
-                reduction="sum",
-            )
+            if isinstance(weight, DTensor) and isinstance(
+                head.lm_head, LinearCrossEntropyHead
+            ):
+                loss_sum = head.lm_head(
+                    hidden,
+                    targets=targets,
+                    label_smoothing=self.label_smoothing,
+                    chunk_size=self.loss_chunk_size,
+                )
+            else:
+                logits = (
+                    head.lm_head(hidden)
+                    if isinstance(weight, DTensor)
+                    else F.linear(hidden, weight, bias)
+                )
+                loss_sum = F.cross_entropy(
+                    logits.flatten(0, 1).float(),
+                    targets.flatten(),
+                    label_smoothing=self.label_smoothing,
+                    reduction="sum",
+                )
         return ForwardResult(
             None,
             outputs.get("aux_loss"),
@@ -109,13 +121,6 @@ class _CEStrategy(BaseStrategy):
             return forward.loss_sum
         logits = forward.logits.flatten(0, 1)
         targets = targets.flatten()
-        if (
-            self.loss_backend == "cuda_ce"
-            and logits.is_cuda
-            and not isinstance(logits, DTensor)
-            and ce_available()
-        ):
-            return cross_entropy(logits, targets, label_smoothing=self.label_smoothing)
         return F.cross_entropy(
             logits.float(),
             targets,

@@ -10,6 +10,7 @@ from astrai.inference.core.events import (
     RequestFinished,
     TokenDelta,
 )
+from astrai.trainer.backend import run_batch
 from tests.support.inference import make_cpu_scheduler
 
 
@@ -86,9 +87,10 @@ def test_online_batch_changes_preserve_events_and_greedy_tokens(
             # A stop token sampled on the FINAL allowed token is a normal
             # full-length generation that happened to end on a stop id.
             assert len(deltas) <= limits[request_id]
-            assert deltas[-1].token_id in scheduler.stop_ids
+            assert deltas[-1].token_id in test_tokenizer.stop_ids
         assert terminal.prompt_tokens == len(prompt)
-        expected = scheduler.run_batch(
+        expected = run_batch(
+            scheduler,
             [prompt],
             max_tokens=limits[request_id],
             temperature=0,

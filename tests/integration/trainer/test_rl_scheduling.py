@@ -1,22 +1,22 @@
 """RL scheduling (minibatch × update epochs), chunked-grad logprobs,
 reference-restore contract, and rollout finish-reason plumbing."""
 
+import json
 import os
-import random
 import shutil
-from functools import partial
+from contextlib import nullcontext
+from types import SimpleNamespace
 
 import pytest
 import torch
 from torch import nn
 from torch.utils.data import Dataset
 
-from astrai.config import TrainConfig
+from astrai.config import ComponentSpec, TrainConfig
+from astrai.parallel.setup import find_free_port
 from astrai.serialization import Checkpoint
-from astrai.trainer.optional_extras import (
-    checkpoint_extras,
-    restore_checkpoint_extras,
-)
+from astrai.trainer.callbacks import TrainCallback
+from astrai.trainer.context import TrainContext, TrainContextBuilder
 from astrai.trainer.rollout import BaseRewardModel, RolloutResult
 from astrai.trainer.strategy import (
     GRPOStrategy,
@@ -25,14 +25,8 @@ from astrai.trainer.strategy import (
     get_logprobs,
     move_to_device,
 )
-from astrai.trainer.train_context import TrainContext, TrainContextBuilder
 from astrai.trainer.trainer import Trainer
 from tests.support.tokenizers import CHAT_TEMPLATE
-from tests.support.trainer import (
-    make_online_lr_scheduler,
-    make_online_model,
-    make_online_optimizer,
-)
 
 
 class StubLM(nn.Module):
@@ -141,6 +135,104 @@ def test_offline_training_steps_yield_once():
     outputs = list(strategy.training_steps(batch))
     assert len(outputs) == 1
     assert torch.isfinite(outputs[0]["loss"])
+
+
+@pytest.mark.parametrize("aggregation", ["token", "sequence"])
+def test_async_grpo_microbatches_share_one_update_and_full_batch_gradient(
+    aggregation,
+):
+    result = _rollout_result(b=3)
+    result.response_mask[0, :, -1] = False
+    result.response_mask[1, 1, :] = False
+    full = _grpo_strategy(result, loss_aggregation=aggregation)
+    micro = _grpo_strategy(result, loss_aggregation=aggregation)
+
+    full_loss = full.compute_loss_output(full.prepare_from_rollout(result))["loss"]
+    full_loss.backward()
+    updates = list(micro.training_updates(result, microbatch_prompts=1))
+    assert len(updates) == 1
+    outputs = list(updates[0])
+    assert len(outputs) == 3
+    micro_loss = sum(output["loss"] for output in outputs)
+    micro_loss.backward()
+
+    torch.testing.assert_close(micro_loss, full_loss)
+    for full_param, micro_param in zip(
+        full.model.parameters(), micro.model.parameters()
+    ):
+        torch.testing.assert_close(micro_param.grad, full_param.grad)
+
+
+def test_default_training_updates_keep_ppo_update_count():
+    result = _rollout_result()
+    strategy = PPOStrategy(
+        StubLM(),
+        "cpu",
+        critic=StubCritic(),
+        critic_optimizer=None,
+        ref_model=None,
+        rl_update_epochs=2,
+        rl_minibatch_prompts=2,
+    )
+    strategy._rollout_runner = FakeRunner(result)
+    updates = [
+        list(update) for update in strategy.training_updates({"instruction": ["x"] * 4})
+    ]
+    assert len(updates) == 4
+    assert all(len(update) == 1 for update in updates)
+    assert strategy._rollout_runner.calls == 1
+
+
+def test_shared_train_batch_commits_async_round_once():
+    class Coordinator:
+        policy_version = 0
+
+        def apply_weight_update(self, _version, update):
+            result = update(self.policy_version + 1)
+            self.policy_version += 1
+            return result
+
+        def step(self):
+            pass
+
+    class Executor:
+        grad_accum_steps = 1
+        sync_gradients = True
+
+        def accumulate(self, _model):
+            return nullcontext()
+
+        def backward(self, loss):
+            loss.backward()
+
+    result = _rollout_result(b=3)
+    strategy = _grpo_strategy(result)
+    coordinator = Coordinator()
+    strategy._rollout_runner = coordinator
+    optimizer = torch.optim.SGD(strategy.model.parameters(), lr=0.01)
+    before = strategy.model.embed.weight.detach().clone()
+    context = SimpleNamespace(
+        model=strategy.model,
+        strategy=strategy,
+        executor=Executor(),
+        config=SimpleNamespace(async_train_microbatch_prompts=1),
+        async_rollout=coordinator,
+        dp_size=1,
+        optimizer=optimizer,
+        scheduler=None,
+        consumed_samples=0,
+        optimizer_steps_completed=0,
+        loss=0.0,
+        metrics={},
+    )
+    trainer = Trainer.__new__(Trainer)
+    trainer.callbacks = []
+    trainer._train_batch(context, result)
+
+    assert coordinator.policy_version == 1
+    assert context.optimizer_steps_completed == 1
+    assert context.consumed_samples == 3
+    assert not torch.equal(before, strategy.model.embed.weight)
 
 
 def test_online_minibatch_and_epoch_step_counts():
@@ -294,25 +386,7 @@ def test_move_to_device_passes_non_tensors_through():
     assert batch["reasons"] == [["stop"]]
 
 
-# --------------- M0: RNG extras + reference restore contract ---------------
-
-
-def test_rng_state_round_trip():
-    random.seed(1)
-    torch.manual_seed(1)
-    first = (torch.rand(3), random.random())
-
-    state = checkpoint_extras()["rng_state"]
-    diverged = (torch.rand(3), random.random())
-    restore_checkpoint_extras({"rng_state": state})
-    replayed = (torch.rand(3), random.random())
-
-    # Restore rewinds to the snapshot, so the post-restore draw replays the
-    # draw made right after the snapshot — and neither matches the earlier one.
-    assert torch.equal(diverged[0], replayed[0])
-    assert diverged[1] == replayed[1]
-    assert not torch.equal(first[0], replayed[0])
-    assert first[1] != replayed[1]
+# --------------- M0: reference restore contract ---------------
 
 
 class _RefOnlyStrategy:
@@ -324,10 +398,17 @@ class _RefOnlyStrategy:
 def _resume_builder(tmp_path, allow_reanchor=False):
     config = TrainConfig(
         strategy="sft",
-        model_fn=lambda: nn.Linear(2, 2),
-        dataset=torch.utils.data.TensorDataset(torch.zeros(1, 2)),
-        optimizer_fn=lambda m: torch.optim.SGD(m.parameters(), lr=0.0),
-        scheduler_fn=lambda o: None,
+        model=ComponentSpec(
+            type="torch.nn:Linear", params={"in_features": 2, "out_features": 2}
+        ),
+        dataset=ComponentSpec(
+            type="tests.support.rollout:RandomTokenDataset", params={"length": 1}
+        ),
+        optimizer=ComponentSpec(type="torch.optim:SGD", params={"lr": 0.0}),
+        scheduler=ComponentSpec(
+            type="torch.optim.lr_scheduler:StepLR",
+            params={"step_size": 1, "gamma": 1.0},
+        ),
         allow_reference_reanchor=allow_reanchor,
     )
     builder = TrainContextBuilder(config)
@@ -397,6 +478,20 @@ class InstructionDataset(Dataset):
         return dict(self._SAMPLES[idx])
 
 
+class InstructionDatasetEight(InstructionDataset):
+    _SAMPLES = InstructionDataset._SAMPLES * 2
+
+
+class InstructionDatasetFive(InstructionDataset):
+    _SAMPLES = InstructionDataset._SAMPLES + [InstructionDataset._SAMPLES[0]]
+
+
+class _StopAtFour(TrainCallback):
+    def after_optimizer_step(self, context):
+        if context.optimizer_step == 4:
+            context.request_stop()
+
+
 class LengthRewardModel(BaseRewardModel):
     def score(self, prompts, responses):
         b = len(prompts)
@@ -419,10 +514,21 @@ def _online_config(base_test_env, **overrides):
     model_config = base_test_env["transformer_config"]
     defaults = dict(
         strategy="online_grpo",
-        model_fn=partial(make_online_model, model_config),
-        dataset=InstructionDataset(),
-        optimizer_fn=make_online_optimizer,
-        scheduler_fn=make_online_lr_scheduler,
+        model=ComponentSpec(
+            type="autoregressive_lm", params={"config": model_config.to_dict()}
+        ),
+        model_dtype="float32",
+        dataset=ComponentSpec(
+            type="tests.integration.trainer.test_rl_scheduling:InstructionDataset",
+            params={
+                "collate": "tests.integration.trainer.test_rl_scheduling:instruction_collate_fn"
+            },
+        ),
+        optimizer=ComponentSpec(type="torch.optim:AdamW", params={"lr": 1e-4}),
+        scheduler=ComponentSpec(
+            type="cosine",
+            params={"warmup_steps": 1, "lr_decay_steps": 4, "min_rate": 0.05},
+        ),
         ckpt_dir=os.path.join(base_test_env["test_dir"], "ckpt"),
         n_epoch=1,
         batch_per_device=2,
@@ -439,7 +545,6 @@ def _online_config(base_test_env, **overrides):
         rollout_top_p=1.0,
         rollout_max_tokens=4,
         reward_model_fn=LengthRewardModel,
-        collate_fn=instruction_collate_fn,
     )
     defaults.update(overrides)
     return TrainConfig(**defaults)
@@ -458,12 +563,16 @@ def test_online_minibatch_round_publication_and_reference_resume(base_test_env):
     config = _online_config(base_test_env, rl_update_epochs=2, rl_minibatch_prompts=1)
     Trainer(config).train(param_path=test_dir)
 
-    checkpoint_dir = os.path.join(test_dir, "ckpt", "epoch_0_step_2")
+    checkpoint_dir = os.path.join(test_dir, "ckpt", "epoch_0_step_8")
     checkpoint = Checkpoint.load(checkpoint_dir)
-    # 2 batches × (2 minibatches × 2 epochs) publications.
+    # 2 batches × (2 minibatches × 2 epochs) publications, one step each.
     assert checkpoint.meta["policy_version"] == 8
+    assert checkpoint.meta["optimizer_step"] == 8
+    # The cursor counts data positions, not steps: a replayed batch is one
+    # position however many updates it produces.
+    assert checkpoint.meta["consumed_samples"] == 4
     assert "reference_model" in checkpoint.extra
-    assert "rng_state" in checkpoint.extra
+    assert "rng_state" not in checkpoint.extra
     ref_keys = set(checkpoint.extra["reference_model"])
     assert ref_keys and ref_keys.issubset(checkpoint.state_dict.keys())
 
@@ -490,3 +599,138 @@ def test_online_minibatch_round_publication_and_reference_resume(base_test_env):
         allow_reference_reanchor=True,
     )
     Trainer(reanchor_config).train(param_path=stripped_dir, resume=True)
+
+
+@pytest.mark.integration
+def test_online_accumulation_commits_complete_rollout_windows(base_test_env):
+    """Replay updates publish separately; the data cursor moves once per window."""
+    test_dir = base_test_env["test_dir"]
+    tokenizer = base_test_env["tokenizer"]
+    tokenizer.set_chat_template(CHAT_TEMPLATE)
+    tokenizer.save_pretrained(test_dir)
+
+    config = _online_config(
+        base_test_env,
+        batch_per_device=1,
+        grad_accum_steps=2,
+        rl_update_epochs=2,
+        rl_minibatch_prompts=1,
+    )
+    Trainer(config).train(param_path=test_dir)
+    checkpoint = Checkpoint.load(os.path.join(test_dir, "ckpt", "epoch_0_step_8"))
+    assert checkpoint.meta["policy_version"] == 8
+    assert checkpoint.meta["optimizer_step"] == 8
+    assert checkpoint.meta["consumed_samples"] == 4
+    assert checkpoint.meta["epoch_sample_offset"] == 4
+    with open(
+        os.path.join(test_dir, "ckpt", "epoch_0_step_8", "metric.jsonl"),
+        encoding="utf-8",
+    ) as file:
+        steps = [
+            record["step"]
+            for record in map(json.loads, file)
+            if record["type"] == "step"
+        ]
+    assert steps == list(range(1, 9))
+
+
+@pytest.mark.integration
+def test_online_ddp_accumulation_keeps_policy_versions_aligned(base_test_env):
+    """All ranks publish the same replay updates, including empty group slots."""
+    test_dir = base_test_env["test_dir"]
+    tokenizer = base_test_env["tokenizer"]
+    tokenizer.set_chat_template(CHAT_TEMPLATE)
+    tokenizer.save_pretrained(test_dir)
+
+    config = _online_config(
+        base_test_env,
+        dp_size=2,
+        dp_mode="ddp",
+        backend="gloo",
+        master_port=find_free_port(),
+        batch_per_device=1,
+        grad_accum_steps=2,
+        rl_update_epochs=2,
+        rl_minibatch_prompts=2,
+    )
+    Trainer(config).train(param_path=test_dir)
+    checkpoint = Checkpoint.load(os.path.join(test_dir, "ckpt", "epoch_0_step_4"))
+    assert checkpoint.meta["policy_version"] == 4
+    assert checkpoint.meta["optimizer_step"] == 4
+    assert checkpoint.meta["consumed_samples"] == 4
+
+
+@pytest.mark.integration
+def test_online_rollout_window_resumes_after_dp_resize(base_test_env):
+    test_dir = base_test_env["test_dir"]
+    tokenizer = base_test_env["tokenizer"]
+    tokenizer.set_chat_template(CHAT_TEMPLATE)
+    tokenizer.save_pretrained(test_dir)
+    dataset = ComponentSpec(
+        type="tests.integration.trainer.test_rl_scheduling:InstructionDatasetEight",
+        params={
+            "collate": "tests.integration.trainer.test_rl_scheduling:instruction_collate_fn"
+        },
+    )
+    old = _online_config(
+        base_test_env,
+        dataset=dataset,
+        batch_per_device=2,
+        grad_accum_steps=2,
+        rl_update_epochs=2,
+        rl_minibatch_prompts=2,
+    )
+    Trainer(old, callbacks=[_StopAtFour()]).train(param_path=test_dir)
+    first = os.path.join(test_dir, "ckpt", "epoch_0_step_4")
+    saved = Checkpoint.load(first)
+    assert saved.consumed_samples == 4
+    assert saved.meta["policy_version"] == 4
+
+    new = _online_config(
+        base_test_env,
+        dataset=dataset,
+        dp_size=2,
+        dp_mode="ddp",
+        backend="gloo",
+        master_port=find_free_port(),
+        batch_per_device=1,
+        grad_accum_steps=2,
+        rl_update_epochs=2,
+        rl_minibatch_prompts=2,
+    )
+    Trainer(new).train(param_path=first, resume=True)
+    final = Checkpoint.load(os.path.join(test_dir, "ckpt", "epoch_0_step_8"))
+    assert final.meta["policy_version"] == 8
+    assert final.meta["optimizer_step"] == 8
+    assert final.consumed_samples == 8
+
+
+@pytest.mark.integration
+def test_online_ddp_flushes_tail_with_empty_rank(base_test_env):
+    test_dir = base_test_env["test_dir"]
+    tokenizer = base_test_env["tokenizer"]
+    tokenizer.set_chat_template(CHAT_TEMPLATE)
+    tokenizer.save_pretrained(test_dir)
+    dataset = ComponentSpec(
+        type="tests.integration.trainer.test_rl_scheduling:InstructionDatasetFive",
+        params={
+            "collate": "tests.integration.trainer.test_rl_scheduling:instruction_collate_fn"
+        },
+    )
+    config = _online_config(
+        base_test_env,
+        dataset=dataset,
+        dp_size=2,
+        dp_mode="ddp",
+        backend="gloo",
+        master_port=find_free_port(),
+        batch_per_device=1,
+        grad_accum_steps=2,
+        epoch_tail_policy="flush",
+        rl_minibatch_prompts=2,
+    )
+    Trainer(config).train(param_path=test_dir)
+    checkpoint = Checkpoint.load(os.path.join(test_dir, "ckpt", "epoch_0_step_3"))
+    assert checkpoint.meta["policy_version"] == 3
+    assert checkpoint.consumed_samples == 5
+    assert checkpoint.meta["epoch_sample_offset"] == 5

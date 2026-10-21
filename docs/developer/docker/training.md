@@ -36,7 +36,7 @@ runtime:
     devices: all
     dp_mode: auto  # one GPU: none; multiple GPUs: ddp
   container:
-    cuda_tag: cu128
+    cuda_tag: cu130
     ipc: host
     stop_grace_period: 10m
     stop_timeout_seconds: 600
@@ -46,7 +46,7 @@ runtime:
   # (see "Per-Job Environment"):
   # environment:
   #   ASTR_LOG_LEVEL: DEBUG
-  #   ASTR_BACKEND: torch_native
+  #   ASTR_OPS: attention=torch
 ```
 
 - Relative paths resolve from the YAML file's directory, not the current shell.

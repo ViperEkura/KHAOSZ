@@ -60,14 +60,14 @@ class TokenizeTransform:
         config = PipelineConfig.from_dict(raw_config)
         return cls(config, tokenizer_path)
 
-    def apply(self, records: List[dict]) -> Dict[str, list]:
+    def apply(self, records: List[Dict]) -> Dict[str, List]:
         """Tokenize a list of raw record dicts.
 
         Returns a dict mapping key (``sequence``, ``chosen``, ``responses``,
         …) to a list of per-record tensors (or nested tensor lists for
         multi-response keys such as GRPO ``responses``).
         """
-        raw: Dict[str, list] = {}
+        raw: Dict[str, List] = {}
         doc_sequences: List[List[int]] = []
 
         for result in iter_raw_records(

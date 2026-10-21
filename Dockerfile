@@ -2,14 +2,14 @@
 #
 # CUDA version selection:
 #   docker build -t astrai .
-#   docker build -t astrai --build-arg CUDA_TAG=cu128 .
+#   docker build -t astrai --build-arg CUDA_TAG=cu126 .
 #   docker build -t astrai --build-arg CUDA_TAG=cu130 .
-# Default: cu128
+# Default: cu130
 
 # Build stage - use base image with minimal build tools
 FROM ubuntu:24.04 AS builder
 
-ARG CUDA_TAG=cu128
+ARG CUDA_TAG=cu130
 
 WORKDIR /app
 

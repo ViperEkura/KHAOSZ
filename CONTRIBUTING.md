@@ -39,6 +39,9 @@ ruff format .    # re-format after fix
 python -u -m pytest tests/ -v
 ```
 
+See [docs/developer/testing.md](docs/developer/testing.md) for the tier
+layout and skip rules.
+
 > Failed tests may leave orphan tempdirs under the system temp directory
 > (`$TMPDIR` on Linux/macOS, `%TEMP%` on Windows). Clean them manually if needed.
 

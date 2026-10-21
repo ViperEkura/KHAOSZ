@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 
 #include <cuda_bf16.h>
@@ -68,18 +69,24 @@ template <> struct ElemTrait<float> {
 
 template <> struct ElemTrait<fp8_e4m3> {
     static constexpr int kBytes = 1;
-    static constexpr float kFiniteMax = 448.0f;
     static DEVICE_FORCEINLINE uint8_t cvt_byte(float x) { return fp8_e4m3(x).__x; }
 };
 
 template <> struct ElemTrait<fp8_e5m2> {
     static constexpr int kBytes = 1;
-    static constexpr float kFiniteMax = 57344.0f;
     static DEVICE_FORCEINLINE uint8_t cvt_byte(float x) { return fp8_e5m2(x).__x; }
 };
 
 template <> struct ElemTrait<int8_t> {
     static constexpr int kBytes = 1;
+
+    /* Symmetric saturation, round-to-nearest-even, with NaN mapped to zero. */
+    static DEVICE_FORCEINLINE uint8_t cvt_byte(float x) {
+        if (x != x)
+            return 0;
+        const float bounded = x < -127.0f ? -127.0f : x > 127.0f ? 127.0f : x;
+        return static_cast<uint8_t>(static_cast<int>(nearbyintf(bounded)));
+    }
 };
 
 template <typename T> DEVICE_FORCEINLINE void load8(const T* src, float* out) {

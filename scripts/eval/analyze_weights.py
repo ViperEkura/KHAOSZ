@@ -3,12 +3,13 @@
 import argparse
 import json
 from pathlib import Path
+from typing import Dict, List
 
 import safetensors.torch
 import torch
 
 
-def effective_rank_metrics(w: torch.Tensor, device: str = "cpu") -> dict:
+def effective_rank_metrics(w: torch.Tensor, device: str = "cpu") -> Dict:
     if w.ndim == 1:
         return {"shape": tuple(w.shape), "is_1d": True}
 
@@ -49,16 +50,16 @@ def effective_rank_metrics(w: torch.Tensor, device: str = "cpu") -> dict:
     }
 
 
-def format_header(headers: list[str], widths: list[int]) -> str:
+def format_header(headers: List[str], widths: List[int]) -> str:
     return "".join(h.ljust(w) for h, w in zip(headers, widths))
 
 
-def format_row(values: list[str], widths: list[int]) -> str:
+def format_row(values: List[str], widths: List[int]) -> str:
     return "".join(v.ljust(w) for v, w in zip(values, widths))
 
 
-def group_by_component(results: dict[str, dict]) -> dict[str, list[dict]]:
-    groups: dict[str, list[dict]] = {}
+def group_by_component(results: Dict[str, Dict]) -> Dict[str, List[Dict]]:
+    groups: Dict[str, List[Dict]] = {}
     for key, r in results.items():
         parts = key.split(".")
         if parts[0] == "layers" and len(parts) >= 3:
@@ -79,7 +80,7 @@ def group_by_component(results: dict[str, dict]) -> dict[str, list[dict]]:
     return groups
 
 
-def print_component_summary(results: dict[str, dict], title: str):
+def print_component_summary(results: Dict[str, Dict], title: str):
     groups = group_by_component(results)
     matrix_groups = {
         k: [v for v in vs if not v.get("is_1d")]
@@ -130,7 +131,7 @@ def print_component_summary(results: dict[str, dict], title: str):
             print("  → LOW utilization: significant unused capacity")
 
 
-def print_layer_grid(results: dict[str, dict]):
+def print_layer_grid(results: Dict[str, Dict]):
     comps = [
         "attn.q_proj",
         "attn.k_proj",
@@ -147,7 +148,7 @@ def print_layer_grid(results: dict[str, dict]):
     print(format_header(["Layer"] + comps, widths))
     print("-" * sum(widths))
 
-    layer_data: dict[int, dict[str, dict]] = {}
+    layer_data: Dict[int, Dict[str, Dict]] = {}
     for key, r in results.items():
         parts = key.split(".")
         if parts[0] != "layers":
@@ -170,7 +171,7 @@ def print_layer_grid(results: dict[str, dict]):
         print(format_row(values, widths))
 
 
-def print_weight_stats(results: dict[str, dict]):
+def print_weight_stats(results: Dict[str, Dict]):
     groups = group_by_component(results)
     widths = [20, 12, 12, 12, 12]
     print("\n--- Weight Value Statistics ---")
@@ -201,7 +202,7 @@ def print_weight_stats(results: dict[str, dict]):
         )
 
 
-def print_params_summary(results: dict[str, dict]):
+def print_params_summary(results: Dict[str, Dict]):
     total_2d = sum(
         r["shape"][0] * r["shape"][1] for r in results.values() if not r.get("is_1d")
     )

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import (
     Dict,
     List,
+    NotRequired,
     Optional,
     Tuple,
     TypedDict,
@@ -20,6 +21,7 @@ from astrai.model.components.mlp import RouterStats
 class LossOutput(TypedDict):
     loss: Tensor
     metrics: Dict[str, float]
+    normalizer: NotRequired[float]
 
 
 class LogprobsOutput(TypedDict):

@@ -22,7 +22,7 @@ from astrai.config.preprocess_config import (
     PipelineConfig,
     ProcessingConfig,
 )
-from astrai.config.train_config import TrainConfig
+from astrai.config.train_config import ComponentSpec, TrainConfig
 
 __all__ = [
     "BaseModelConfig",
@@ -34,6 +34,7 @@ __all__ = [
     "EncoderConfig",
     "ConfigFactory",
     "TrainConfig",
+    "ComponentSpec",
     "InputConfig",
     "OutputConfig",
     "PipelineConfig",

@@ -5,14 +5,14 @@ from importlib import import_module
 import pytest
 import torch
 
-from astrai.extension.backend.newton_schulz import select, symm_out, syrk_out
-from astrai.extension.kernel.newton_schulz import is_available, tiles
-from astrai.extension.policy import newton_schulz as plan
-from astrai.extension.runtime.dispatch import (
+from astrai.extension import (
     ExplicitSelectionError,
     op_backend,
     set_op,
 )
+from astrai.extension.backend.newton_schulz import select, symm_out, syrk_out
+from astrai.extension.kernel.newton_schulz import is_available, tiles
+from astrai.extension.policy import newton_schulz as plan
 
 backend = import_module("astrai.extension.backend.newton_schulz")
 

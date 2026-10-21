@@ -20,6 +20,7 @@ import ast
 import subprocess
 import sys
 from pathlib import Path
+from typing import Set
 
 import astrai.inference.core.cache as cache_facade
 import astrai.model.kv_cache as kv_cache
@@ -28,7 +29,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _MODEL_DIR = _REPO_ROOT / "astrai" / "model"
 
 
-def _imported_modules(path: Path) -> set[str]:
+def _imported_modules(path: Path) -> Set[str]:
     """Absolute module names imported by one source file.
 
     Relative imports are resolved against the file's package path so
@@ -37,7 +38,7 @@ def _imported_modules(path: Path) -> set[str]:
     """
     package = ["astrai"] + list(path.relative_to(_REPO_ROOT / "astrai").parts[:-1])
     tree = ast.parse(path.read_text(), filename=str(path))
-    modules: set[str] = set()
+    modules: Set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             modules.update(alias.name for alias in node.names)

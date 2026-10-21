@@ -1,18 +1,21 @@
-"""Numerical equivalence between TorchNativeBackend and CudaBackend.
+"""Numerical equivalence between Torch and CUDA attention implementations.
 
 Covers training forward, inference prefill, inference decode (mixed
-seq_lens with padding mask), and end-to-end scheduler.run_batch.
+seq_lens with padding mask), and end-to-end rollout run_batch.
 """
 
+import pytest
 import torch
 
-from astrai.extension import ATTN_BACKEND, attn_backend
+from astrai.extension import op_backend
 from astrai.extension.kernel.attention import attn_paged_decode
+from astrai.extension.runtime.loader import is_available
 from astrai.inference.core.cache import BlockPool, KVCacheManager
-from astrai.inference.core.scheduler import Scheduler
+from astrai.inference.core.engine_core import EngineCore
 from astrai.inference.worker.graph import CUDAGraphRunner
 from astrai.inference.worker.workspace import InferenceWorkspace
-from tests.support.capabilities import skip_no_kernel
+from astrai.trainer.backend import run_batch
+from tests.support.capabilities import skip_no_cuda
 from tests.support.models import D
 from tests.support.tokenizers import FakeTokenizer
 
@@ -32,11 +35,11 @@ def _ws(pool: BlockPool) -> InferenceWorkspace:
     )
 
 
-@skip_no_kernel
+@skip_no_cuda
 def test_training_forward_matches_torch(cuda_model):
     """Training forward (kv_cache=None) resolves to a capable dense backend.
 
-    CudaBackend cannot run training (requires a KV cache), so the default
+    CUDA attention cannot run training (requires a KV cache), so the default
     falls back by capability — flash when it can handle the call
     (mask-free/causal), otherwise torch SDPA.  The default path must not
     raise and must produce finite logits; explicitly selected torch SDPA
@@ -49,7 +52,7 @@ def test_training_forward_matches_torch(cuda_model):
     with torch.no_grad():
         out_default = model(input_ids)
 
-    with attn_backend(ATTN_BACKEND.TORCH_NATIVE):
+    with op_backend(attention="torch"):
         with torch.no_grad():
             out_torch_a = model(input_ids)
         with torch.no_grad():
@@ -62,7 +65,10 @@ def test_training_forward_matches_torch(cuda_model):
     )
 
 
-@skip_no_kernel
+@pytest.mark.skipif(
+    not (torch.cuda.is_available() and is_available("attention")),
+    reason="attention CUDA kernel unavailable",
+)
 def test_prefill_with_kv_cache_matches_torch(cuda_model):
     """Inference prefill with KV cache should match torch backend."""
     model, _ = cuda_model
@@ -96,7 +102,7 @@ def test_prefill_with_kv_cache_matches_torch(cuda_model):
     task_cache.alloc_slots("t1", prompt_ids[0])
     task_cache.alloc_slots("t2", prompt_ids[1])
     kv2 = task_cache.bind(["t1", "t2"], ws, start_pos=0)
-    with attn_backend(ATTN_BACKEND.CUDA):
+    with op_backend(attention="cuda"):
         with torch.inference_mode():
             out_cuda = model(
                 input_ids,
@@ -120,7 +126,59 @@ def test_prefill_with_kv_cache_matches_torch(cuda_model):
         offset += len(p)
 
 
-@skip_no_kernel
+@pytest.mark.skipif(
+    not (torch.cuda.is_available() and is_available("attention")),
+    reason="attention CUDA kernel unavailable",
+)
+@pytest.mark.parametrize("mask_len", [4, 6])
+def test_masked_cached_chunk_prefill_matches_torch(cuda_model, mask_len):
+    model, _ = cuda_model
+    device = "cuda"
+    prompt_ids = [1, 2, 3, 4, 5, 6]
+    ids = torch.tensor(prompt_ids, device=device)
+    key_mask = torch.tensor([[True, False, True, True, False, True]], device=device)[
+        :, :mask_len
+    ]
+
+    def run(backend):
+        pool = BlockPool(
+            n_layers=2,
+            n_kv_heads=1,
+            head_dim=D,
+            max_batch_size=1,
+            max_seq_len=64,
+            device=device,
+            dtype=torch.bfloat16,
+        )
+        task_cache = _mk_task_cache(pool)
+        workspace = _ws(pool)
+        assert task_cache.alloc_slots("t", prompt_ids)
+        with op_backend(attention=backend), torch.inference_mode():
+            model(
+                ids[:3],
+                input_mask=key_mask[:, :3],
+                position_ids=torch.arange(3, device=device),
+                kv_cache=task_cache.bind(["t"], workspace, start_pos=0, seq_ends=[3]),
+                fwd="prefill",
+            )
+            chunk = model(
+                ids[3:],
+                input_mask=key_mask,
+                position_ids=torch.arange(3, 6, device=device),
+                kv_cache=task_cache.bind(["t"], workspace, start_pos=3, seq_ends=[6]),
+                fwd="prefill",
+            )
+        return chunk["logits"]
+
+    torch_out = run("torch")
+    cuda_out = run("cuda")
+    torch.testing.assert_close(cuda_out, torch_out, atol=0.05, rtol=0.05)
+
+
+@pytest.mark.skipif(
+    not (torch.cuda.is_available() and is_available("attention")),
+    reason="attention CUDA kernel unavailable",
+)
 def test_decode_mixed_seq_lens_matches_torch(cuda_model):
     """Decode with mixed seq_lens in batch — padding mask must produce correct output."""
     model, _ = cuda_model
@@ -160,7 +218,7 @@ def test_decode_mixed_seq_lens_matches_torch(cuda_model):
         out_torch = model(dec_ids, kv_cache=kv_t, position_ids=dec_pos, fwd="decode")
 
     kv_c = task_cache.bind(["t1", "t2"], ws)
-    with attn_backend(ATTN_BACKEND.CUDA):
+    with op_backend(attention="cuda"):
         with torch.inference_mode():
             out_cuda = model(dec_ids, kv_cache=kv_c, position_ids=dec_pos, fwd="decode")
 
@@ -168,7 +226,10 @@ def test_decode_mixed_seq_lens_matches_torch(cuda_model):
     assert diff < 0.05, f"Decode diff (mixed seq_lens): {diff}"
 
 
-@skip_no_kernel
+@pytest.mark.skipif(
+    not (torch.cuda.is_available() and is_available("attention")),
+    reason="attention CUDA kernel unavailable",
+)
 def test_paged_decode_appends_new_kv_in_kernel():
     """Fused decode writes current-token K/V to each request's paged slot."""
     pool = BlockPool(
@@ -218,7 +279,10 @@ def test_paged_decode_appends_new_kv_in_kernel():
     assert torch.isfinite(out).all()
 
 
-@skip_no_kernel
+@pytest.mark.skipif(
+    not (torch.cuda.is_available() and is_available("attention")),
+    reason="attention CUDA kernel unavailable",
+)
 def test_decode_cuda_graph_replay_is_exact(cuda_model):
     """INT32 cache indices must remain graph-capturable and replay exactly."""
     model, _ = cuda_model
@@ -240,7 +304,7 @@ def test_decode_cuda_graph_replay_is_exact(cuda_model):
     input_ids = torch.tensor(prompt_ids, dtype=torch.long, device=device)
     position_ids = torch.arange(len(prompt_ids), device=device)
 
-    with attn_backend(ATTN_BACKEND.CUDA), torch.inference_mode():
+    with op_backend(attention="cuda"), torch.inference_mode():
         model(
             input_ids,
             position_ids=position_ids,
@@ -277,7 +341,10 @@ def test_decode_cuda_graph_replay_is_exact(cuda_model):
     torch.testing.assert_close(kv_cache.v_buffer[:, slot], first_v, rtol=0, atol=0)
 
 
-@skip_no_kernel
+@pytest.mark.skipif(
+    not (torch.cuda.is_available() and is_available("attention")),
+    reason="attention CUDA kernel unavailable",
+)
 def test_run_batch_cuda_matches_torch_greedy(cuda_model):
     """Greedy decode (temperature=0) should produce identical tokens."""
     model, _ = cuda_model
@@ -285,7 +352,7 @@ def test_run_batch_cuda_matches_torch_greedy(cuda_model):
 
     prompts = [[1, 2, 3, 4, 5], [10, 11, 12, 13, 14, 15, 16]]
 
-    sched = Scheduler(
+    sched = EngineCore(
         model=model,
         tokenizer=tokenizer,
         max_batch_size=4,
@@ -293,7 +360,7 @@ def test_run_batch_cuda_matches_torch_greedy(cuda_model):
         device="cuda",
         dtype=torch.bfloat16,
     )
-    out_torch = sched.run_batch(prompts, max_tokens=5, temperature=0.0)
+    out_torch = run_batch(sched, prompts, max_tokens=5, temperature=0.0)
     sched.stop()
 
     cache_cuda = BlockPool(
@@ -305,7 +372,7 @@ def test_run_batch_cuda_matches_torch_greedy(cuda_model):
         device="cuda",
         dtype=torch.bfloat16,
     )
-    sched2 = Scheduler(
+    sched2 = EngineCore(
         model=model,
         tokenizer=tokenizer,
         max_batch_size=4,
@@ -314,8 +381,8 @@ def test_run_batch_cuda_matches_torch_greedy(cuda_model):
         dtype=torch.bfloat16,
         cache=cache_cuda,
     )
-    with attn_backend(ATTN_BACKEND.CUDA):
-        out_cuda = sched2.run_batch(prompts, max_tokens=5, temperature=0.0)
+    with op_backend(attention="cuda"):
+        out_cuda = run_batch(sched2, prompts, max_tokens=5, temperature=0.0)
     sched2.stop()
 
     assert out_torch == out_cuda, f"Torch={out_torch} != CUDA={out_cuda}"

@@ -35,7 +35,7 @@ from astrai.model import AutoModel
 from astrai.tokenize import AutoTokenizer
 
 
-def load_jsonl(path: str) -> List[dict]:
+def load_jsonl(path: str) -> List[Dict]:
     rows = []
     with open(path, encoding="utf-8") as f:
         for line in f:
@@ -83,7 +83,7 @@ def generate_batch(
     return deduplicate(completions)
 
 
-def execute_one(args: tuple) -> bool:
+def execute_one(args: Tuple) -> bool:
     full_code, timeout = args
     try:
         r = subprocess.run(
@@ -99,7 +99,7 @@ def execute_one(args: tuple) -> bool:
 
 
 def test_all(
-    items: Sequence[dict],
+    items: Sequence[Dict],
     codes_for,
     test_workers: int,
     desc: str = "Testing",
@@ -270,7 +270,7 @@ def loglikelihood_batched(
     return scores
 
 
-def extract_metrics(payload: dict, bench_key: str) -> Dict[str, Optional[float]]:
+def extract_metrics(payload: Dict, bench_key: str) -> Dict[str, Optional[float]]:
     """Standardized metrics from one benchmark output JSON.
 
     Fraction-valued metrics are 0..1; counts are ints (see COUNT_METRICS).

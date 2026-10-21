@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from astrai.extension import TorchNativeBackend, attn_backend
+from astrai.extension import op_backend
 from astrai.inference.core.events import (
     FINISH_CANCELLED,
     FINISH_LENGTH,
@@ -135,14 +135,12 @@ def test_unstarted_async_stream_does_not_submit_or_leak(event_engine, method):
 
 
 @pytest.mark.parametrize("method", ["generate_events", "generate_async"])
-def test_async_stream_captures_backend_before_lazy_submission(event_engine, method):
+def test_async_stream_does_not_send_per_request_attention_choice(event_engine, method):
     _emit_on_submission(event_engine, reason=FINISH_LENGTH)
-    with attn_backend("torch_native"):
+    with op_backend(attention="torch"):
         stream = getattr(event_engine, method)("hi")
     _collect_async(stream)
-    assert isinstance(
-        event_engine._core.send_request.call_args.kwargs["backend"], TorchNativeBackend
-    )
+    assert "backend" not in event_engine._core.send_request.call_args.kwargs
 
 
 def test_unstarted_sync_stream_does_not_submit_or_leak(event_engine):
@@ -358,7 +356,6 @@ def test_real_cpu_engine_zero_output_boundaries(monkeypatch, method, full_prompt
         max_seq_len=16,
         max_batch_size=1,
         enable_cuda_graph=False,
-        backend="torch_native",
     ) as engine:
         original_wait = engine._tracker.wait
         waits = 0
