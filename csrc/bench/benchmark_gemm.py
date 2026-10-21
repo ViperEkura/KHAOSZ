@@ -25,13 +25,13 @@ import json
 import statistics
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Dict, Optional, Tuple
 
 import click
 import torch
 import torch.nn.functional as F
 
-from astrai.extension import is_available, quantize_act_int8, quantize_weight_int8
+from astrai.extension import is_available, quantize
 from astrai.extension.kernel.gemm import probe, quant_gemm, set_planner
 from astrai.performance import measure_operations
 
@@ -52,7 +52,7 @@ FP8_FORMATS = (
 )
 
 # Every dtype pairing the gemm dispatch instantiates (find_gemm_dispatch in
-# csrc/gemm/gemm.cu): each row names the cell, then the activation
+# csrc/gemm/entry.cu): each row names the cell, then the activation
 # and weight kinds. Asymmetric low-bit mixes — int8 x fp8, mismatched fp8
 # formats, quantized acts against bf16 weights — have no kernel and no row.
 GEMM_COMBOS = (
@@ -65,7 +65,7 @@ GEMM_COMBOS = (
 OP_ORDER = ("bf16", *(label for label, _, _ in GEMM_COMBOS))
 
 
-def parse_positive_ints(value: str) -> tuple[int, ...]:
+def parse_positive_ints(value: str) -> Tuple[int, ...]:
     """START:END:STEP (end inclusive) or a comma list — same grid format as
     the -m/-n/-k options in the other bench scripts."""
     value = value.strip()
@@ -86,7 +86,7 @@ def parse_positive_ints(value: str) -> tuple[int, ...]:
     return values
 
 
-def parse_shape(value: str) -> tuple[str, int, int]:
+def parse_shape(value: str) -> Tuple[str, int, int]:
     parts = value.split(":")
     if len(parts) != 3 or not parts[0]:
         raise click.BadParameter("shape must use NAME:ROWS:COLS")
@@ -99,32 +99,36 @@ def parse_shape(value: str) -> tuple[str, int, int]:
     return parts[0], rows, cols
 
 
-def quantize_fp8(
+def quantize_operand(
     t: torch.Tensor, dtype: torch.dtype, max_val: float, per_channel: bool
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Symmetric fp8 quantization onto the format's finite range.
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Estimate a multiplier and cast through the shared quantize entry.
 
     Weights go per-channel (``[N]`` scales); activations per-tensor (one
-    scalar, the F8A8 training pairing). The kernel applies the inverse
+    scalar, the F8A8 training pairing). GEMM applies these dequantization
     scales in its epilogue.
     """
     amax = t.float().abs().amax(dim=-1 if per_channel else None, keepdim=True)
     scale = amax.clamp_min(1e-12) / max_val
-    t_q = (t.float() / scale).clamp(-max_val, max_val).to(dtype)
-    return t_q, (scale.squeeze(-1) if per_channel else scale).float()
+    scale = (scale.squeeze(-1) if per_channel else scale).float()
+    inv_scale = scale.reciprocal()
+    if per_channel:
+        inv_scale = inv_scale.reshape(-1, 1)
+    t_q, _, _ = quantize(t, inv_scale, dtype=dtype)
+    return t_q, scale
 
 
 def make_combo_op(
     a: torch.Tensor,
-    a_scale: torch.Tensor | None,
+    a_scale: Optional[torch.Tensor],
     b: torch.Tensor,
-    b_scale: torch.Tensor | None,
+    b_scale: Optional[torch.Tensor],
 ) -> Callable[[], torch.Tensor]:
     """Bind one combo cell into a zero-arg op (lambdas in loops bind late)."""
     return lambda: quant_gemm(a, b, a_scale=a_scale, b_scale=b_scale)
 
 
-def dequantize(t: torch.Tensor, scale: torch.Tensor | None) -> torch.Tensor:
+def dequantize(t: torch.Tensor, scale: Optional[torch.Tensor]) -> torch.Tensor:
     """Undo a quantize pair for the F.linear reference."""
     if scale is None:
         return t
@@ -142,22 +146,22 @@ def benchmark_gemm(
     warmup: int,
     iterations: int,
     trials: int,
-) -> dict[str, object]:
+) -> Dict[str, object]:
     x = (torch.randn(m, k, device="cuda") * 0.05).to(torch.bfloat16)
     w = (torch.randn(n, k, device="cuda") * 0.05).to(torch.bfloat16)
-    acts: dict[str, tuple[torch.Tensor, torch.Tensor | None]] = {
+    acts: Dict[str, Tuple[torch.Tensor, Optional[torch.Tensor]]] = {
         "bf16": (x, None),
-        "int8": quantize_act_int8(x),
+        "int8": quantize_operand(x, torch.int8, 127.0, per_channel=True),
     }
-    weights: dict[str, tuple[torch.Tensor, torch.Tensor | None]] = {
+    weights: Dict[str, Tuple[torch.Tensor, Optional[torch.Tensor]]] = {
         "bf16": (w, None),
-        "int8": quantize_weight_int8(w),
+        "int8": quantize_operand(w, torch.int8, 127.0, per_channel=True),
     }
     for label, dtype, max_val in FP8_FORMATS:
-        acts[label] = quantize_fp8(x, dtype, max_val, per_channel=False)
-        weights[label] = quantize_fp8(w, dtype, max_val, per_channel=True)
+        acts[label] = quantize_operand(x, dtype, max_val, per_channel=False)
+        weights[label] = quantize_operand(w, dtype, max_val, per_channel=True)
 
-    operations: dict[str, Callable[[], torch.Tensor]] = {"bf16": lambda: F.linear(x, w)}
+    operations: Dict[str, Callable[[], torch.Tensor]] = {"bf16": lambda: F.linear(x, w)}
     ref = {}
     for label, a_kind, b_kind in GEMM_COMBOS:
         operations[label] = make_combo_op(*acts[a_kind], *weights[b_kind])
@@ -221,9 +225,9 @@ def benchmark_gemm(
 @click.option("--trials", type=click.IntRange(min=1), default=3, show_default=True)
 @click.option("--seed", type=int, default=0, show_default=True)
 def benchmark_command(
-    output: Path | None,
-    m_values: tuple[int, ...],
-    shape_values: tuple[str, ...],
+    output: Optional[Path],
+    m_values: Tuple[int, ...],
+    shape_values: Tuple[str, ...],
     warmup: int,
     iterations: int,
     trials: int,
@@ -323,7 +327,7 @@ SHAPES = (
 )
 
 
-def dtype_pair(kind: str) -> tuple[torch.dtype, torch.dtype]:
+def dtype_pair(kind: str) -> Tuple[torch.dtype, torch.dtype]:
     return (FP8, FP8) if kind == "fp8" else (torch.bfloat16, torch.bfloat16)
 
 
@@ -332,8 +336,8 @@ def build_cell(a_bf, b_bf, ta, tb, kind, ref):
     if kind == "bf16":
         a, b, a_scale = a_bf, b_bf, None
     else:
-        a8, sa = quantize_fp8(a_bf, FP8, FP8_MAX, per_channel=False)
-        b8, sb = quantize_fp8(b_bf, FP8, FP8_MAX, per_channel=False)
+        a8, sa = quantize_operand(a_bf, FP8, FP8_MAX, per_channel=False)
+        b8, sb = quantize_operand(b_bf, FP8, FP8_MAX, per_channel=False)
         a, b, a_scale = a8, b8, (sa * sb).reshape(1)
     a_op = a.t().contiguous() if ta else a
     b_op = b if tb else b.t().contiguous()
@@ -387,8 +391,8 @@ def layout_command(m, shapes, warmup, iterations, trials, planner_ab):
         torch.manual_seed(11)
         a_bf = (torch.randn(m, k, device="cuda") * 0.05).to(torch.bfloat16)
         b_bf = (torch.randn(n, k, device="cuda") * 0.05).to(torch.bfloat16)
-        a8, sa = quantize_fp8(a_bf, FP8, FP8_MAX, per_channel=False)
-        b8, sb = quantize_fp8(b_bf, FP8, FP8_MAX, per_channel=False)
+        a8, sa = quantize_operand(a_bf, FP8, FP8_MAX, per_channel=False)
+        b8, sb = quantize_operand(b_bf, FP8, FP8_MAX, per_channel=False)
         scale = (sa * sb).reshape(1)
         cells = {}
         for lname, ta, tb in (("NT", False, True), ("TT", True, True)):
@@ -420,8 +424,8 @@ def layout_command(m, shapes, warmup, iterations, trials, planner_ab):
             torch.manual_seed(11)
             a_bf = (torch.randn(m, k, device="cuda") * 0.05).to(torch.bfloat16)
             b_bf = (torch.randn(n, k, device="cuda") * 0.05).to(torch.bfloat16)
-            a8, sa = quantize_fp8(a_bf, FP8, FP8_MAX, per_channel=False)
-            b8, sb = quantize_fp8(b_bf, FP8, FP8_MAX, per_channel=False)
+            a8, sa = quantize_operand(a_bf, FP8, FP8_MAX, per_channel=False)
+            b8, sb = quantize_operand(b_bf, FP8, FP8_MAX, per_channel=False)
             refs = {
                 "bf16": a_bf.float() @ b_bf.float().t(),
                 "fp8": (a8.float() * sa) @ (b8.float() * sb).t(),

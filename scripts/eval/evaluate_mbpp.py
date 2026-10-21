@@ -20,7 +20,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import tqdm
 from datasets import load_dataset
@@ -66,7 +66,7 @@ class EvalConfig:
     max_seq_len: int = 4096
     test_timeout: float = 3.0
     test_workers: int = 8
-    k_values: tuple = (1, 10)
+    k_values: Tuple = (1, 10)
     problem_indices: Optional[List[int]] = None
 
 
@@ -83,7 +83,7 @@ def download(data_dir: str = "./mbpp"):
     print(f"  saved {len(test)} problems to {data_dir}")
 
 
-def build_prompt(problem: dict, tokenizer) -> str:
+def build_prompt(problem: Dict, tokenizer) -> str:
     """Chat-wrapped request + asserts + exact signature.
 
     The signature line comes from the canonical solution's first def — without
@@ -141,7 +141,7 @@ def clean_completion(raw: str) -> str:
     return t.strip()
 
 
-def generate_all(engine, problems: Sequence[dict], cfg: EvalConfig) -> List[dict]:
+def generate_all(engine, problems: Sequence[Dict], cfg: EvalConfig) -> List[Dict]:
     tokenizer = engine.tokenizer
     results = []
     for problem in tqdm.tqdm(problems, desc="Generating", unit="problem"):
@@ -168,7 +168,7 @@ def generate_all(engine, problems: Sequence[dict], cfg: EvalConfig) -> List[dict
     return results
 
 
-def mbpp_codes(item: dict, test_timeout: float):
+def mbpp_codes(item: Dict, test_timeout: float):
     """(request_id, [(full_code, timeout), ...]) — completion + assert block."""
     tests = "\n".join(item["test_list"])
     setup = item["test_setup_code"]
@@ -177,7 +177,7 @@ def mbpp_codes(item: dict, test_timeout: float):
     return item["request_id"], codes
 
 
-def run_pipeline(cfg: EvalConfig) -> dict:
+def run_pipeline(cfg: EvalConfig) -> Dict:
     if cfg.test_only:
         with open(cfg.test_only, encoding="utf-8") as f:
             generated = json.load(f)

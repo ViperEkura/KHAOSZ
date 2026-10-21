@@ -55,13 +55,13 @@ def test_grouped_overlap_gpu_parity_and_dispatch(tmp_path, concurrency, graphs, 
             ]
         }
         pipeline = []
-        original = scheduler.engine_core.submit
+        original = scheduler.submit
 
         def observe(plan):
-            pipeline.append(len(scheduler.engine_core.pending))
+            pipeline.append(len(scheduler.pending))
             return original(plan)
 
-        scheduler.engine_core.submit = observe
+        scheduler.submit = observe
         try:
             generator.generate(batch)  # warm graph/buffer setup before timing
             pipeline.clear()
@@ -73,13 +73,14 @@ def test_grouped_overlap_gpu_parity_and_dispatch(tmp_path, concurrency, graphs, 
             torch.cuda.synchronize()
             elapsed = time.perf_counter() - start
             outputs.append(raw)
-            assert not scheduler.engine_core.pending and not scheduler._planned
+            assert not scheduler.pending and not scheduler.scheduler._planned
             assert (
-                not scheduler._pending_order
-                and scheduler._kv_manager.request_count == 0
+                not scheduler.scheduler._pending_order
+                and scheduler.scheduler.kv_manager.request_count == 0
             )
             assert all(
-                not slot["in_use"] for slot in scheduler._executor._result_ring._slots
+                not slot["in_use"]
+                for slot in scheduler.model_runner._result_ring._slots
             )
             assert (1 in pipeline) == overlap
             evidence.append(
@@ -96,7 +97,7 @@ def test_grouped_overlap_gpu_parity_and_dispatch(tmp_path, concurrency, graphs, 
                     "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
                     "peak_reserved_bytes": torch.cuda.max_memory_reserved(),
                     "pending_depth_before_submit": pipeline,
-                    "result_ring_enabled": scheduler._executor._result_ring.enabled,
+                    "result_ring_enabled": scheduler.model_runner._result_ring.enabled,
                 }
             )
         finally:

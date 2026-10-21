@@ -13,7 +13,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Dict, Optional, Tuple
 
 import click
 import torch
@@ -83,7 +83,7 @@ def build_freqs(head_dim: int, positions: torch.Tensor) -> torch.Tensor:
 
 def benchmark_case(
     case: RotaryCase, *, warmup: int, iterations: int, trials: int
-) -> dict[str, object]:
+) -> Dict[str, object]:
     if case.layout == "packed":
         tokens = case.batch * case.seq_len
         x = torch.randn(
@@ -101,7 +101,7 @@ def benchmark_case(
         )
         positions = torch.randint(0, 65536, (case.batch, case.seq_len), device="cuda")
     freqs_cis = build_freqs(case.head_dim, positions)
-    operations: dict[str, Callable[[], torch.Tensor]] = {
+    operations: Dict[str, Callable[[], torch.Tensor]] = {
         "torch": lambda: torch_apply(x, freqs_cis),
         "cuda": lambda: rotary_emb(x, freqs_cis),
     }
@@ -117,7 +117,7 @@ def benchmark_case(
         2 * x.numel() * x.element_size() + freqs_cis.numel() * freqs_cis.element_size()
     )
 
-    result: dict[str, object] = {
+    result: Dict[str, object] = {
         "case": case.name,
         "layout": case.layout,
         "heads": case.heads,
@@ -159,8 +159,8 @@ def benchmark_case(
 @click.option("--trials", type=click.IntRange(min=1), default=10, show_default=True)
 @click.option("--seed", type=int, default=0, show_default=True)
 def benchmark_command(
-    output: Path | None,
-    case_values: tuple[str, ...],
+    output: Optional[Path],
+    case_values: Tuple[str, ...],
     warmup: int,
     iterations: int,
     trials: int,
@@ -172,7 +172,7 @@ def benchmark_command(
         raise click.ClickException("the built rotary_emb kernel is required")
 
     # A bare name filters the matching default; a full spec overrides or appends.
-    chosen: dict[str, RotaryCase] = {}
+    chosen: Dict[str, RotaryCase] = {}
     for value in case_values:
         case = (
             next((c for c in DEFAULT_CASES if c.name == value), None)

@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from astrai.inference.sampling_rng import request_seed, sampling_uniform
-from astrai.trainer.backend import ColocatedBackend, ReplicaBackend
+from astrai.trainer.backend import ColocatedBackend, ReplicaBackend, run_batch
 from astrai.trainer.rollout import RolloutGenerator, SamplingParams
 from tests.support.inference import make_cpu_model, make_cpu_scheduler
 from tests.support.models import make_model
@@ -29,12 +29,19 @@ def _deterministic_model():
 
 
 def _assert_drained(scheduler):
-    assert not scheduler.engine_core.pending
+    assert not scheduler.pending
     assert (
-        not scheduler._planned and not scheduler._pending_order and not scheduler._ready
+        not scheduler.scheduler._planned
+        and not scheduler.scheduler._pending_order
+        and not scheduler.scheduler._ready
     )
-    assert not scheduler._states and scheduler._kv_manager.request_count == 0
-    assert all(not slot["in_use"] for slot in scheduler._executor._result_ring._slots)
+    assert (
+        not scheduler.scheduler._states
+        and scheduler.scheduler.kv_manager.request_count == 0
+    )
+    assert all(
+        not slot["in_use"] for slot in scheduler.model_runner._result_ring._slots
+    )
 
 
 @pytest.mark.parametrize("frequency", [0.0, 0.2])
@@ -54,17 +61,18 @@ def test_fixed_batch_tokens_logprobs_finish_and_pipeline_order(frequency, stop, 
             token_budget=budget,
         )
         pipeline = []
-        original = scheduler.engine_core.submit
+        original = scheduler.submit
 
         def observe(plan):
-            pipeline.append(len(scheduler.engine_core.pending))
+            pipeline.append(len(scheduler.pending))
             assert plan.return_logprobs
             return original(plan)
 
-        scheduler.engine_core.submit = observe
+        scheduler.submit = observe
         try:
             results.append(
-                scheduler.run_batch(
+                run_batch(
+                    scheduler,
                     prompts,
                     max_tokens=8,
                     temperature=0,
@@ -138,7 +146,8 @@ def test_repeated_batches_and_version_updates_release_all_owners():
     )
     try:
         for version in range(1, 101):
-            result = scheduler.run_batch(
+            result = run_batch(
+                scheduler,
                 [[1], [10]],
                 max_tokens=8,
                 temperature=0,
@@ -162,13 +171,13 @@ def test_overlapped_forward_failure_fences_before_release(monkeypatch):
     )
     calls = []
     forward_count = 0
-    synchronize = scheduler._executor.synchronize
+    synchronize = scheduler.model_runner.synchronize
 
     def failing(*args, **kwargs):
         nonlocal forward_count
         forward_count += 1
         if forward_count == 3:
-            assert scheduler.engine_core.pending
+            assert scheduler.pending
             raise RuntimeError("injected decode failure")
         return original(*args, **kwargs)
 
@@ -177,10 +186,10 @@ def test_overlapped_forward_failure_fences_before_release(monkeypatch):
         return synchronize()
 
     monkeypatch.setattr(model, "forward", failing)
-    monkeypatch.setattr(scheduler._executor, "synchronize", fence)
+    monkeypatch.setattr(scheduler.model_runner, "synchronize", fence)
     try:
         with pytest.raises(RuntimeError, match="injected decode failure"):
-            scheduler.run_batch([[1], [10]], max_tokens=8, temperature=0)
+            run_batch(scheduler, [[1], [10]], max_tokens=8, temperature=0)
         assert calls
         _assert_drained(scheduler)
         assert scheduler.update_weights(1) == 1
@@ -195,7 +204,7 @@ def test_replica_backend_passes_overlap_option(monkeypatch):
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr("astrai.trainer.backend.Scheduler", Scheduler)
+    monkeypatch.setattr("astrai.trainer.backend.EngineCore", Scheduler)
     ReplicaBackend(
         make_cpu_model(),
         FakeTokenizer(),
@@ -231,7 +240,7 @@ def test_explicit_head_dimension_real_kv_matches_full_forward(overlap):
         model, tokenizer, max_batch_size=2, enable_overlap=overlap
     )
     try:
-        actual = scheduler.run_batch(prompts, max_tokens=4, temperature=0)
+        actual = run_batch(scheduler, prompts, max_tokens=4, temperature=0)
         assert actual == expected
         _assert_drained(scheduler)
     finally:
@@ -318,3 +327,107 @@ def test_sampling_seed_and_position_are_stable_without_request_identity():
         sampling_uniform(True, 0)
     with pytest.raises(ValueError, match="position"):
         sampling_uniform(seed, -1)
+
+
+@pytest.mark.parametrize("seed_argument", ["seeds", "request_seeds"])
+@pytest.mark.parametrize("overlap", [False, True])
+def test_seeded_queue_beyond_capacity_preserves_response_streams(
+    seed_argument, overlap
+):
+    torch.manual_seed(731)
+    tokenizer = FakeTokenizer()
+    tokenizer.stop_ids = list(range(64))
+    engine = make_cpu_scheduler(
+        make_cpu_model(), tokenizer, max_batch_size=2, enable_overlap=overlap
+    )
+    prompts = [[10, 20 + index] for index in range(5)]
+    seeds = list(range(100, 105))
+    try:
+        batch = run_batch(
+            engine,
+            prompts,
+            max_tokens=6,
+            top_k=0,
+            return_logprobs=True,
+            **{seed_argument: seeds},
+        )
+        singles = [
+            run_batch(
+                engine,
+                [prompt],
+                max_tokens=6,
+                top_k=0,
+                return_logprobs=True,
+                **{seed_argument: [seed]},
+            )[0]
+            for prompt, seed in zip(prompts, seeds)
+        ]
+        assert [tokens for tokens, _ in batch] == [tokens for tokens, _ in singles]
+        for (_, actual), (_, expected) in zip(batch, singles):
+            assert actual == pytest.approx(expected)
+        _assert_drained(engine)
+        assert engine.get_stats()["waiting"] == 0
+    finally:
+        engine.stop()
+
+
+def test_explicit_round_seeds_override_configured_replay_seed(monkeypatch):
+    engine = make_cpu_scheduler(make_cpu_model())
+    backend = ColocatedBackend(engine)
+    generator = RolloutGenerator(
+        backend,
+        FakeTokenizer(with_chat_template=True),
+        SamplingParams(group_size=2, max_tokens=3, seed=118),
+    )
+    seen = []
+    original = backend.generate
+
+    def record(prompts, **kwargs):
+        seen.append(kwargs)
+        return original(prompts, **kwargs)
+
+    monkeypatch.setattr(backend, "generate", record)
+    try:
+        generator.generate({"instruction": ["a"]}, seeds=[11, 22])
+        generator.generate({"instruction": ["a"]})
+        assert seen[0]["seeds"] == [11, 22]
+        assert "request_seeds" not in seen[0]
+        assert len(seen[1]["request_seeds"]) == 2
+        assert "seeds" not in seen[1]
+        _assert_drained(engine)
+    finally:
+        engine.stop()
+
+
+def test_overlapped_failed_fence_quarantines_kv_until_recovery(monkeypatch):
+    model = _deterministic_model()
+    tokenizer = FakeTokenizer()
+    tokenizer.stop_ids = []
+    engine = make_cpu_scheduler(model, tokenizer, enable_overlap=True)
+    original = model.forward
+    count = 0
+
+    def failing_forward(*args, **kwargs):
+        nonlocal count
+        count += 1
+        if count == 3:
+            assert engine.pending
+            raise RuntimeError("injected decode failure")
+        return original(*args, **kwargs)
+
+    def failing_fence():
+        raise RuntimeError("injected fence failure")
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(model, "forward", failing_forward)
+            patch.setattr(engine.model_runner, "synchronize", failing_fence)
+            with pytest.raises(RuntimeError, match="injected fence failure"):
+                run_batch(engine, [[1], [10]], max_tokens=8, temperature=0)
+            assert engine._shutdown_failed
+            assert engine.scheduler.kv_manager.request_count == 2
+            assert engine.scheduler._planned
+        assert engine.stop()
+        _assert_drained(engine)
+    finally:
+        engine.stop()

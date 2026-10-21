@@ -6,7 +6,7 @@ delayed-scaling history and checkpoint state bound to the right layer.
 
 import weakref
 from dataclasses import dataclass
-from typing import Dict, Iterator, List, Optional
+from typing import Dict, Iterator, List, Optional, Tuple, Type
 
 import torch
 
@@ -32,10 +32,10 @@ def _canonical_path(name: str) -> str:
     return name
 
 
-_linear_types_cache: Optional[tuple] = None
+_linear_types_cache: Optional[Tuple] = None
 
 
-def _linear_types() -> tuple:
+def _linear_types() -> Tuple:
     """Model classes whose forward is an ``aten::linear`` call.
 
     Imported lazily: the extension package must stay importable on a box with
@@ -47,7 +47,7 @@ def _linear_types() -> tuple:
     if _linear_types_cache is None:
         from astrai.model.components.linear import Linear
 
-        types: List[type] = [Linear]
+        types: List[Type] = [Linear]
         try:
             from astrai.model.components.lora import LoRALinear
 
@@ -96,7 +96,7 @@ class Fp8Slot:
         )
 
 
-def _parse_role(name: str) -> tuple:
+def _parse_role(name: str) -> Tuple:
     """``layers.3.attention.q_proj`` -> ``("attention", "q_proj")``.
 
     The module type is the last non-numeric segment of the parent path, so MoE
@@ -132,7 +132,7 @@ class SlotTable:
         self._keepalive: List[torch.Tensor] = []
         # slot id -> (module, weight attribute), weakly held so a dead model
         # does not keep itself alive through the table.
-        self._owners: Dict[int, tuple] = {}
+        self._owners: Dict[int, Tuple] = {}
         self._model_ref = None
 
     def __len__(self) -> int:
@@ -158,7 +158,7 @@ class SlotTable:
         by_name: Dict[str, Fp8Slot] = {}
         by_weight: Dict[int, Fp8Slot] = {}
         keepalive: List[torch.Tensor] = []
-        owners: Dict[int, tuple] = {}
+        owners: Dict[int, Tuple] = {}
         # Ids are handed out monotonically and never reused, so a path that
         # disappears and a new one that appears cannot collide on an id. The
         # floor is the previous table's maximum: a pass only sees the slots it

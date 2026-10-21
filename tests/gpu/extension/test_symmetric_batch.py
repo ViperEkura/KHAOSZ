@@ -6,7 +6,7 @@ import torch
 from astrai.extension.backend.newton_schulz import symm_out, syrk_out
 from astrai.extension.kernel import newton_schulz as cuda
 from astrai.extension.policy import newton_schulz as plan
-from astrai.extension.runtime.dispatch import ExplicitSelectionError
+from astrai.extension.runtime.operation import ExplicitSelectionError
 
 CUDA_AVAILABLE = torch.cuda.is_available() and cuda.is_available()
 CUDA_ONLY = pytest.mark.skipif(

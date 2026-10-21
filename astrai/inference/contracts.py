@@ -5,7 +5,7 @@ An identity includes an incarnation so a late result cannot hit a reused id.
 """
 
 from dataclasses import dataclass
-from typing import Any, Literal, Optional, Tuple
+from typing import FrozenSet, Literal, Optional, Tuple
 
 
 @dataclass(frozen=True, eq=False)
@@ -44,6 +44,8 @@ class SamplingParams:
     frequency_penalty: float = 0.0
     rep_window: int = 64
     seed: Optional[int] = None
+    # Counter-based replay is distinct from upstream per-position generators.
+    sampling_seed: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -58,7 +60,6 @@ class ExecutionRequest:
     # Only frequency-penalty execution needs a host output-history snapshot.
     output_ids: Tuple[int, ...] = ()
     cont_len: int = 0
-    backend: Any = None
 
     @property
     def request_id(self) -> str:
@@ -123,7 +124,7 @@ class SchedulerOutput:
         return cached
 
     @property
-    def _identity_set(self) -> frozenset:
+    def _identity_set(self) -> FrozenSet:
         # Commit-side membership checks use this instead of rebuilding a
         # set from the tuple on every pending commit.
         cached = self.__dict__.get("_identity_set_cache")

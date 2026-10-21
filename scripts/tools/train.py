@@ -1,14 +1,22 @@
+import importlib
+import json
 import os
 from collections.abc import Callable
 from functools import partial
+from typing import Dict, List
 
 import click
 import torch
+import yaml
 from click.core import ParameterSource
-from torch import optim
 
-from astrai.config import AutoRegressiveLMConfig, TrainConfig
+from astrai.config import (
+    AutoRegressiveLMConfig,
+    ComponentSpec,
+    TrainConfig,
+)
 from astrai.config.cli import (
+    DEFAULT_YAML_SECTIONS,
     GroupedCommand,
     OptSpec,
     apply_specs,
@@ -17,20 +25,19 @@ from astrai.config.cli import (
 from astrai.config.train_config import (
     BACKENDS,
     DP_MODES,
+    ROLLOUT_MODES,
     START_METHODS,
-    TRAIN_TYPES,
 )
-from astrai.dataset import DatasetFactory, dpo_collate_fn, grpo_collate_fn
-from astrai.model import AutoRegressiveLM, ValueModel
-from astrai.model.components.decoder_block import DecoderBlock
-from astrai.optim import OptimizerFactory
-from astrai.trainer import SchedulerFactory, Trainer
-from astrai.trainer.rollout import BaseRewardModel
+from astrai.model import ValueModel
+from astrai.model.components.mlp import MLP
+from astrai.optimization.optimizer import OptimizerFactory
+from astrai.trainer import Trainer
+from astrai.trainer.strategy import StrategyFactory
 
 # Re-exported under its historical name for tests importing it from here.
 _merge_yaml_into_kwargs = merge_yaml_into_kwargs
 
-_TRAIN_TYPE = sorted(TRAIN_TYPES)
+_TRAIN_TYPE = StrategyFactory.list_registered()
 _DP = sorted(DP_MODES)
 _SCHEDULES = ["cosine", "sgdr", "wsd"]
 _OPTIMIZERS = OptimizerFactory.list_registered()
@@ -67,6 +74,13 @@ _SPECS = [
         is_flag=True,
         default=False,
         help="Resume from checkpoint.",
+    ),
+    OptSpec(
+        "load_state_dict",
+        "Training",
+        type=str,
+        default=None,
+        help='Component loading flags as JSON, e.g. {"optimizer": false, "scheduler": false}.',
     ),
     OptSpec("n_epoch", "Training", help="Number of epochs."),
     OptSpec("batch_per_device", "Training", default=1, help="Batch size per GPU."),
@@ -191,12 +205,6 @@ _SPECS = [
     OptSpec("num_workers", "Data Loading", default=4, help="DataLoader workers."),
     OptSpec("pin_memory", "Data Loading", default=True, help="Pin memory."),
     OptSpec(
-        "persistent_workers",
-        "Data Loading",
-        default=True,
-        help="Keep DataLoader workers alive between epochs.",
-    ),
-    OptSpec(
         "window_size",
         "Data Loading",
         type=int,
@@ -216,6 +224,20 @@ _SPECS = [
         type=float,
         default=0.0,
         help="Label smoothing.",
+    ),
+    OptSpec(
+        "loss_backend",
+        "Training",
+        choices=["torch", "cuda_linear_ce"],
+        default="torch",
+        help="Cross-entropy implementation for seq/SFT training.",
+    ),
+    OptSpec(
+        "loss_chunk_size",
+        "Training",
+        type=int,
+        default=512,
+        help="Token chunk size for CUDA linear cross-entropy.",
     ),
     OptSpec("dpo_beta", "Algorithm", type=float, default=0.1, help="DPO beta."),
     OptSpec("group_size", "Algorithm", type=int, default=4, help="GRPO group size."),
@@ -300,6 +322,55 @@ _SPECS = [
         "moe_aux_loss_coef",
         "Algorithm",
         help="MoE load balancing auxiliary loss coefficient (0=disable).",
+    ),
+    OptSpec(
+        "rollout_mode",
+        "Algorithm",
+        choices=sorted(ROLLOUT_MODES),
+        help="Synchronous or asynchronous rollout.",
+    ),
+    OptSpec(
+        "rollout_devices",
+        "Algorithm",
+        help="Indexed logical CUDA devices; repeat once per async worker.",
+    ),
+    OptSpec(
+        "rollout_worker_timeout_s",
+        "Algorithm",
+        help="Generation timeout per async round.",
+    ),
+    OptSpec(
+        "rollout_startup_timeout_s", "Algorithm", help="Async worker startup timeout."
+    ),
+    OptSpec(
+        "rollout_weight_timeout_s",
+        "Algorithm",
+        help="NCCL weight synchronization timeout.",
+    ),
+    OptSpec(
+        "async_train_microbatch_prompts",
+        "Algorithm",
+        help="Prompts per backward pass in an async update.",
+    ),
+    OptSpec(
+        "reward_model",
+        "Algorithm",
+        type=str,
+        default=None,
+        help="Reward factory as module:qualified_name.",
+    ),
+    OptSpec(
+        "rl_update_epochs", "Algorithm", help="Learner epochs per collected round."
+    ),
+    OptSpec(
+        "rl_minibatch_prompts",
+        "Algorithm",
+        help="Prompts per independent learner update.",
+    ),
+    OptSpec(
+        "gradient_chunked_logprobs",
+        "Algorithm",
+        help="Recompute training logprobs in chunks.",
     ),
     OptSpec("rollout_interval", "Algorithm", help="Steps between rollouts."),
     OptSpec(
@@ -408,6 +479,13 @@ _SPECS = [
         help="Data-parallel gradient-sync strategy (none/ddp/fsdp).",
     ),
     OptSpec("backend", "Distributed", choices=_BACKENDS, help="Distributed backend."),
+    OptSpec(
+        "process_group_timeout",
+        "Distributed",
+        type=float,
+        default=None,
+        help="Seconds a stalled collective may block before the run aborts.",
+    ),
     OptSpec("master_addr", "Distributed", help="Master node address."),
     OptSpec("master_port", "Distributed", help="Master node port."),
     OptSpec("device_type", "Distributed", help="Device type."),
@@ -495,15 +573,58 @@ _SPECS = [
 def train_command(ctx, config_path, dry_run, metrics, **kwargs):
     """Start model training (pretrain / SFT / DPO / GRPO)."""
     kwargs["metrics"] = metrics
+    component_blocks = {}
     if config_path:
+        with open(config_path) as stream:
+            raw_config = yaml.safe_load(stream) or {}
+        if not isinstance(raw_config, dict):
+            raise click.UsageError("Training config must be a mapping")
+        for name in ("model", "optimizer", "scheduler", "dataset"):
+            block = raw_config.get(name)
+            if block is None:
+                continue
+            if (
+                name == "model"
+                and isinstance(block, dict)
+                and not ({"type", "params", "dtype"} & block.keys())
+            ):
+                continue  # Legacy flat model section.
+            if not isinstance(block, dict) or "type" not in block:
+                raise click.UsageError(f"{name} component requires a type")
+            allowed = (
+                {"type", "params", "dtype"} if name == "model" else {"type", "params"}
+            )
+            unknown = set(block) - allowed
+            if unknown:
+                raise click.UsageError(
+                    f"Unknown {name} component keys: {', '.join(sorted(unknown))}"
+                )
+            if not isinstance(block.get("params", {}), dict):
+                raise click.UsageError(f"{name} component params must be a mapping")
+            component_blocks[name] = block
         explicit_keys = {
             key
             for key in kwargs
             if ctx.get_parameter_source(key) is ParameterSource.COMMANDLINE
         }
-        kwargs = _merge_yaml_into_kwargs(config_path, kwargs, explicit_keys)
+        kwargs = _merge_yaml_into_kwargs(
+            config_path,
+            kwargs,
+            explicit_keys,
+            sections=tuple(
+                section
+                for section in DEFAULT_YAML_SECTIONS
+                if section not in component_blocks
+            ),
+            allowed_keys=list(kwargs),
+            strict_unknown=True,
+        )
+    for name, block in component_blocks.items():
+        kwargs[f"{name}_spec"] = block
 
-    required = ["train_type", "data_root_path", "param_path"]
+    required = ["train_type", "param_path"]
+    if "dataset" not in component_blocks:
+        required.append("data_root_path")
     missing = [k for k in required if kwargs.get(k) is None]
     if missing:
         raise click.UsageError(
@@ -513,6 +634,7 @@ def train_command(ctx, config_path, dry_run, metrics, **kwargs):
 
     # Convert tuple back to list
     kwargs["metrics"] = list(kwargs["metrics"])
+    kwargs["rollout_devices"] = list(kwargs["rollout_devices"])
     kwargs["tp_size"] = kwargs.pop("tp_size") or 1
     kwargs["cp_size"] = kwargs.pop("cp_size") or 1
     kwargs["dp_size"] = kwargs.pop("dp_size") or 1
@@ -521,10 +643,13 @@ def train_command(ctx, config_path, dry_run, metrics, **kwargs):
         _print_dry_run(kwargs)
         return
 
-    train(**kwargs)
+    try:
+        train(**kwargs)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
 
 
-def _print_dry_run(kwargs: dict) -> None:
+def _print_dry_run(kwargs: Dict) -> None:
     """Print training plan summary."""
     dp_size = kwargs.get("dp_size", 1) or 1
     cp_size = kwargs.get("cp_size", 1) or 1
@@ -532,12 +657,35 @@ def _print_dry_run(kwargs: dict) -> None:
     rows = [
         ("Train type", kwargs.get("train_type")),
         ("Model path", kwargs.get("param_path")),
-        ("Data path", kwargs.get("data_root_path")),
+        (
+            "Model type",
+            (kwargs.get("model_spec") or {}).get("type", "autoregressive_lm"),
+        ),
+        (
+            "Optimizer type",
+            (kwargs.get("optimizer_spec") or {}).get("type", kwargs.get("optimizer")),
+        ),
+        (
+            "Scheduler type",
+            (kwargs.get("scheduler_spec") or {}).get(
+                "type", kwargs.get("schedule_type")
+            ),
+        ),
+        (
+            "Data path",
+            (kwargs.get("dataset_spec") or {})
+            .get("params", {})
+            .get("path", kwargs.get("data_root_path")),
+        ),
+        ("Data type", (kwargs.get("dataset_spec") or {}).get("type", "packed")),
         ("DP mode", kwargs.get("dp_mode", "none")),
         ("DP replicas", str(dp_size)),
         ("CP size", str(cp_size)),
         ("TP size", str(tp_size)),
-        ("GPUs", str(dp_size * cp_size * tp_size)),
+        ("Learner GPUs", str(dp_size * cp_size * tp_size)),
+        ("Rollout mode", kwargs.get("rollout_mode", "sync")),
+        ("Worker devices", str(kwargs.get("rollout_devices", []))),
+        ("Reward factory", kwargs.get("reward_model")),
         ("Epochs", str(kwargs.get("n_epoch", 1))),
         ("Batch/device", str(kwargs.get("batch_per_device", 1))),
         ("Grad accum", str(kwargs.get("grad_accum_steps", 1))),
@@ -548,6 +696,7 @@ def _print_dry_run(kwargs: dict) -> None:
         ("Window size", str(kwargs.get("window_size", "config default"))),
         ("Checkpoint dir", str(kwargs.get("ckpt_dir", "checkpoint"))),
         ("Checkpoint interval", str(kwargs.get("ckpt_interval", 5000))),
+        ("Load state dict", str(kwargs.get("load_state_dict") or "defaults")),
         ("Resume", str(kwargs.get("resume", False))),
     ]
     max_len = max(len(k) for k, _ in rows)
@@ -557,42 +706,20 @@ def _print_dry_run(kwargs: dict) -> None:
     click.secho("=" * 40, fg="cyan")
 
 
-def create_model(config):
-    return AutoRegressiveLM(config).to(dtype=torch.bfloat16)
+def load_reward_factory(reference: str) -> Callable:
+    module_name, separator, qualified_name = reference.partition(":")
+    if not separator or not module_name or not qualified_name:
+        raise ValueError("reward_model must use module:qualified_name")
+    factory = importlib.import_module(module_name)
+    for name in qualified_name.split("."):
+        factory = getattr(factory, name)
+    if not callable(factory):
+        raise ValueError("reward_model must resolve to a callable factory")
+    return factory
 
 
 def create_value_model(config):
     return ValueModel(config).to(dtype=torch.bfloat16)
-
-
-def create_optimizer(
-    model, optimizer_name: str = "muon_adamw", **kwargs
-) -> optim.Optimizer:
-    return OptimizerFactory.create(optimizer_name, model, **kwargs)
-
-
-def create_scheduler(
-    optimizer: optim.Optimizer, **kwargs
-) -> optim.lr_scheduler.LRScheduler:
-    schedule_type = kwargs.pop("schedule_type")
-    return SchedulerFactory.create(schedule_type, optimizer, **kwargs)
-
-
-def compute_total_steps(
-    dataset_len: int,
-    n_epoch: int,
-    batch_per_device: int,
-    dp_size: int,
-    grad_accum_steps: int,
-) -> int:
-
-    def ceil_div(a: int, b: int) -> int:
-        return (a + b - 1) // b
-
-    samples_per_replica = ceil_div(dataset_len, dp_size)
-    batches_per_replica = ceil_div(samples_per_replica, batch_per_device)
-    total_steps = (batches_per_replica // grad_accum_steps) * n_epoch
-    return total_steps
 
 
 def train(
@@ -610,12 +737,11 @@ def train(
     ckpt_dir: str,
     val_split: float,
     val_step: int,
-    metrics: list[str],
+    metrics: List[str],
     max_grad_norm: float,
     random_seed: int,
     num_workers: int,
     pin_memory: bool,
-    persistent_workers: bool,
     gradient_checkpointing: bool,
     window_size: int,
     stride: int,
@@ -628,6 +754,7 @@ def train(
     master_addr: str,
     master_port: str,
     start_method: str,
+    process_group_timeout: float,
     neftune_alpha: float,
     schedule_type: str,
     min_rate: float,
@@ -687,6 +814,18 @@ def train(
         "gae_lambda": kwargs.pop("ppo_gae_lambda"),
         "vf_coef": kwargs.pop("ppo_vf_coef"),
     }
+    # CLI defaults cover every strategy; pass only the selected strategy's options.
+    accepted = StrategyFactory.option_names(train_type)
+    strategy_kwargs = {
+        key: value for key, value in strategy_kwargs.items() if key in accepted
+    }
+    loss_backend = kwargs.pop("loss_backend")
+    loss_chunk_size = kwargs.pop("loss_chunk_size")
+    if train_type in ("seq", "sft"):
+        strategy_kwargs["loss_backend"] = loss_backend
+        strategy_kwargs["loss_chunk_size"] = loss_chunk_size
+    elif loss_backend != "torch" or loss_chunk_size != 512:
+        raise ValueError("loss_backend and loss_chunk_size require seq or sft training")
 
     rollout_interval = kwargs.pop("rollout_interval", 512)
     rollout_enable_overlap = kwargs.pop("rollout_enable_overlap", False)
@@ -704,7 +843,14 @@ def train(
     rollout_device = kwargs.pop("rollout_device", None)
     rollout_val_device = kwargs.pop("rollout_val_device", None)
     rollout_pool_seq_len = kwargs.pop("rollout_pool_seq_len", None)
-    reward_model_fn: Callable[[], BaseRewardModel] | None = None
+    reward_reference = kwargs.pop("reward_model", None)
+    reward_model_fn = (
+        None if reward_reference is None else load_reward_factory(reward_reference)
+    )
+    if train_type.startswith("online_") and reward_model_fn is None:
+        raise ValueError(
+            "online training requires --reward_model module:qualified_name"
+        )
     critic_model_fn = None
     if train_type == "online_ppo":
         # The optimizer defaults to the policy's; critic_optimizer_fn can
@@ -718,13 +864,32 @@ def train(
             broadcast_buffers=False,
         )
 
-    model_fn = partial(create_model, config)
-    dataset = DatasetFactory.load(
-        train_type=train_type,
-        load_path=data_root_path,
-        window_size=window_size,
-        stride=stride,
-        tokenizer_path=param_path,
+    model_raw = kwargs.pop("model_spec", None)
+    optimizer_raw = kwargs.pop("optimizer_spec", None)
+    scheduler_raw = kwargs.pop("scheduler_spec", None)
+    model_dtype = "bfloat16"
+    if model_raw is not None:
+        model_raw = dict(model_raw)
+        model_dtype = model_raw.pop("dtype", model_dtype)
+    model_spec = (
+        ComponentSpec(**model_raw)
+        if model_raw
+        else ComponentSpec(type="autoregressive_lm")
+    )
+    dataset_raw = kwargs.pop("dataset_spec", None)
+    dataset_spec = (
+        ComponentSpec(**dataset_raw)
+        if dataset_raw is not None
+        else ComponentSpec(
+            type="packed",
+            params={
+                "path": data_root_path,
+                "train_type": train_type,
+                "window_size": window_size,
+                "stride": stride,
+                "tokenizer_path": param_path,
+            },
+        )
     )
 
     optimizer_name = kwargs.pop("optimizer", "muon_adamw")
@@ -745,11 +910,6 @@ def train(
         "mano_momentum": kwargs.pop("mano_momentum", 0.95),
         "mano_nesterov": kwargs.pop("mano_nesterov", True),
     }
-    optimizer_fn = partial(
-        create_optimizer,
-        optimizer_name=optimizer_name,
-        **optimizer_kwargs,
-    )
     if optimizer_name == "nora_nadamw":
         optimizer_hyperparameters = {
             key: optimizer_kwargs[key]
@@ -789,57 +949,65 @@ def train(
             )
         }
 
-    # The scheduler counts optimizer steps over data-parallel replicas; cp
-    # peers split each batch's sequence rather than consuming extra samples.
-    total_steps = compute_total_steps(
-        len(dataset), n_epoch, batch_per_device, dp_size, grad_accum_steps
-    )
-    warmup_steps = int(warmup_ratio * total_steps)
-    warmup_steps = min(warmup_steps, total_steps)
+    if optimizer_raw is not None:
+        optimizer_spec = ComponentSpec(**optimizer_raw)
+        optimizer_name = optimizer_spec.type
+        optimizer_hyperparameters = dict(optimizer_spec.params)
+    else:
+        optimizer_params = dict(optimizer_hyperparameters)
+        for key in (
+            "nadamw_betas",
+            "nadamw_eps",
+            "nora_eps",
+            "adamw_betas",
+            "adamw_eps",
+        ):
+            optimizer_params.pop(key, None)
+        if optimizer_name == "mano_adamw":
+            optimizer_params["momentum"] = optimizer_params.pop("mano_momentum")
+            optimizer_params["nesterov"] = optimizer_params.pop("mano_nesterov")
+        optimizer_spec = ComponentSpec(type=optimizer_name, params=optimizer_params)
 
-    scheduler_kwargs = {"warmup_steps": warmup_steps}
+    if scheduler_raw is not None:
+        scheduler_spec = ComponentSpec(**scheduler_raw)
+    else:
+        schedule_params = {"warmup_ratio": warmup_ratio}
+        if min_rate is not None:
+            schedule_params["min_rate"] = min_rate
+        if schedule_type == "sgdr":
+            schedule_params["t_mult"] = t_mult
+            if cycle_length:
+                schedule_params["cycle_length"] = cycle_length
+        elif schedule_type == "wsd":
+            if stable_steps:
+                schedule_params["stable_steps"] = stable_steps
+            if decay_steps:
+                schedule_params["decay_steps"] = decay_steps
+        scheduler_spec = ComponentSpec(type=schedule_type, params=schedule_params)
 
-    if schedule_type == "cosine":
-        scheduler_kwargs["lr_decay_steps"] = total_steps - warmup_steps
-    elif schedule_type == "sgdr":
-        scheduler_kwargs["cycle_length"] = cycle_length or (total_steps - warmup_steps)
-        scheduler_kwargs["t_mult"] = t_mult
-    elif schedule_type == "wsd":
-        remaining = total_steps - warmup_steps
-        stable_steps_ = stable_steps or max(1, int(remaining * 0.8))
-        scheduler_kwargs["stable_steps"] = stable_steps_
-        scheduler_kwargs["decay_steps"] = max(
-            1, decay_steps or (remaining - stable_steps_)
-        )
-
-    if min_rate is not None:
-        scheduler_kwargs["min_rate"] = min_rate
-
-    scheduler_fn = partial(
-        create_scheduler,
-        schedule_type=schedule_type,
-        **scheduler_kwargs,
-    )
-
-    grad_ckpt_modules = [DecoderBlock] if gradient_checkpointing else []
+    grad_ckpt_modules = [MLP] if gradient_checkpointing else []
     compile_mode = kwargs.pop("compile_mode", None)
 
-    collate_fn = None
-    if train_type == "dpo":
-        collate_fn = dpo_collate_fn
-    elif train_type == "grpo":
-        collate_fn = grpo_collate_fn
-    elif train_type in ("online_grpo", "online_dpo", "online_ppo"):
-        collate_fn = None
+    load_state_dict = kwargs.pop("load_state_dict", None)
+    if isinstance(load_state_dict, str):
+        load_state_dict = json.loads(load_state_dict)
+    if load_state_dict is None:
+        load_state_dict = {}
+    if not isinstance(load_state_dict, dict):
+        raise ValueError(
+            "load_state_dict must be a mapping of component names to booleans"
+        )
 
     train_config = TrainConfig(
-        model_fn=model_fn,
         strategy=train_type,
-        dataset=dataset,
-        optimizer_fn=optimizer_fn,
-        scheduler_fn=scheduler_fn,
+        dataset=dataset_spec,
+        model=model_spec,
+        model_dtype=model_dtype,
+        optimizer=optimizer_spec,
+        scheduler=scheduler_spec,
         optimizer_name=optimizer_name,
         optimizer_hyperparameters=optimizer_hyperparameters,
+        load_state_dict=load_state_dict,
         ckpt_dir=ckpt_dir,
         n_epoch=n_epoch,
         batch_per_device=batch_per_device,
@@ -851,7 +1019,6 @@ def train(
         random_seed=random_seed,
         num_workers=num_workers,
         pin_memory=pin_memory,
-        persistent_workers=persistent_workers,
         dp_size=dp_size,
         cp_size=cp_size,
         tp_size=tp_size,
@@ -861,6 +1028,7 @@ def train(
         master_port=master_port,
         device_type=device_type,
         start_method=start_method,
+        process_group_timeout=process_group_timeout,
         val_split=val_split,
         val_step=val_step,
         metrics=metrics,
@@ -869,7 +1037,15 @@ def train(
         executor_kwargs=executor_kwargs,
         strategy_kwargs=strategy_kwargs,
         neftune_alpha=neftune_alpha,
-        collate_fn=collate_fn,
+        rollout_mode=kwargs.pop("rollout_mode", "sync"),
+        rollout_devices=list(kwargs.pop("rollout_devices", [])),
+        rollout_worker_timeout_s=kwargs.pop("rollout_worker_timeout_s", 600.0),
+        rollout_startup_timeout_s=kwargs.pop("rollout_startup_timeout_s", 300.0),
+        rollout_weight_timeout_s=kwargs.pop("rollout_weight_timeout_s", 600.0),
+        async_train_microbatch_prompts=kwargs.pop("async_train_microbatch_prompts", 1),
+        rl_update_epochs=kwargs.pop("rl_update_epochs", 1),
+        rl_minibatch_prompts=kwargs.pop("rl_minibatch_prompts", None),
+        gradient_chunked_logprobs=kwargs.pop("gradient_chunked_logprobs", False),
         rollout_interval=rollout_interval,
         rollout_enable_overlap=rollout_enable_overlap,
         rollout_seed=rollout_seed,

@@ -116,7 +116,11 @@ class BaseStrategy(ABC):
         )
 
     def token_loss_output(
-        self, loss: Tensor, reported_loss: Tensor, forward: ForwardResult
+        self,
+        loss: Tensor,
+        reported_loss: Tensor,
+        forward: ForwardResult,
+        normalizer: Optional[float] = None,
     ) -> LossOutput:
         """Assemble the LossOutput around an already-reduced token loss."""
         return self._loss_output(
@@ -124,28 +128,23 @@ class BaseStrategy(ABC):
             {"task_loss": reported_loss.detach()},
             forward.aux_loss,
             forward.router_stats,
+            normalizer=normalizer,
         )
 
     def compute_loss(self, batch: Dict[str, Tensor]) -> Tensor:
-        """Compute loss for the given batch.
-
-        Args:
-            batch: Dictionary containing batch tensors
-
-        Returns:
-            Computed loss tensor
-        """
+        """Scalar view of :meth:`compute_loss_output`, for callers that need one."""
         return self.compute_loss_output(batch)["loss"]
 
     def compute_loss_output(self, batch: Dict[str, Tensor]) -> LossOutput:
-        if type(self).forward_tokens is BaseStrategy.forward_tokens:
-            # Legacy contract: a strategy overriding only compute_loss
-            # (returning a tensor) still gets a normalized LossOutput.
-            return self._normalize_output(self.compute_loss(batch))
         batch = self.prepare_batch(batch)
         forward = self.forward_tokens(batch)
         tokens = self.reduce_loss(forward, batch)
-        return self.token_loss_output(tokens.mean(), tokens.mean(), forward)
+        return self.token_loss_output(
+            tokens.mean(),
+            tokens.mean(),
+            forward,
+            normalizer=float(tokens.token_count.item()),
+        )
 
     def validate_online(self, batch: Dict[str, Any]) -> Optional[LossOutput]:
         """Validate one batch through a one-off rollout.
@@ -168,6 +167,7 @@ class BaseStrategy(ABC):
         metrics: Dict[str, Tensor],
         aux_loss: Optional[Tensor] = None,
         router_stats: Optional[List[RouterStats]] = None,
+        normalizer: Optional[float] = None,
     ) -> LossOutput:
         total_loss = task_loss
         if aux_loss is not None:
@@ -177,16 +177,13 @@ class BaseStrategy(ABC):
             metrics["moe_aux_loss_weighted"] = weighted_aux_loss
             self._refresh_moe_diagnostics(aux_loss, router_stats)
         metrics["loss"] = total_loss
-        return {
+        output = {
             "loss": total_loss,
             "metrics": {name: value.detach().item() for name, value in metrics.items()},
         }
-
-    @staticmethod
-    def _normalize_output(output: Union[LossOutput, Tensor]) -> LossOutput:
-        if isinstance(output, dict):
-            return output
-        return {"loss": output, "metrics": {"loss": output.detach().item()}}
+        if normalizer is not None:
+            output["normalizer"] = normalizer
+        return output
 
     def supports_online(self) -> bool:
         """Whether this strategy can operate with a rollout runner.
@@ -302,10 +299,10 @@ class BaseStrategy(ABC):
 
         Each optimizer step still goes through
         :meth:`optimizer_step`, so weight publication and policy-version
-        advancement happen once per learner update; note that online mode
-        therefore assumes ``grad_accum_steps=1`` (accumulating >1 turns the
-        minibatch updates into one merged step and inflates the runner's
-        replay counter).
+        advancement happen once per learner update. The global-window trainer
+        collects rollout microbatches first and accumulates each corresponding
+        learner update explicitly; this legacy iterator remains for callers
+        that operate on one batch at a time.
         """
         if self._rollout_runner is None:
             yield self.compute_loss_output(batch)
@@ -319,6 +316,18 @@ class BaseStrategy(ABC):
         for _ in range(self.rl_update_epochs):
             for chunk in slices:
                 yield self.compute_loss_output(chunk)
+
+    def training_updates(
+        self, batch: Any, microbatch_prompts: Optional[int] = None
+    ) -> Iterator[Iterator[LossOutput]]:
+        """Group loss outputs by optimizer update.
+
+        The default keeps the existing one-loss-per-update contract.  A
+        strategy can yield several losses in one group when their gradients
+        must be accumulated before a single optimizer step.
+        """
+        for output in self.training_steps(batch):
+            yield iter((output,))
 
     def _split_rollout_batch(self, prepared: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Slice one prepared rollout batch along the prompt dimension.

@@ -1,6 +1,6 @@
 import logging
 import time
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, List, Optional
 
@@ -8,11 +8,9 @@ import torch
 from torch import Tensor
 
 from astrai.config.inference_config import InferenceConfig
-from astrai.extension import attn_backend
-from astrai.extension.backend.attention import (
-    CudaBackend,
-    get_backend,
-)
+from astrai.extension.backend.attention import cuda as attention_cuda
+from astrai.extension.runtime.context import snapshot_op_selection
+from astrai.extension.runtime.loader import is_available
 
 if TYPE_CHECKING:
     # Type-only dependency: the worker consumes the KV manager's ``bind``
@@ -35,6 +33,19 @@ from astrai.inference.worker.workspace import InferenceWorkspace
 from astrai.model.automodel import AutoModel
 
 logger = logging.getLogger(__name__)
+
+
+def _attention_supports_graph(head_dim: int, dtype: torch.dtype) -> bool:
+    choice = snapshot_op_selection().choice("attention")[0] or "auto"
+    return (
+        choice in ("auto", "cuda")
+        and torch.cuda.is_available()
+        and dtype in (torch.bfloat16, torch.float16)
+        and is_available("attention")
+        and head_dim in attention_cuda.HEAD_DIMS
+    )
+
+
 _config = InferenceConfig()
 
 
@@ -112,7 +123,7 @@ def _build_sampling_batch_info(
     temps = [t.temperature for t in requests]
     top_ks = [t.top_k for t in requests]
     top_ps = [t.top_p for t in requests]
-    seeded = [t.sampling.seed is not None for t in requests]
+    seeded = [t.sampling.sampling_seed is not None for t in requests]
     if any(seeded) and not all(seeded):
         raise ValueError("seeded sampling requires a seed for every batch request")
     freq_penalties = torch.tensor(freq_list, dtype=torch.float32, pin_memory=pin).to(
@@ -267,7 +278,7 @@ class GPUModelRunner:
         # The most recent submitted-but-not-necessarily-committed decode
         # step.  ``submit_decode`` consults it to refuse the one unsafe
         # overlap (frequency penalty reading stale host histories); the
-        # SchedulerStep's commit phase clears it.  Synchronous callers commit
+        # EngineCore's commit phase clears it.  Synchronous callers commit
         # immediately, so it is usually already consumed.
         self._pending: Optional[PendingExecution] = None
 
@@ -286,9 +297,9 @@ class GPUModelRunner:
             getattr(config, "head_dim", None)
             or config.hidden_size // config.num_attention_heads
         )
-        backend = get_backend()
-        self._graph_supported = backend.supports_graph() and (
-            CudaBackend.available() and head_dim in CudaBackend.HEAD_DIMS
+        graph_device = torch.device(self.device).type == "cuda"
+        self._graph_supported = graph_device and _attention_supports_graph(
+            head_dim, self.dtype
         )
         self._workspace = InferenceWorkspace(
             max_batch_size=kv_cache.max_batch_size,
@@ -300,7 +311,7 @@ class GPUModelRunner:
         )
 
         # CUDA-graph capture: one graph per (batch_size,) key.
-        # Enabled at init-time via _warmup_cuda_graphs for CudaBackend
+        # Enabled at init-time via _warmup_cuda_graphs for CUDA attention
         # on supported head_dims; left disabled otherwise.
         self._graph_ctx = CUDAGraphRunner()
         if enable_cuda_graph:
@@ -550,7 +561,7 @@ class GPUModelRunner:
         :class:`PendingExecution` carrying the device-resident tokens (and
         optional logprobs).  Nothing here touches host copies of the
         sampled values or mutates request output state — that is exclusively
-        :meth:`PendingExecution.commit`'s job, invoked by the SchedulerStep's commit
+        :meth:`PendingExecution.commit`'s job, invoked by the EngineCore's commit
         phase.
 
         Frequency penalty needs each request's host-side output history at
@@ -629,7 +640,7 @@ class GPUModelRunner:
         use_graph = (
             self._graph_ctx.enabled
             and self._graph_supported
-            and get_backend().supports_graph()
+            and _attention_supports_graph(self._workspace.head_dim, self.dtype)
         )
         key = (b,)
         with (
@@ -704,13 +715,24 @@ class GPUModelRunner:
         if info.seeded and not info.meta.greedy:
             uniforms = torch.tensor(
                 [
-                    sampling_uniform(t.sampling.seed, t.sampling_position)
+                    sampling_uniform(t.sampling.sampling_seed, t.sampling_position)
                     for t in requests
                 ],
                 dtype=torch.float32,
                 pin_memory=str(self.device).startswith("cuda"),
             ).to(self.device, non_blocking=True)
 
+        # Preserve the upstream per-request/per-position generator stream.
+        seeds = [
+            None
+            if task.sampling.seed is None
+            else (task.sampling.seed + task.materialized_end * 0x9E3779B97F4A7C15)
+            & ((1 << 63) - 1)
+            for task in requests
+        ]
+        seed_kwargs = (
+            {"seeds": seeds} if any(seed is not None for seed in seeds) else {}
+        )
         result = (
             info.pipeline.sample(
                 logits,
@@ -718,6 +740,7 @@ class GPUModelRunner:
                 input_mask=padded_mask,
                 return_logprobs=return_logprobs,
                 uniforms=uniforms,
+                **seed_kwargs,
             )
             if info.pipeline is not None
             else sample(
@@ -729,6 +752,7 @@ class GPUModelRunner:
                 input_ids=padded_ids,
                 input_mask=padded_mask,
                 return_logprobs=return_logprobs,
+                **seed_kwargs,
                 meta=info.meta,
                 uniforms=uniforms,
             )
@@ -777,33 +801,31 @@ class GPUModelRunner:
         """Yield every launched group's handle, including KV-only prefills.
 
         Yielding immediately transfers resource ownership to EngineCore even
-        when a later backend group fails. The runner never commits core state.
+        when a later execution group fails. The runner never commits core state.
         """
         groups = {}
         for request in plan.requests:
             key = (
                 request.phase,
-                request.backend,
                 request.position if request.phase == "prefill" else None,
             )
             groups.setdefault(key, []).append(request)
-        for (phase, backend, start_pos), requests in groups.items():
+        for (phase, start_pos), requests in groups.items():
             subplan = plan.select(requests)
-            with attn_backend(backend) if backend is not None else nullcontext():
-                if phase == "prefill":
-                    _, pending = self.execute_prefill(
-                        requests,
-                        start_pos=start_pos,
-                        num_tokens=[r.num_tokens for r in requests],
-                        return_logprobs=plan.return_logprobs,
-                        plan=subplan,
-                    )
-                else:
-                    pending = self.submit_decode(
-                        requests, plan.return_logprobs, plan=subplan
-                    )
-                    if pending is None:
-                        raise RuntimeError("decode submit requires a drained history")
+            if phase == "prefill":
+                _, pending = self.execute_prefill(
+                    requests,
+                    start_pos=start_pos,
+                    num_tokens=[r.num_tokens for r in requests],
+                    return_logprobs=plan.return_logprobs,
+                    plan=subplan,
+                )
+            else:
+                pending = self.submit_decode(
+                    requests, plan.return_logprobs, plan=subplan
+                )
+                if pending is None:
+                    raise RuntimeError("decode submit requires a drained history")
             yield pending
 
     def synchronize(self) -> None:

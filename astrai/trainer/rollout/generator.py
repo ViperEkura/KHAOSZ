@@ -75,7 +75,11 @@ class RolloutGenerator:
 
     @torch.no_grad()
     def generate(
-        self, batch: Dict, params: Optional[SamplingParams] = None
+        self,
+        batch: Dict,
+        params: Optional[SamplingParams] = None,
+        *,
+        seeds: Optional[List[int]] = None,
     ) -> RawRollout:
         """Expand prompts by ``group_size`` and generate one response each.
 
@@ -99,23 +103,27 @@ class RolloutGenerator:
         with self._weight_lock:
             return self.backend.with_policy_snapshot(
                 lambda generation_version: self._generate_eval(
-                    batch, generation_version, effective
+                    batch, generation_version, effective, seeds
                 )
             )
 
     def _generate_eval(
-        self, batch: Dict, generation_version: int, params: SamplingParams
+        self,
+        batch: Dict,
+        generation_version: int,
+        params: SamplingParams,
+        seeds: Optional[List[int]] = None,
     ) -> RawRollout:
         prompt_texts, flat_prompt_ids = self._prepare_prompts(batch)
         B = len(prompt_texts)
         G = params.group_size
-        # Re-expand flat list to G copies per prompt for run_batch.
+        # Re-expand flat list to G copies per prompt for the rollout batch call.
         expanded_prompt_ids: List[List[int]] = []
         for ids in flat_prompt_ids:
             expanded_prompt_ids.extend([list(ids)] * G)
 
-        sampling_options = {}
-        if params.seed is not None:
+        sampling_options = {"seeds": seeds} if seeds is not None else {}
+        if params.seed is not None and seeds is None:
             occurrences = Counter()
             seeds = []
             for ids in flat_prompt_ids:

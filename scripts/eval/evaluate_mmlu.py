@@ -6,6 +6,7 @@ import json
 import os
 import random
 from collections import defaultdict
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import tqdm
@@ -75,7 +76,7 @@ MMLU_SUBJECTS = [
 ]
 
 
-def _write_subject_csv(data_dir: str, split: str, subject: str, rows: list[dict]):
+def _write_subject_csv(data_dir: str, split: str, subject: str, rows: List[Dict]):
     split_dir = os.path.join(data_dir, split)
     os.makedirs(split_dir, exist_ok=True)
     path = os.path.join(split_dir, f"{subject}_{split}.csv")
@@ -91,7 +92,7 @@ def download_mmlu(data_dir: str):
     split_map = {"dev": "dev", "val": "validation", "test": "test"}
     for local_split, hf_split in split_map.items():
         ds = load_dataset(MMLU_HF_DATASET, "all", split=hf_split)
-        grouped: dict[str, list[dict]] = defaultdict(list)
+        grouped: Dict[str, List[Dict]] = defaultdict(list)
         for item in tqdm.tqdm(ds, desc=f"  {local_split}", leave=False):
             subject = item["subject"]
             choices = item["choices"]
@@ -118,7 +119,7 @@ def _strip_prefix(text: str, prefix: str) -> str:
     return text
 
 
-def load_csv(path: str) -> list[dict]:
+def load_csv(path: str) -> List[Dict]:
     data = []
     with open(path, "r", encoding="utf-8") as f:
         for row in csv.reader(f):
@@ -139,7 +140,7 @@ def load_csv(path: str) -> list[dict]:
     return data
 
 
-def build_prompt(question: str, choices: dict, subject: str) -> str:
+def build_prompt(question: str, choices: Dict, subject: str) -> str:
     """Build the raw question prompt (without few-shot examples).
 
     Few-shot examples are handled by ``apply_chat`` to avoid duplication.
@@ -156,7 +157,7 @@ def apply_chat(
     tokenizer,
     raw_prompt: str,
     n_shot: int,
-    dev_data: list[dict] | None,
+    dev_data: Optional[List[Dict]],
     subject: str = "",
 ) -> str:
     """Wrap raw MMLU prompt in the model's chat template format.
@@ -180,10 +181,10 @@ def apply_chat(
 def choice_logprobs_batched(
     model,
     tokenizer,
-    context_ids_list: list[list[int]],
+    context_ids_list: List[List[int]],
     device: str,
     max_model_len: int,
-) -> list[dict[str, float]]:
+) -> List[Dict[str, float]]:
     """Compute log-probs for multiple questions x 4 answer letters.
 
     Returns a list of dicts: [{A: score, B: score, C: score, D: score}, ...]
@@ -201,7 +202,7 @@ def choice_logprobs_batched(
     ]
 
 
-def _permute_choices(item: dict, rng: random.Random) -> tuple[dict, str]:
+def _permute_choices(item: Dict, rng: random.Random) -> Tuple[Dict, str]:
     """Shuffle the option order of a question.
 
     Returns ``(permuted_item, new_answer_letter)``. The question text and
@@ -223,13 +224,13 @@ def evaluate_subject(
     model,
     tokenizer,
     subject: str,
-    test_data: list[dict],
-    dev_data: list[dict] | None,
+    test_data: List[Dict],
+    dev_data: Optional[List[Dict]],
     device: str,
     n_shot: int,
     seed: int = 0,
     batch_size: int = 16,
-) -> tuple[float, int, int]:
+) -> Tuple[float, int, int]:
     rng = random.Random(seed) if seed >= 0 else None
     correct = 0
     total = 0

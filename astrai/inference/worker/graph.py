@@ -10,6 +10,8 @@ Only the model forward is captured — sampling runs outside the graph
 (via ``torch.multinomial`` which consumes a mutable RNG state).
 """
 
+from typing import Dict, Optional, Set, Tuple
+
 import torch
 from torch import Tensor
 
@@ -37,15 +39,18 @@ class CUDAGraphRunner:
 
     The first call at a given key runs *without* capture (warmup).  The
     second call captures the graph.  Subsequent calls replay the captured
-    graph.  A ``torch.cuda.synchronize()`` before capture drains in-flight
-    work so the graph trace is clean.
+    graph.  Capture uses an explicit stream on the input tensor's device:
+    PyTorch's implicit graph stream can remain bound to the first GPU used
+    by a process, leaving later GPUs with an empty graph.
     """
 
     def __init__(self, enabled: bool = False):
         self._enabled = enabled
-        self._graphs: dict[tuple, torch.cuda.CUDAGraph] = {}
-        self._outputs: dict[tuple, dict[str, Tensor]] = {}
-        self._warmed: set[tuple] = set()
+        self._graphs: Dict[Tuple, torch.cuda.CUDAGraph] = {}
+        self._outputs: Dict[Tuple, Dict[str, Tensor]] = {}
+        self._warmed: Set[Tuple] = set()
+        self._capture_stream: Optional[torch.cuda.Stream] = None
+        self._captures_frozen = False
 
     @property
     def enabled(self) -> bool:
@@ -65,8 +70,19 @@ class CUDAGraphRunner:
             self._graphs.clear()
             self._outputs.clear()
             self._warmed.clear()
+            self._capture_stream = None
+            self._captures_frozen = False
 
-    def forward(self, model, *, key, **kwargs) -> dict[str, Tensor]:
+    def freeze_captures(self):
+        """Use eager forward for uncaptured shapes after startup warmup.
+
+        A process can only capture one CUDA graph at a time.  Multi-GPU
+        rollout workers may replay concurrently, but must never initiate a
+        new capture while another worker is generating.
+        """
+        self._captures_frozen = True
+
+    def forward(self, model, *, key, **kwargs) -> Dict[str, Tensor]:
         """Run ``model(**kwargs)`` via graph replay or live forward.
 
         Args:
@@ -85,11 +101,18 @@ class CUDAGraphRunner:
 
         if key in self._graphs:
             self._graphs[key].replay()
+        elif self._captures_frozen:
+            return model(**kwargs)
         elif key in self._warmed:
             cap_output = model(**kwargs)
-            torch.cuda.synchronize()
+            device = next(
+                value.device for value in kwargs.values() if isinstance(value, Tensor)
+            )
+            torch.cuda.synchronize(device)
+            if self._capture_stream is None:
+                self._capture_stream = torch.cuda.Stream(device=device)
             graph = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(graph):
+            with torch.cuda.graph(graph, stream=self._capture_stream):
                 self._outputs[key] = model(**kwargs)
             self._graphs[key] = graph
             self._warmed.discard(key)
@@ -99,5 +122,5 @@ class CUDAGraphRunner:
             self._outputs[key] = model(**kwargs)
         return self._outputs[key]
 
-    def has_graph(self, key: tuple) -> bool:
+    def has_graph(self, key: Tuple) -> bool:
         return key in self._graphs

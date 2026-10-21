@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import re
+from typing import Dict
 
 import tqdm
 from datasets import load_dataset
@@ -48,7 +49,7 @@ def download(data_dir: str):
     print(f"  saved {len(ds)} questions to {path}")
 
 
-def build_item(row: dict):
+def build_item(row: Dict):
     query = preprocess(
         row["activity_label"] + ": " + row["ctx_a"] + " " + row["ctx_b"].capitalize()
     )

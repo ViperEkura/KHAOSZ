@@ -5,7 +5,6 @@ from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 from typing import (
-    TYPE_CHECKING,
     Any,
     Deque,
     Dict,
@@ -22,9 +21,6 @@ from astrai.inference.contracts import ExecutionRequest, RequestIdentity, Sampli
 from astrai.inference.core.metrics import MetricsCollector
 from astrai.inference.sampling_rng import validate_seed
 from astrai.tokenize.tokenizer import AutoTokenizer
-
-if TYPE_CHECKING:
-    from astrai.extension import AttentionBackend
 
 _config = InferenceConfig()
 
@@ -94,11 +90,14 @@ class Request:
         top_k: int = 50,
         frequency_penalty: float = 0.0,
         rep_window: int = _config.default_rep_window,
-        backend: Optional["AttentionBackend"] = None,
+        *,
+        seed: Optional[int] = None,
         sampling_seed: Optional[int] = None,
     ):
         if sampling_seed is not None:
             validate_seed(sampling_seed)
+            if seed is not None:
+                raise ValueError("seed and sampling_seed are mutually exclusive")
         self.request_id = request_id
         self.identity = RequestIdentity(request_id, uuid.uuid4().hex)
         self.prompt_ids = list(prompt_ids)
@@ -109,9 +108,14 @@ class Request:
         self.top_k = top_k
         self.frequency_penalty = frequency_penalty
         self.rep_window = rep_window
-        self.backend = backend
         self._sampling = SamplingParams(
-            temperature, top_p, top_k, frequency_penalty, rep_window, sampling_seed
+            temperature,
+            top_p,
+            top_k,
+            frequency_penalty,
+            rep_window,
+            seed=seed,
+            sampling_seed=sampling_seed,
         )
 
         # Scoring only: how many trailing tokens of ``prompt_ids`` form the
@@ -145,7 +149,6 @@ class Request:
             sampling=self._sampling,
             output_ids=tuple(self.output_ids) if self.frequency_penalty else (),
             cont_len=self.cont_len,
-            backend=self.backend,
         )
 
     @property
@@ -203,7 +206,6 @@ class RequestManager:
         top_k: int = 50,
         frequency_penalty: float = 0.0,
         rep_window: int = 64,
-        backend: Optional["AttentionBackend"] = None,
         request_id: Optional[str] = None,
         prompt_ids: Optional[List[int]] = None,
     ) -> str:
@@ -236,10 +238,9 @@ class RequestManager:
             top_k=top_k,
             frequency_penalty=frequency_penalty,
             rep_window=rep_window,
-            backend=backend,
         )
 
-        self._register_request(request)
+        self.enqueue_tokenized_requests([request])
         return request_id
 
     def add_requests(
@@ -251,7 +252,6 @@ class RequestManager:
         top_k: int = 50,
         frequency_penalty: float = 0.0,
         rep_window: int = 64,
-        backend: Optional["AttentionBackend"] = None,
         request_ids: Optional[List[str]] = None,
         prompts_ids: Optional[List[List[int]]] = None,
     ) -> List[str]:
@@ -309,17 +309,24 @@ class RequestManager:
                 top_k=top_k,
                 frequency_penalty=frequency_penalty,
                 rep_window=rep_window,
-                backend=backend,
             )
             requests.append(request)
             request_ids_out.append(request_id)
 
-        # Validate and install the whole batch in one critical section. A
-        # duplicate later in the batch must not leave an unowned prefix queued.
+        self.enqueue_tokenized_requests(requests)
+        return request_ids_out
+
+    def enqueue_tokenized_requests(self, requests: List[Request]) -> None:
+        """Atomically enqueue already-tokenized requests in caller order."""
+        if not requests:
+            return
+        ids = [request.request_id for request in requests]
+        # Validate before installing any request: a duplicate later in the
+        # batch must not leave an unowned prefix queued.
         with self._lock:
-            if len(set(request_ids_out)) != len(request_ids_out):
-                raise ValueError("duplicate request ids in batch")
-            if any(rid in self._requests for rid in request_ids_out):
+            if len(set(ids)) != len(ids) or any(
+                request_id in self._requests for request_id in ids
+            ):
                 raise ValueError("duplicate live request id in batch")
             for request in requests:
                 self.waiting.append(request)
@@ -327,20 +334,6 @@ class RequestManager:
                 self._total_requests += 1
                 if self._metrics is not None:
                     self._metrics.register(request.request_id)
-        self._request_event.set()
-        return request_ids_out
-
-    def _register_request(self, request: "Request") -> None:
-        with self._lock:
-            if request.request_id in self._requests:
-                raise ValueError(f"duplicate live request id: {request.request_id}")
-            self.waiting.append(request)
-            self._requests[request.request_id] = request
-            self._total_requests += 1
-
-        if self._metrics is not None:
-            self._metrics.register(request.request_id)
-
         self._request_event.set()
 
     def cancel_request(self, request_id: str) -> Tuple[List[Request], bool]:

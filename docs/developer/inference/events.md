@@ -97,7 +97,7 @@ the loop. If joining times out, the live thread and its state remain owned;
 restarting over that thread is forbidden. Successful shutdown retires all
 pending executions before freeing KV and terminating the remaining requests.
 
-`run_batch` uses the same plan/result state-application rules but returns
+Rollout `run_batch` uses the same plan/result state-application rules but returns
 structured token/logprob results directly; it does not detokenize through the
 frontend. `score_ids` runs under the same operation boundary. Active online
 requests are not interleaved with an independent synchronous run on shared

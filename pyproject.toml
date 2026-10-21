@@ -9,7 +9,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "numpy==2.4.4",
-    "torch==2.11.0",
+    "torch==2.13.0",
     "tokenizers==0.21.4",
     "tqdm==4.67.1",
     "safetensors==0.5.3",

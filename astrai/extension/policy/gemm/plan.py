@@ -8,7 +8,7 @@ import os
 from contextlib import contextmanager
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Iterator, List, Optional, Tuple, Union
+from typing import Dict, Iterator, List, Optional, Tuple, Union
 
 import torch
 
@@ -69,7 +69,7 @@ class _Record:
 
     __slots__ = ()
 
-    def _values(self) -> tuple:
+    def _values(self) -> Tuple:
         return tuple(getattr(self, f.name) for f in fields(self))
 
     def __getitem__(self, key):
@@ -81,10 +81,10 @@ class _Record:
     def __len__(self) -> int:
         return len(fields(self))
 
-    def keys(self) -> tuple:
+    def keys(self) -> Tuple:
         return tuple(f.name for f in fields(self))
 
-    def items(self) -> tuple:
+    def items(self) -> Tuple:
         return tuple(zip(self.keys(), self._values()))
 
     def get(self, key, default=None):
@@ -120,7 +120,7 @@ class PlanConfig(_Record):
     staging: Staging
 
     @classmethod
-    def _of(cls, wire: dict) -> "PlanConfig":
+    def _of(cls, wire: Dict) -> "PlanConfig":
         table = wire["table"]
         return cls(
             planner=wire["planner"],

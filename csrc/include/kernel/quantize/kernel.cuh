@@ -1,16 +1,14 @@
 #pragma once
-/* FP8 device kernels use QuantParams plus compile-time input/output types. */
+/* Quantization device kernels use QuantParams plus compile-time input/output types. */
 
-#include <algorithm>
 #include <cstdint>
 #include <cuda_runtime.h>
 #include <type_traits>
 
-#include <api/quantize_common.h>
+#include <api/native/quantize.h>
 #include <arith/reduce.cuh>
 #include <datatype/element.cuh>
 #include <utils/define.cuh>
-#include <utils/launch.cuh>
 
 namespace astrai {
 namespace quant {
@@ -19,6 +17,10 @@ inline constexpr int kQuantWarps = 8;
 
 /* Last block folds amax into history, publishes scale, and resets scratch. */
 template <int kWarps> DEVICE_FORCEINLINE void publish_amax(const QuantParams& p, float v) {
+    float* const hist = p.ring_state;
+    float* const aux = hist + p.hist_len;
+    float* const scratch = aux + RingLayout::kScratch;
+    auto* const done = reinterpret_cast<unsigned int*>(aux + RingLayout::kDone);
     v = warp_reduce<maximum<float>>(v);
     __shared__ float slots[kWarps];
     const int tid = threadIdx.y * blockDim.x + threadIdx.x;
@@ -30,31 +32,29 @@ template <int kWarps> DEVICE_FORCEINLINE void publish_amax(const QuantParams& p,
         for (int w = 1; w < kWarps; ++w)
             v = fmaxf(v, slots[w]);
         const int slot = (blockIdx.y * gridDim.x + blockIdx.x) & (kFoldSlots - 1);
-        atomic_max_float(p.amax_scratch + slot, v);
+        atomic_max_float(scratch + slot, v);
         __threadfence();
-        const unsigned int ticket = atomicAdd(p.done, 1u);
+        const unsigned int ticket = atomicAdd(done, 1u);
         __threadfence();
         /* The kernel uses a 2D grid, so the completion count must include both axes. */
         const unsigned int total = gridDim.x * gridDim.y;
         if (ticket != total - 1u)
             return;
-        float peak = p.amax_scratch[0];
+        float peak = scratch[0];
         for (int s = 1; s < kFoldSlots; ++s)
-            peak = fmaxf(peak, p.amax_scratch[s]);
-        p.hist[p.hist_idx] = peak;
-        float win = p.hist[0];
+            peak = fmaxf(peak, scratch[s]);
+        hist[p.hist_idx] = peak;
+        float win = hist[0];
         for (int i = 1; i < p.hist_len; ++i)
-            win = fmaxf(win, p.hist[i]);
-        const float next = fmaxf(win / p.fp8_max / p.pow2_margin, 1e-12f);
-        *p.scale_out = next;
+            win = fmaxf(win, hist[i]);
+        const float next = fmaxf(win / p.quant_max / p.pow2_margin, 1e-12f);
+        *p.next_scale = next;
         /* Match the host ATen reciprocal's rounding; do not use a fast reciprocal. */
-        if (p.scale_recip_out)
-            *p.scale_recip_out = __frcp_rn(next);
-        if (p.amax)
-            *p.amax = peak;
+        *p.next_inv_scale = __frcp_rn(next);
+        aux[RingLayout::kAmax] = peak;
         for (int s = 0; s < kFoldSlots; ++s)
-            p.amax_scratch[s] = 0.0f;
-        *p.done = 0u;
+            scratch[s] = 0.0f;
+        *done = 0u;
     }
 }
 
@@ -66,13 +66,13 @@ template <int kWarps> DEVICE_FORCEINLINE void publish_amax(const QuantParams& p,
  * correct but may not coalesce. Same-format Dual shares conversions; mixed
  * formats convert per orientation.
  */
-template <typename Fp8TA, typename Fp8TB> struct dual_cvt {
-    static constexpr bool kMixed = !std::is_same_v<Fp8TA, Fp8TB>;
+template <typename OutT, typename TransposedOutT> struct dual_cvt {
+    static constexpr bool kMixed = !std::is_same_v<OutT, TransposedOutT>;
 
     static DEVICE_FORCEINLINE void store(uint8_t (*q)[2], uint8_t (*q2)[2], int j, int k, float v) {
-        q[j][k] = ElemTrait<Fp8TA>::cvt_byte(v);
+        q[j][k] = ElemTrait<OutT>::cvt_byte(v);
         if constexpr (kMixed)
-            q2[j][k] = ElemTrait<Fp8TB>::cvt_byte(v);
+            q2[j][k] = ElemTrait<TransposedOutT>::cvt_byte(v);
     }
 
     static DEVICE_FORCEINLINE void zero(uint8_t (*q)[2], uint8_t (*q2)[2], int j) {
@@ -94,18 +94,19 @@ template <typename Fp8TA, typename Fp8TB> struct dual_cvt {
     }
 };
 
-template <typename Fp8T, typename InT, typename Fp8T2 = Fp8T>
-__global__ void fp8_quantize_strided_kernel(QuantParams p) {
+template <typename InT, typename OutT, typename TransposedOutT = OutT>
+__global__ void quantize_strided_kernel(QuantParams p) {
     constexpr int kTileC = 64, kTileR = 32;
     __shared__ uint8_t tile[kTileC][kTileR + 2];
-    const float mult = *p.scale;
+    const bool scalar_scale = p.inv_scale_row_stride == 0 && p.inv_scale_col_stride == 0;
+    const float scalar_mult = scalar_scale && p.rows > 0 && p.cols > 0 ? *p.inv_scale : 0.0f;
     const auto* x = static_cast<const InT*>(p.input_ptr);
     const int r0 = blockIdx.y * kTileR;
     const int c0 = blockIdx.x * kTileC;
     const int r = r0 + threadIdx.y * 4;
     const int c = c0 + threadIdx.x * 2;
 
-    using Cvt = dual_cvt<Fp8T, Fp8T2>;
+    using Cvt = dual_cvt<OutT, TransposedOutT>;
     uint8_t q[4][2];
     uint8_t q2[4][2]; // live only when the two orientations differ in format
     float local_amax = 0.0f;
@@ -124,32 +125,45 @@ __global__ void fp8_quantize_strided_kernel(QuantParams p) {
         for (int j = 0; j < 4; ++j) {
             float f[2];
             astrai::load_pair<InT>(reinterpret_cast<const InT*>(&raws[j]), f);
+            const int64_t offset =
+                (int64_t)(r + j) * p.inv_scale_row_stride + (int64_t)c * p.inv_scale_col_stride;
+            const float mult0 = scalar_scale ? scalar_mult : p.inv_scale[offset];
+            const float mult1 =
+                scalar_scale ? scalar_mult : p.inv_scale[offset + p.inv_scale_col_stride];
             local_amax = fmaxf(local_amax, fmaxf(fabsf(f[0]), fabsf(f[1])));
-            Cvt::store(q, q2, j, 0, f[0] * mult);
-            Cvt::store(q, q2, j, 1, f[1] * mult);
+            Cvt::store(q, q2, j, 0, f[0] * mult0);
+            Cvt::store(q, q2, j, 1, f[1] * mult1);
         }
     } else {
 #pragma unroll
         for (int j = 0; j < 4; ++j) {
             Cvt::zero(q, q2, j);
             if (r + j < p.rows && c < p.cols) {
+                const int64_t offset =
+                    (int64_t)(r + j) * p.inv_scale_row_stride + (int64_t)c * p.inv_scale_col_stride;
+                const float mult0 = scalar_scale ? scalar_mult : p.inv_scale[offset];
                 const InT* a = x + (int64_t)(r + j) * p.cols + c;
                 if (c + 1 < p.cols && (reinterpret_cast<uintptr_t>(a) & (kPairAlign - 1)) == 0) {
                     float f[2];
                     astrai::load_pair<InT>(a, f);
+                    const float mult1 =
+                        scalar_scale ? scalar_mult : p.inv_scale[offset + p.inv_scale_col_stride];
 #pragma unroll
                     for (int k = 0; k < 2; ++k) {
                         local_amax = fmaxf(local_amax, fabsf(f[k]));
-                        Cvt::store(q, q2, j, k, f[k] * mult);
+                        Cvt::store(q, q2, j, k, f[k] * (k == 0 ? mult0 : mult1));
                     }
                 } else {
                     const float v0 = ElemTrait<InT>::to_float(a[0]);
                     local_amax = fmaxf(local_amax, fabsf(v0));
-                    Cvt::store(q, q2, j, 0, v0 * mult);
+                    Cvt::store(q, q2, j, 0, v0 * mult0);
                     if (c + 1 < p.cols) {
+                        const float mult1 = scalar_scale
+                                                ? scalar_mult
+                                                : p.inv_scale[offset + p.inv_scale_col_stride];
                         const float v1 = ElemTrait<InT>::to_float(a[1]);
                         local_amax = fmaxf(local_amax, fabsf(v1));
-                        Cvt::store(q, q2, j, 1, v1 * mult);
+                        Cvt::store(q, q2, j, 1, v1 * mult1);
                     }
                 }
             }
@@ -164,13 +178,13 @@ __global__ void fp8_quantize_strided_kernel(QuantParams p) {
             if (r + j < p.rows && c < p.cols) {
                 const int64_t off = (int64_t)(r + j) * s_r + (int64_t)c * s_c;
                 uint8_t* o = out + off;
-                if (c + 1 < p.cols && (off & 1) == 0)
+                if (s_c == 1 && c + 1 < p.cols && (off & 1) == 0)
                     *reinterpret_cast<unsigned short*>(o) =
                         (unsigned short)(q[j][0] | (q[j][1] << 8));
                 else {
                     o[0] = q[j][0];
                     if (c + 1 < p.cols)
-                        o[1] = q[j][1];
+                        o[s_c] = q[j][1];
                 }
             }
     }
@@ -191,16 +205,8 @@ __global__ void fp8_quantize_strided_kernel(QuantParams p) {
                     tile[threadIdx.y * 8 + i][threadIdx.x];
         }
     }
-    if (p.fold_ring)
+    if (p.ring_state != nullptr)
         publish_amax<kQuantWarps>(p, local_amax);
-}
-
-/* Empty inputs launch one block to publish delayed scaling; pointers/strides select mode. */
-template <typename Fp8T, typename InT, typename Fp8T2 = Fp8T>
-void launch_fp8_quantize(const QuantParams& p, cudaStream_t stream) {
-    const dim3 grid(std::max(1, (p.cols + 63) / 64), std::max(1, (p.rows + 31) / 32));
-    fp8_quantize_strided_kernel<Fp8T, InT, Fp8T2><<<grid, dim3(32, kQuantWarps), 0, stream>>>(p);
-    ASTRAI_LAUNCH_CHECK();
 }
 
 } // namespace quant

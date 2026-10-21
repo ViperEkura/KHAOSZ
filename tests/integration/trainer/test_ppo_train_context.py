@@ -8,16 +8,15 @@ from pathlib import Path
 import pytest
 import torch
 
-from astrai.config import TrainConfig
-from astrai.model.autoregressive_lm import AutoRegressiveLM
+from astrai.config import ComponentSpec, TrainConfig
 from astrai.model.value import ValueModel
+from astrai.optimization.scheduler import SchedulerFactory
 from astrai.serialization import Checkpoint
 from astrai.trainer.backend import ColocatedBackend, P2PCopyPublisher, ReplicaBackend
 from astrai.trainer.callbacks import CheckpointCallback
+from astrai.trainer.context import TrainContext, TrainContextBuilder
 from astrai.trainer.rollout import BaseRewardModel, RolloutEvaluator
-from astrai.trainer.schedule import SchedulerFactory
 from astrai.trainer.strategy import GRPOStrategy, PPOStrategy
-from astrai.trainer.train_context import TrainContext, TrainContextBuilder
 from astrai.trainer.trainer import Trainer
 from tests.support.models import make_frozen, make_model, make_rollout_config
 from tests.support.rollout import FakeExecutor
@@ -47,15 +46,22 @@ def _stub_collate(batch):
 def _ppo_config(device, **overrides):
     defaults = dict(
         strategy="online_ppo",
-        model_fn=lambda: AutoRegressiveLM(make_rollout_config()),
-        dataset=_StubDataset(),
-        optimizer_fn=lambda m: torch.optim.SGD(m.parameters(), lr=0.0),
-        scheduler_fn=lambda o: SchedulerFactory.create(
-            "cosine", o, warmup_steps=1, lr_decay_steps=4, min_rate=0.05
+        model=ComponentSpec(
+            type="autoregressive_lm", params={"config": make_rollout_config().to_dict()}
+        ),
+        dataset=ComponentSpec(
+            type="tests.integration.trainer.test_ppo_train_context:_StubDataset",
+            params={
+                "collate": "tests.integration.trainer.test_ppo_train_context:_stub_collate"
+            },
+        ),
+        optimizer=ComponentSpec(type="torch.optim:SGD", params={"lr": 0.0}),
+        scheduler=ComponentSpec(
+            type="cosine",
+            params={"warmup_steps": 1, "lr_decay_steps": 4, "min_rate": 0.05},
         ),
         reward_model_fn=_StubRewardModel,
         critic_model_fn=lambda: ValueModel(make_rollout_config()),
-        collate_fn=_stub_collate,
         device_type=device,
         dp_mode="none",
         strategy_kwargs={"clip_eps": 0.2, "group_size": 2},
@@ -166,7 +172,8 @@ def test_builder_resumes_critic_from_checkpoint(device, temp_dir, monkeypatch):
     checkpoint = Checkpoint(
         state_dict=model.state_dict(),
         epoch=0,
-        consumed_samples=2,
+        # A cursor must sit on an optimizer-step boundary to be resumable.
+        consumed_samples=0,
         config=config.to_dict(),
         extra={
             "optimizer": policy_optimizer.state_dict(),
@@ -185,7 +192,9 @@ def test_builder_resumes_critic_from_checkpoint(device, temp_dir, monkeypatch):
 
     cfg = _ppo_config(
         device,
-        model_fn=lambda: AutoRegressiveLM(config),
+        model=ComponentSpec(
+            type="autoregressive_lm", params={"config": config.to_dict()}
+        ),
         critic_model_fn=lambda: ValueModel(config),
         ckpt_dir=os.path.join(temp_dir, "ckpt"),
     )
@@ -209,7 +218,9 @@ def test_builder_wires_val_evaluator_with_inherited_params(
 
     cfg = _ppo_config(
         device,
-        model_fn=lambda: AutoRegressiveLM(make_rollout_config()),
+        model=ComponentSpec(
+            type="autoregressive_lm", params={"config": make_rollout_config().to_dict()}
+        ),
         ckpt_dir=os.path.join(temp_dir, "ckpt"),
         rollout_val_temperature=0.0,
         rollout_val_group_size=1,
@@ -239,7 +250,9 @@ def test_builder_wires_val_replica_and_publisher(device, temp_dir, monkeypatch):
 
     cfg = _ppo_config(
         device,
-        model_fn=lambda: AutoRegressiveLM(make_rollout_config()),
+        model=ComponentSpec(
+            type="autoregressive_lm", params={"config": make_rollout_config().to_dict()}
+        ),
         ckpt_dir=os.path.join(temp_dir, "ckpt"),
         rollout_val_device=device,
     )
@@ -268,21 +281,25 @@ def test_builder_right_sizes_rollout_pool(device, temp_dir, monkeypatch):
 
     cfg = _ppo_config(
         device,
-        model_fn=lambda: AutoRegressiveLM(make_rollout_config()),
+        model=ComponentSpec(
+            type="autoregressive_lm", params={"config": make_rollout_config().to_dict()}
+        ),
         ckpt_dir=os.path.join(temp_dir, "ckpt"),
         rollout_pool_seq_len=32,
     )
     context = TrainContextBuilder(cfg).with_param_path(temp_dir).build()
-    scheduler = context.strategy._rollout_runner.generator.backend.scheduler
+    scheduler = context.strategy._rollout_runner.generator.backend.engine_core
     assert scheduler.max_seq_len == 32
 
     cfg = _ppo_config(
         device,
-        model_fn=lambda: AutoRegressiveLM(make_rollout_config()),
+        model=ComponentSpec(
+            type="autoregressive_lm", params={"config": make_rollout_config().to_dict()}
+        ),
         ckpt_dir=os.path.join(temp_dir, "ckpt2"),
     )
     context = TrainContextBuilder(cfg).with_param_path(temp_dir).build()
-    scheduler = context.strategy._rollout_runner.generator.backend.scheduler
+    scheduler = context.strategy._rollout_runner.generator.backend.engine_core
     assert scheduler.max_seq_len == make_rollout_config().max_position_embeddings
 
 
@@ -301,8 +318,7 @@ def test_save_extra_persists_critic_state(device):
 
     extra = CheckpointCallback.save_extra(context)
 
-    # rng_state rides along on every checkpoint via the extras registry.
-    assert set(extra) == {"value_model", "value_optimizer", "rng_state"}
+    assert set(extra) == {"value_model", "value_optimizer"}
     saved = extra["value_model"]
     live = critic.state_dict()
     assert set(saved) == set(live)

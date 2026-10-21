@@ -1,77 +1,12 @@
-"""Tests for the generic operator dispatcher (Spec / decision tables)."""
-
-import importlib
+"""Rotary operation dispatch and fused gradient on CUDA."""
 
 import pytest
 import torch
 
-import astrai.extension.runtime.dispatch as dispatch
-from astrai.extension import (
-    ImplRecord,
-    Spec,
-    axis,
-    op_backend,
-    resolve,
-)
 from astrai.extension.backend import apply_rotary_emb
+from astrai.extension.backend.rotary import RotaryDispatcher, _cuda_rotary, _torch_apply
+from astrai.extension.runtime.context import op_backend
 from astrai.extension.runtime.loader import is_available
-
-attn_mod = importlib.import_module("astrai.extension.backend.attention")
-rotary_mod = importlib.import_module("astrai.extension.backend.rotary")
-
-
-@pytest.fixture
-def toy_family():
-    """A toy family: alpha (restricted), beta, and an unfaithful fast row."""
-    calls = []
-
-    def records():
-        return [
-            ImplRecord(
-                "toy",
-                "alpha",
-                "alpha-obj",
-                axis("dtype").in_(torch.bfloat16),
-                priority=0,
-            ),
-            ImplRecord(
-                "toy",
-                "beta",
-                "beta-obj",
-                Spec.always(),
-                priority=10,
-            ),
-            ImplRecord(
-                "toy",
-                "fp8",
-                "fp8-obj",
-                Spec.always(),
-                priority=1,
-                faithful=False,
-            ),
-        ]
-
-    dispatch.register_family(
-        "toy",
-        lambda **kw: kw,
-        records,
-        lambda: ImplRecord("toy", "beta", "beta-obj", Spec.always()),
-    )
-    yield calls
-    dispatch._FAMILIES.pop("toy", None)
-
-
-class _Probe:
-    def __init__(self, capable):
-        self.capable = capable
-        self.probed = 0
-
-    def supports_call(self, *args, **kwargs):
-        self.probed += 1
-        return self.capable
-
-
-_DUMMY_CACHE = object()
 
 
 @pytest.mark.skipif(
@@ -84,22 +19,30 @@ class TestRotaryDispatch:
         freqs = torch.randn(1, 5, 8, 2, device="cuda", dtype=torch.float32)
         return x, freqs
 
-    def test_cuda_row_selected_under_inference_mode(self):
+    def test_auto_selects_cuda_for_inference_when_available(self):
         x, freqs = self._input()
         with torch.inference_mode():
-            resolution = resolve("rotary", x, freqs)
-        expected = "cuda" if is_available("rotary_emb") else "torch"
-        assert resolution.record.name == expected
+            selected = RotaryDispatcher().dispatch(x, freqs)
+        assert selected is (
+            _cuda_rotary if is_available("rotary_emb") else _torch_apply
+        )
 
-    def test_grad_falls_back_to_torch(self):
+    def test_grad_selects_cuda_when_available(self):
         x, freqs = self._input()
-        assert resolve("rotary", x, freqs).record.name == "torch"
+        x.requires_grad_()
+        assert RotaryDispatcher().dispatch(x, freqs) is (
+            _cuda_rotary if is_available("rotary_emb") else _torch_apply
+        )
+
+    def test_frequency_grad_uses_torch(self):
+        x, freqs = self._input()
+        freqs.requires_grad_()
+        assert RotaryDispatcher().dispatch(x, freqs) is _torch_apply
 
     def test_context_switch_to_torch(self):
         x, freqs = self._input()
-        with torch.inference_mode():
-            with op_backend(rotary="torch"):
-                out = apply_rotary_emb(x, freqs)
+        with torch.inference_mode(), op_backend(rotary="torch"):
+            out = apply_rotary_emb(x, freqs)
         assert out.shape == x.shape and out.dtype == torch.bfloat16
 
     def test_cuda_matches_torch_numerics(self):
@@ -108,6 +51,23 @@ class TestRotaryDispatch:
         x, freqs = self._input()
         with torch.inference_mode():
             fast = apply_rotary_emb(x, freqs)
-        slow = rotary_mod._torch_apply
-        ref = slow(x, freqs)
-        assert torch.allclose(fast.float(), ref.float(), atol=2e-2, rtol=1e-2)
+            ref = _torch_apply(x, freqs)
+        torch.testing.assert_close(fast.float(), ref.float(), atol=2e-2, rtol=1e-2)
+
+    @pytest.mark.parametrize("sliced", [False, True])
+    def test_cuda_backward_matches_torch(self, sliced):
+        if not is_available("rotary_emb"):
+            pytest.skip("rotary kernel not built")
+        x, freqs = self._input()
+        if sliced:
+            x = torch.cat((x, x), dim=-1)[..., :16]
+        x = x.detach().requires_grad_()
+        grad = torch.randn_like(x)
+        with op_backend(rotary="cuda"):
+            output = apply_rotary_emb(x, freqs)
+        grad_x = torch.autograd.grad(output, x, grad)[0]
+        ref_x = x.detach().float().requires_grad_()
+        ref = _torch_apply(ref_x, freqs)
+        ref_grad = torch.autograd.grad(ref, ref_x, grad.float())[0]
+        torch.testing.assert_close(output.float(), ref.float(), atol=2e-2, rtol=1e-2)
+        torch.testing.assert_close(grad_x.float(), ref_grad, atol=2e-2, rtol=1e-2)
