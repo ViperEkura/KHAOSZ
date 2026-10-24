@@ -175,16 +175,24 @@ Config:
     "user": "mask",
     "assistant": "train"
   },
-  "mask_default": "mask"
+  "mask_default": "mask",
+  "output": {
+    "record_keys": ["chosen", "rejected", "chosen_mask", "rejected_mask"]
+  }
 }
 ```
 
 Output keys: `chosen`, `chosen_mask`, `rejected`, `rejected_mask`
 
-The offline `Pipeline` can construct these keys, but its `.bin` output is not
-currently loadable for DPO training because the writer does not preserve
-per-record offsets. Train DPO directly from raw JSONL instead; see
-[Training Compatibility](#training-compatibility).
+The offline `Pipeline` preserves each preference pair in `.bin` output by
+writing per-record offsets for the four keys explicitly listed in
+`output.record_keys`. Single and multiple shards are supported. When both a
+source and its mask are listed, omitted all-ones masks are materialized using
+that source's own length; explicit masks are preserved and checked for matching
+lengths. Custom preprocessing may use another `mask_key`, but `DPODataset`
+expects the four standard names shown above. Pairs are not packed together.
+Binary DPO data produced without offsets must be preprocessed again.
+See [Training Compatibility](#training-compatibility).
 
 ### GRPO
 
@@ -268,7 +276,7 @@ When `sources` is set, `sections` is ignored.
 | `max_chars` | int | `2000000` | Skip text-mode items longer than this |
 | `max_items` | int or null | `null` | Stop after N documents |
 | `batch_size` | int | `256` | Records per tokenization batch |
-| `packing_strategy` | str | `"simple"` | Packing is supported for single-output data with a `sequence` key: `"simple"`, `"bfd"`, or `"bfd_split"`. Multi-output DPO/GRPO data is not record-preserving packed output. |
+| `packing_strategy` | str | `"simple"` | Packing is supported for single-output data with a `sequence` key: `"simple"`, `"bfd"`, or `"bfd_split"`. DPO pairs remain independent records; GRPO binary group boundaries are not preserved. |
 | `max_packed_len` | int | `8192` | Maximum length of a packed bin |
 | `truncation_mode` | str | `"keep_start"` | How to truncate sequences: `"keep_start"` or `"keep_end"` |
 
@@ -297,6 +305,7 @@ launching the job; they do not reconfigure already-running workers.
 | `max_tokens_per_shard` | int | `100000000` | Flush threshold counted from each record's primary flat sequence: `sequence` for single-output data, otherwise the first flat source output |
 | `dtype` | dict[str, str] | `{}` | Per-key tensor dtype override (e.g. `{"loss_mask": "bool"}`) |
 | `position_ids_mode` | str | `"doc_reset"` | How to compute position_ids: `"none"`, `"doc_reset"`, `"continuous"` |
+| `record_keys` | list[str] | `[]` | Explicit flat record fields to write with offsets. Names must be unique and non-empty; selected fields must exist and have equal record counts. No fields are inferred from DPO-like names. |
 
 ---
 
@@ -370,9 +379,19 @@ Each shard's metadata is a top-level object keyed by tensor name:
 }
 ```
 
-An optional `offsets` array may appear for record-oriented binary data written
-through `save_bin(..., record_keys=...)`; the preprocessing `BinWriter` does not
-currently request those offsets.
+An optional `offsets` array appears for record-oriented binary data written
+through `save_bin(..., record_keys=...)`. `Pipeline` forwards the explicitly
+configured `output.record_keys` to `BinWriter`; the default empty list preserves
+stream-only output. Offsets start at zero in each shard, end at the field's token
+count, and have one more entry than the number of records.
+`MmapStore` preserves the existing filesystem discovery order (not guaranteed to
+be sorted) and locates records using cumulative shard record counts. Record
+index validation is deferred until record access or record-count queries;
+invalid offsets do not block token-stream access to otherwise valid tensors.
+DPO validates offsets and token/mask boundaries when the dataset is constructed.
+In record mode, `store[i]` requests all fields and raises if any lack offsets;
+use `fetch_record(i, key)` to select an indexed field from a mixed record/stream
+store. Field names are not silently dropped from `store[i]`.
 
 ---
 
@@ -382,13 +401,12 @@ currently request those offsets.
 |---------------|-----------------------|
 | `seq` | Offline preprocessed `.bin`, or raw `.jsonl` eagerly transformed by `JsonlStore` using `dataset_config.json` or the built-in `messages` config |
 | `sft` | Offline preprocessed `.bin`, or raw `.jsonl` through the same eager transform routes |
-| `dpo` | Raw `.jsonl` through the automatic lazy DPO processor selected by `DatasetFactory` when `tokenizer_path` is supplied, or a caller-provided record store |
+| `dpo` | Offline preprocessed `.bin` with record offsets (single or multiple shards), raw `.jsonl` through the automatic lazy DPO processor when `tokenizer_path` is supplied, or a caller-provided record store |
 | `grpo` | A caller-provided, already-loaded `Store` with record-shaped `prompts`, `responses`, `masks`, and `rewards`; no automatic raw-JSONL processor is currently wired |
 
-Offline DPO and GRPO preprocessing configs describe the intended token fields,
-but their `.bin` output is not currently loadable for training. DPO binary
-shards lack per-record offsets. GRPO response groups are flattened before the
-binary writer and their record/group boundaries are not preserved.
+Offline GRPO `.bin` output is not currently loadable for training. GRPO response
+groups are flattened before the binary writer and their record/group boundaries
+are not preserved.
 
 ---
 
