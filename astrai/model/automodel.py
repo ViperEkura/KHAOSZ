@@ -12,12 +12,14 @@ from astrai.factory import BaseFactory
 from astrai.model.components.initialization import skip_parameter_init
 from astrai.serialization import (
     adapt_config,
-    convert_hf_weights,
     load_hf_mapping,
     load_model_config,
     load_model_weights,
-    looks_like_hf_state_dict,
     save_model,
+)
+from astrai.serialization.pretrained import (
+    load_pretrained_state_dict,
+    prepare_pretrained_weights,
 )
 
 
@@ -47,7 +49,7 @@ class AutoModel(nn.Module):
                 ``model.safetensors``.
             disable_random_init: Skip AstrAI parameter initialization when a
                 complete checkpoint is loaded into a supported model.
-            strict: Passed to ``load_state_dict``.
+            strict: Require all policy tensors and reject unmapped HF keys.
             weights_format: ``"auto"`` reads a model-directory mapping and
                 detects compatible HF weight keys; ``"astrai"`` skips conversion;
                 ``"hf"`` requires a mapping and forces weight conversion.
@@ -92,12 +94,14 @@ class AutoModel(nn.Module):
 
         if has_weights:
             state_dict = load_model_weights(str(model_path))
-            is_hf_weights = weights_format == "hf" or (
-                weights_format == "auto" and looks_like_hf_state_dict(state_dict)
+            state_dict = prepare_pretrained_weights(
+                state_dict,
+                config,
+                mapping=mapping,
+                weights_format=weights_format,
+                strict=strict,
             )
-            if is_hf_weights:
-                state_dict = convert_hf_weights(state_dict, config, mapping=mapping)
-            model.load_state_dict(state_dict, strict=strict)
+            load_pretrained_state_dict(model, state_dict, strict=strict)
 
         return model
 
