@@ -34,6 +34,7 @@ from torch.utils.data import Dataset
 
 from astrai.config.preprocess_config import PipelineConfig
 from astrai.dataset.storage import (
+    MmapStore,
     Store,
     StoreFactory,
     detect_format,
@@ -491,6 +492,12 @@ class DPODataset(BaseDataset):
     """
 
     required_keys = ["chosen", "rejected", "chosen_mask", "rejected_mask"]
+
+    def __init__(self, store: Store):
+        super().__init__(store)
+        if isinstance(store, MmapStore):
+            for name in ("chosen", "rejected"):
+                store.validate_record_alignment([name, f"{name}_mask"])
 
     def __getitem__(self, index: int) -> Dict[str, Tensor]:
         return {

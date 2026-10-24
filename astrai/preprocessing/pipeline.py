@@ -119,6 +119,7 @@ class Pipeline:
                 if result is None:
                     continue
 
+                self._complete_record_masks(result)
                 domain = result.pop("domain", "__default__")
                 ids = primary_ids(result)
                 if not ids:
@@ -143,6 +144,40 @@ class Pipeline:
 
         if total_tokens > 0:
             self._flush(domains, shard_idx)
+
+    def _complete_record_masks(self, result: Dict) -> None:
+        record_keys = set(self.config.output.record_keys)
+        if not record_keys:
+            return
+        sources = self.config.input.sources or {}
+        for name, spec in sources.items():
+            mask_key = spec.get("mask_key", f"{name}_mask")
+            if not {name, mask_key}.issubset(record_keys) or name not in result:
+                continue
+            if mask_key not in result:
+                result[mask_key] = [1] * len(result[name])
+            if len(result[name]) != len(result[mask_key]):
+                raise ValueError(
+                    f"Record mask '{mask_key}' must match '{name}' lengths"
+                )
+        missing = record_keys.difference(result)
+        if missing:
+            raise ValueError(f"Record output is missing fields: {sorted(missing)}")
+
+    def _validate_record_masks(self, tensors: Dict[str, List[torch.Tensor]]) -> None:
+        record_keys = set(self.config.output.record_keys)
+        for name, spec in (self.config.input.sources or {}).items():
+            mask_key = spec.get("mask_key", f"{name}_mask")
+            if not {name, mask_key}.issubset(record_keys):
+                continue
+            sequences, masks = tensors[name], tensors[mask_key]
+            if len(sequences) != len(masks) or any(
+                sequence.numel() != mask.numel()
+                for sequence, mask in zip(sequences, masks)
+            ):
+                raise ValueError(
+                    f"Record mask '{mask_key}' must match '{name}' lengths"
+                )
 
     @staticmethod
     def _align_bucket(bucket: Dict, result: Dict, ids: List):
@@ -200,7 +235,13 @@ class Pipeline:
                 tensors, mode, keys.get("sequence", [])
             )
 
-            self._writer.save(self.output_dir, domain, idx, tensors)
+            self._validate_record_masks(tensors)
+            writer_kwargs = (
+                {"record_keys": self.config.output.record_keys}
+                if self.config.output.record_keys
+                else {}
+            )
+            self._writer.save(self.output_dir, domain, idx, tensors, **writer_kwargs)
             shard_idx[domain] = idx + 1
 
             first_key = "sequence" if "sequence" in tensors else next(iter(tensors))

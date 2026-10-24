@@ -106,6 +106,7 @@ class OutputConfig(BaseConfig):
         max_tokens_per_shard (int): Maximum tokens per shard before splitting. Defaults to 100_000_000.
         dtype (Dict[str, str]): Per-key dtype overrides, e.g. {"input_ids": "int32"}. Defaults to {}.
         position_ids_mode (str): Position ids mode: 'none', 'doc_reset', or 'continuous'. Defaults to "doc_reset".
+        record_keys (List[str]): Fields stored with per-record offsets. Defaults to an empty list.
     """
 
     domain_key: Optional[str] = None
@@ -113,6 +114,13 @@ class OutputConfig(BaseConfig):
     max_tokens_per_shard: int = 100_000_000
     dtype: Dict[str, str] = field(default_factory=dict)
     position_ids_mode: str = "doc_reset"
+    record_keys: List[str] = field(default_factory=list)
+
+    @field_validator("record_keys")
+    def _validate_record_keys(cls, value: List[str]) -> List[str]:
+        if any(not key.strip() for key in value) or len(set(value)) != len(value):
+            raise ValueError("record_keys must contain unique, non-empty field names")
+        return value
 
     @field_validator("storage_format")
     def _validate_storage_format(cls, v: str) -> str:
