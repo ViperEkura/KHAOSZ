@@ -1,5 +1,7 @@
 import os
 
+import pytest
+
 from astrai.config.preprocess_config import (
     InputConfig,
     PipelineConfig,
@@ -14,6 +16,7 @@ def test_default_values():
     assert config.mask_default == "mask"
     assert config.preprocessing.max_seq_len == 2048
     assert config.output.storage_format == "bin"
+    assert config.output.record_keys == []
     assert config.input.sections is None
 
 
@@ -64,6 +67,7 @@ def test_to_file_from_file(temp_dir):
 
 def test_dpo_config_roundtrip(temp_dir):
     config = make_dpo_chat_config()
+    config.output.record_keys = ["chosen", "rejected", "chosen_mask", "rejected_mask"]
     path = os.path.join(temp_dir, "config.json")
     config.to_file(path)
     loaded = PipelineConfig.from_file(path)
@@ -71,3 +75,10 @@ def test_dpo_config_roundtrip(temp_dir):
     assert "chosen" in loaded.input.sources
     assert "rejected" in loaded.input.sources
     assert loaded.input.sections is None
+    assert loaded.output.record_keys == config.output.record_keys
+
+
+@pytest.mark.parametrize("keys", [["chosen", "chosen"], [""], [" "], "chosen", [1]])
+def test_invalid_record_keys(keys):
+    with pytest.raises(ValueError):
+        PipelineConfig.from_dict({"output": {"record_keys": keys}})

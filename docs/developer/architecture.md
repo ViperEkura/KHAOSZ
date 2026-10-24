@@ -215,13 +215,14 @@ classDiagram
         class Store {
             +Dict[str, List[Tensor]] _data
             +Dict[str, List[int]] _cum
-            +Dict[str, List[int]] _offsets
+            +Dict[str, List[List[int]]] _offsets
+            +List[int] _record_cum
             +int _length
             +int _num_records
             +keys (property)
             +load(path)
             +__len__()
-            -_normalize(raw, offsets)
+            -_normalize(raw)
         }
 
         class Streamable {
@@ -239,6 +240,10 @@ classDiagram
 
         class MmapStore {
             +List _mmap_refs
+            -List _record_shards
+            -bool _record_index_ready
+            +num_records (property)
+            -_ensure_record_index()
             +load(path)
         }
 
